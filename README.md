@@ -46,10 +46,6 @@ docs/        # Architecture, data model, backlog, voting rules
 | Data model | [`docs/data-model.md`](docs/data-model.md) |
 | Backlog | [`docs/backlog.md`](docs/backlog.md) |
 
-## Agent instructions
-
-Before any task, read the entire [`agents/`](agents/) folder.
-
 ## Getting started
 
 ```bash
@@ -67,15 +63,3 @@ pnpm dev
 
 - Web: http://localhost:5173  
 - API health: http://localhost:3333/health  
-
-### Local CI checklist
-
-```bash
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm test:feature
-pnpm --filter @scelta/web exec playwright install chromium   # first time only
-pnpm test:e2e
-pnpm build
-```

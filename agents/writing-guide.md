@@ -47,6 +47,7 @@ For tiny docs-only or comment-only edits, a full four-way split may be unnecessa
 
 - Acceptance criteria in `docs/backlog.md` are the contract; agents do not invent scope.
 - Architecture and data-model changes must update Mermaid docs in the same change set.
+- Pull request body: fill [`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md) (see `git.md`).
 - Before push: follow `git.md` local CI checklist.
 - Prefer several focused agent runs over one mega-agent that “does everything.”
 

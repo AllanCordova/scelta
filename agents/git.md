@@ -20,39 +20,37 @@
 ## Pull requests
 
 - Keep PRs small and reviewable.
-- PR description must include: summary, test plan, and any security-relevant notes.
-- Link the backlog item ID when applicable (e.g. `B0.2`).
+- Every pull request must use [`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md). GitHub inserts that file into the description automatically. When opening a PR from the CLI or API, copy the template into the body.
+- Fill every section. Do not delete headings.
+  - **Summary** — why the change exists, plus the backlog item ID when one applies (e.g. `B1.1`).
+  - **Test plan** — check the layers you ran. If a layer does not apply, say why (see `testing.md`).
+  - **Security** — auth, ballot anonymity, secrets, or data exposure. Write `None` when there is no security impact.
 
 ## Local CI before push (mandatory)
 
-Before pushing or opening a PR, run the **same checks CI will run**, locally, and fix failures first.
+Before pushing or opening a PR, run the **same checks** [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs, and fix failures first.
 
-Until the project’s CI config exists, treat this checklist as the contract and update this file when CI is defined:
+1. Install dependencies with the lockfile.
+2. Build `@scelta/domain` (the API imports its compiled output).
+3. Lint the API and the client.
+4. API unit tests and API feature tests.
+5. Client unit tests and client browser tests.
 
-1. Install dependencies with the project’s lockfile (do not invent versions).
-2. Lint (and format check if configured).
-3. Typecheck (if the stack has a type system).
-4. Unit tests.
-5. Feature / integration tests that do not require a full browser matrix (as configured).
-6. Browser / e2e tests that CI runs on PRs (as configured).
-7. Build the app (production build if CI builds).
-
-### Expected commands (current stack)
+### Commands
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm --filter @scelta/domain build
-pnpm --filter @scelta/db build
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm test:feature
-pnpm --filter @scelta/web exec playwright install chromium   # first machine / CI image only
-pnpm test:e2e
-pnpm build
+pnpm --filter @scelta/api lint
+pnpm --filter @scelta/api test
+pnpm --filter @scelta/api test:feature
+pnpm --filter @scelta/web lint
+pnpm --filter @scelta/web test
+pnpm --filter @scelta/web exec playwright install chromium   # first machine only
+pnpm --filter @scelta/web test:e2e
 ```
 
-When GitHub Actions (or equivalent) workflows are added under `.github/workflows/`, mirror those steps here exactly so agents and humans run the same pipeline locally.
+CI installs Playwright’s system libraries with `playwright install --with-deps chromium` on Ubuntu. Locally, `playwright install chromium` is enough when those libraries are already present.
 
 ## What not to do
 
