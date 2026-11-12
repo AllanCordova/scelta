@@ -14,7 +14,7 @@ For each new feature or meaningful change, cover all applicable layers:
 
 - **API tasks:** unit (handlers/domain) + feature/integration (HTTP + persistence as configured) + browser tests when the change is user-visible.
 - **Component / UI tasks:** unit (logic/hooks) + feature (component integration) + browser tests for critical UX paths.
-- Skip a layer only with an explicit, written reason in the PR (e.g. pure docs change).
+- Skip a layer only with an explicit reason in the pull request test plan (see [`.github/PULL_REQUEST_TEMPLATE.md`](../.github/PULL_REQUEST_TEMPLATE.md)), for example a pure docs change.
 
 ## What “feature tests” mean here
 
