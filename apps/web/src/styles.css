@@ -1,0 +1,82 @@
+:root {
+  color-scheme: light;
+  --ink: #1c2420;
+  --paper: #f3efe6;
+  --moss: #2f5d4a;
+  --moss-deep: #1e3d31;
+  --sand: #d8cbb6;
+  --glow: rgba(47, 93, 74, 0.18);
+  font-family: "Source Sans 3", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at 12% 18%, var(--glow), transparent 42%),
+    linear-gradient(160deg, #efe8da 0%, var(--paper) 45%, #e7ddd0 100%);
+  color: var(--ink);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+}
+
+.hero {
+  width: min(42rem, 100%);
+  animation: rise 700ms ease-out both;
+}
+
+.brand {
+  margin: 0 0 0.75rem;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(2.8rem, 8vw, 4.5rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--moss-deep);
+  line-height: 0.95;
+}
+
+h1 {
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-size: clamp(1.4rem, 3.5vw, 2rem);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.lede {
+  margin: 1rem 0 0;
+  max-width: 34rem;
+  font-size: 1.125rem;
+  line-height: 1.5;
+  color: #3c463f;
+}
+
+.meta {
+  margin-top: 1.75rem;
+  display: inline-block;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--sand);
+  background: rgba(255, 255, 255, 0.45);
+  font-size: 0.9rem;
+  color: var(--moss);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

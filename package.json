@@ -1,0 +1,22 @@
+{
+  "name": "scelta",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @scelta/api --filter @scelta/web dev",
+    "dev:api": "pnpm --filter @scelta/api dev",
+    "dev:web": "pnpm --filter @scelta/web dev",
+    "build": "pnpm -r --filter @scelta/domain --filter @scelta/db --filter @scelta/api --filter @scelta/web build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --filter @scelta/domain --filter @scelta/api --filter @scelta/web test",
+    "test:unit": "pnpm test",
+    "test:feature": "pnpm --filter @scelta/api test:feature",
+    "test:e2e": "pnpm --filter @scelta/web test:e2e",
+    "db:generate": "pnpm --filter @scelta/db generate",
+    "db:migrate": "pnpm --filter @scelta/db migrate"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
