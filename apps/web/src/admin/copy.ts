@@ -72,6 +72,10 @@ export function standingLabel(displayName: string, votes: number): string {
   return `${displayName}: ${votes === 1 ? "1 voto" : `${votes} votos`}`;
 }
 
+export function activeCandidatesLabel(roundNumber: number, names: readonly string[]): string {
+  return `${roundNumber}º escrutínio — Candidatos: ${names.join(", ")}`;
+}
+
 const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   title: "Informe um título.",
   roomType: "Escolha o tipo da sala.",
@@ -120,6 +124,10 @@ export function roundErrorMessage(errorCode: string): string {
       return "Já existe um escrutínio aberto.";
     case "round_not_open":
       return "Esse escrutínio não está aberto.";
+    case "winner_already_elected":
+      return "Esta sala já elegeu um vencedor.";
+    case "invalid_candidate_subset":
+      return "Conjunto de candidatos inválido para o próximo escrutínio.";
     default:
       return "Não foi possível atualizar o escrutínio.";
   }

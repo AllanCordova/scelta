@@ -262,13 +262,18 @@ function JoinedRoomView({
   const round = ballotState?.round ?? null;
   const candidates = ballotState?.candidates ?? [];
   const hasVotedInCurrentRound = Boolean(round && votedRoundIds[round.id]);
+  const activeSelectedCandidateId = candidates.some(
+    (candidate) => candidate.id === selectedCandidateId,
+  )
+    ? selectedCandidateId
+    : "";
 
   async function handleCastVote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!round || round.status !== "open" || isVoting) {
       return;
     }
-    if (!selectedCandidateId) {
+    if (!activeSelectedCandidateId) {
       setVoteError("Escolha um candidato.");
       return;
     }
@@ -278,7 +283,7 @@ function JoinedRoomView({
     try {
       const receipt = await submitBallot(apiUrl(""), token, {
         joinKey,
-        candidateId: selectedCandidateId,
+        candidateId: activeSelectedCandidateId,
       });
       setSelectedCandidateId("");
       setVotedRoundIds((current) => ({ ...current, [receipt.roundId]: true }));
@@ -315,9 +320,9 @@ function JoinedRoomView({
                       key={candidate.id}
                       type="button"
                       className={
-                        selectedCandidateId === candidate.id ? "choice selected" : "choice"
+                        activeSelectedCandidateId === candidate.id ? "choice selected" : "choice"
                       }
-                      aria-pressed={selectedCandidateId === candidate.id}
+                      aria-pressed={activeSelectedCandidateId === candidate.id}
                       onClick={() => setSelectedCandidateId(candidate.id)}
                     >
                       {candidate.displayName}

@@ -29,9 +29,13 @@ export {
 } from "./ballot.js";
 export {
   nextRoundPlan,
+  resolveNextRoundCandidateIds,
   type RulesPreset,
   type RoundOutcome,
   type NextRoundPlan,
+  type NextRoundRejectionReason,
+  type ResolveNextRoundInput,
+  type ResolveNextRoundResult,
 } from "./rounds.js";
 export {
   canOpenRound,
