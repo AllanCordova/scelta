@@ -1,4 +1,4 @@
-import { createPgliteDatabase, participants, rooms, type Db } from "@scelta/db";
+import { candidates, createPgliteDatabase, participants, rooms, type Db } from "@scelta/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
@@ -56,6 +56,7 @@ describe("join room", () => {
 
   beforeEach(async () => {
     resetAuthAttempts();
+    await db.delete(candidates);
     await db.delete(participants);
     await db.delete(rooms);
   });
@@ -356,6 +357,7 @@ describe("join room", () => {
         roomType: "elder",
         rulesPreset: "ipb_local_officers",
         status,
+        candidates: ["Paulo", "Silas"],
       },
     });
     expect(response.statusCode).toBe(201);

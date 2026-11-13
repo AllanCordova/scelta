@@ -402,8 +402,9 @@ export function AdminRooms() {
             Candidatos
             <input
               value={candidatesInput}
-              placeholder="Opcional (ex.: Paulo, Silas)"
+              placeholder="Ex.: Paulo, Silas"
               onChange={(event) => setCandidatesInput(event.target.value)}
+              required
             />
           </label>
 
@@ -786,10 +787,10 @@ function parseCandidateInputNames(value: string): string[] {
 
 function candidatesPayload(
   value: string,
-): { candidates: string[] } | { error: true } | Record<string, never> {
+): { candidates: string[] } | { error: true } {
   const trimmed = value.trim();
   if (trimmed.length === 0) {
-    return {};
+    return { error: true };
   }
 
   const names = trimmed.split(",").map((part) => part.trim());

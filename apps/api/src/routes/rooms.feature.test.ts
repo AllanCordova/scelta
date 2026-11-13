@@ -80,6 +80,7 @@ describe("admin rooms", () => {
         title: "Eleição de presbíteros",
         roomType: "elder",
         rulesPreset: "ipb_local_officers",
+        candidates: ["Paulo", "Silas"],
       },
     });
 
@@ -138,6 +139,7 @@ describe("admin rooms", () => {
         quorumUnit: "absolute",
         eligibleCount: 12,
         status: "open",
+        candidates: ["Paulo", "Silas"],
       },
     });
 
@@ -196,6 +198,29 @@ describe("admin rooms", () => {
       headers: { cookie: adminCookie },
     });
     expect(listed.json().rooms).toEqual([]);
+
+    await app.close();
+  });
+
+  it("rejects creating a room without candidates", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Sala sem candidatos",
+        roomType: "elder",
+        rulesPreset: "ipb_local_officers",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: "invalid_room",
+      details: [{ field: "candidates", code: "required" }],
+    });
 
     await app.close();
   });
@@ -349,6 +374,7 @@ describe("admin rooms", () => {
         title: "Assembleia",
         roomType: "elder",
         rulesPreset: "ipb_local_officers",
+        candidates: ["Paulo", "Silas"],
       },
     });
 
@@ -420,6 +446,29 @@ describe("admin rooms", () => {
       headers: { cookie: adminCookie },
     });
     expect(listed.json().rooms).toEqual([]);
+
+    await app.close();
+  });
+
+  it("rejects creating a room without candidates", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Sala sem candidatos",
+        roomType: "elder",
+        rulesPreset: "ipb_local_officers",
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: "invalid_room",
+      details: [{ field: "candidates", code: "required" }],
+    });
 
     await app.close();
   });
@@ -572,6 +621,7 @@ describe("admin rooms", () => {
         quorumValue: 2,
         quorumUnit: "absolute",
         status: "open",
+        candidates: ["Paulo", "Silas"],
       },
     });
     expect(created.statusCode).toBe(201);
@@ -626,6 +676,7 @@ describe("admin rooms", () => {
         title,
         roomType: "deacon",
         rulesPreset: "ipb_local_officers",
+        candidates: ["Paulo", "Silas"],
       },
     });
 

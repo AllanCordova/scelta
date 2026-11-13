@@ -103,7 +103,7 @@ const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   quorumUnit: "Informe a unidade do quórum.",
   eligibleCount: "Número de aptos inválido.",
   status: "Situação inválida.",
-  candidates: "Lista de candidatos inválida.",
+  candidates: "Informe ao menos um candidato.",
 };
 
 export function roomErrorMessage(errorCode: string, field?: FieldError["field"]): string {

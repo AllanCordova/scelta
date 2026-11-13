@@ -1,4 +1,4 @@
-import { ballots, createPgliteDatabase, participants, rooms, rounds, type Db } from "@scelta/db";
+import { ballots, candidates, createPgliteDatabase, participants, rooms, rounds, type Db } from "@scelta/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
@@ -56,6 +56,7 @@ describe("quorum gate", () => {
     resetAuthAttempts();
     await db.delete(ballots);
     await db.delete(rounds);
+    await db.delete(candidates);
     await db.delete(participants);
     await db.delete(rooms);
   });
@@ -164,8 +165,8 @@ describe("quorum gate", () => {
 
     const closedSecond = await closeRound(app, room.id, nextRoundId);
     expect(closedSecond.statusCode).toBe(200);
-    expect(closedSecond.json()).toEqual({
-      round: { id: nextRoundId, number: 2, status: "closed", outcome: null },
+    expect(closedSecond.json()).toMatchObject({
+      round: { id: nextRoundId, number: 2, status: "closed", outcome: "no_majority" },
       quorum: { presentCount: 4, eligibleCount: 100, requiredCount: 4, quorumMet: true },
     });
 
@@ -228,8 +229,8 @@ describe("quorum gate", () => {
     const roundId = opened.json().round.id as string;
     const closed = await closeRound(app, room.id, roundId);
     expect(closed.statusCode).toBe(200);
-    expect(closed.json()).toEqual({
-      round: { id: roundId, number: 1, status: "closed", outcome: null },
+    expect(closed.json()).toMatchObject({
+      round: { id: roundId, number: 1, status: "closed", outcome: "no_majority" },
       quorum: { presentCount: 2, eligibleCount: 3, requiredCount: 2, quorumMet: true },
     });
 
@@ -323,6 +324,7 @@ describe("quorum gate", () => {
         status: input.status ?? "open",
         quorumValue: input.quorumValue,
         quorumUnit: input.quorumUnit,
+        candidates: ["Paulo", "Silas"],
         ...(input.eligibleCount === undefined ? {} : { eligibleCount: input.eligibleCount }),
       },
     });

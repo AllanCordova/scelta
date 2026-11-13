@@ -7,6 +7,7 @@ test("admin creates a room and sees the invite link and QR", async ({ page }) =>
   await loginAsAdmin(page);
   await expect(page.getByText("Ana Admin")).toBeVisible();
   await page.getByLabel("Título").fill("Eleição de presbíteros");
+  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.getByRole("button", { name: "Presbítero" }).click();
   await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("34");
 
@@ -23,6 +24,7 @@ test("admin creates a room and sees the invite link and QR", async ({ page }) =>
 test("admin sees an error when the quorum is invalid", async ({ page }) => {
   await loginAsAdmin(page);
   await page.getByLabel("Título").fill("Quórum fora da faixa");
+  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.locator("fieldset", { hasText: "Regras" }).getByRole("button", { name: "Personalizado" }).click();
   await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("percent");

@@ -7,6 +7,7 @@ test("admin sees presence against quorum and a failed close", async ({ page }) =
   const title = `Assembleia abaixo ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   await loginAsAdmin(page);
   await page.getByLabel("Título").fill(title);
+  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("3");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
@@ -29,6 +30,7 @@ test("admin sees quorum met when required presence joins and closes without fail
   const title = `Assembleia quórum ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   await loginAsAdmin(page);
   await page.getByLabel("Título").fill(title);
+  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("1");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
@@ -57,7 +59,7 @@ test("admin sees quorum met when required presence joins and closes without fail
   await item.getByRole("button", { name: "Abrir escrutínio" }).click();
   await item.getByRole("button", { name: "Encerrar escrutínio" }).click();
   await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeVisible();
-  await expect(item.getByRole("status")).toHaveCount(0);
+  await expect(item.getByRole("status")).not.toContainText("Quórum não atingido");
 });
 
 async function loginAsAdmin(page: Page) {

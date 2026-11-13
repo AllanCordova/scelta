@@ -105,17 +105,21 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         return reply.code(400).send({ error: "invalid_room", details: validated.errors });
       }
 
-      let candidateNames: string[] = [];
-      if (body.candidates !== undefined) {
-        const validatedCandidates = validateCandidateNames(body.candidates);
-        if (!validatedCandidates.ok) {
-          return reply.code(400).send({
-            error: "invalid_room",
-            details: [{ field: "candidates", code: "invalid" }],
-          });
-        }
-        candidateNames = validatedCandidates.value;
+      if (body.candidates === undefined || body.candidates.length === 0) {
+        return reply.code(400).send({
+          error: "invalid_room",
+          details: [{ field: "candidates", code: "required" }],
+        });
       }
+
+      const validatedCandidates = validateCandidateNames(body.candidates);
+      if (!validatedCandidates.ok) {
+        return reply.code(400).send({
+          error: "invalid_room",
+          details: [{ field: "candidates", code: "invalid" }],
+        });
+      }
+      const candidateNames = validatedCandidates.value;
 
       try {
         if (candidateNames.length > 0) {
