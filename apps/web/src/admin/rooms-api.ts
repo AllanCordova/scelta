@@ -2,6 +2,7 @@ import { readQuorumPresence, type QuorumPresence } from "./presence-event";
 import type {
   CreatableRoomStatus,
   FieldError,
+  MemberAccessCodeItem,
   MemberImportReport,
   PresetDefinition,
   QuorumUnit,
@@ -115,8 +116,15 @@ export async function fetchPresence(apiBase: string, roomId: string): Promise<Qu
   return presence;
 }
 
-export async function openRound(apiBase: string, roomId: string): Promise<RoomRound> {
-  return postRound(`${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds`);
+export async function openRound(
+  apiBase: string,
+  roomId: string,
+  officeLabel?: string,
+): Promise<RoomRound> {
+  return postRound(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds`,
+    officeLabel ? { officeLabel } : undefined,
+  );
 }
 
 export async function closeRound(apiBase: string, roomId: string, roundId: string): Promise<RoomRound> {
@@ -224,8 +232,114 @@ export async function removeParticipants(
   return { removedCount: body.removedCount };
 }
 
-async function postRound(url: string): Promise<RoomRound> {
-  const response = await fetch(url, { method: "POST", credentials: "include" });
+export async function listAccessCodes(
+  apiBase: string,
+  roomId: string,
+): Promise<MemberAccessCodeItem[]> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/access-codes`,
+    { credentials: "include" },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    accessCodes?: MemberAccessCodeItem[];
+    error?: string;
+  };
+  if (!response.ok || !Array.isArray(body.accessCodes)) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.accessCodes;
+}
+
+export async function generateAccessCodes(
+  apiBase: string,
+  roomId: string,
+): Promise<MemberAccessCodeItem[]> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/access-codes/generate`,
+    { method: "POST", credentials: "include" },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    accessCodes?: MemberAccessCodeItem[];
+    error?: string;
+  };
+  if (!response.ok || !Array.isArray(body.accessCodes)) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.accessCodes;
+}
+
+export async function createSimulatedAccessCodes(
+  apiBase: string,
+  roomId: string,
+  count: number,
+): Promise<MemberAccessCodeItem[]> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/access-codes/simulate`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ count }),
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    accessCodes?: MemberAccessCodeItem[];
+    error?: string;
+  };
+  if (!response.ok || !Array.isArray(body.accessCodes)) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.accessCodes;
+}
+
+export async function revokeAccessCode(
+  apiBase: string,
+  roomId: string,
+  codeId: string,
+): Promise<MemberAccessCodeItem> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/access-codes/${encodeURIComponent(codeId)}/revoke`,
+    { method: "POST", credentials: "include" },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    accessCode?: MemberAccessCodeItem;
+    error?: string;
+  };
+  if (!response.ok || !body.accessCode) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.accessCode;
+}
+
+export async function revokeAllAccessCodes(
+  apiBase: string,
+  roomId: string,
+): Promise<{ revokedCount: number }> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/access-codes/revoke-all`,
+    { method: "POST", credentials: "include" },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    revokedCount?: number;
+    error?: string;
+  };
+  if (!response.ok || typeof body.revokedCount !== "number") {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return { revokedCount: body.revokedCount };
+}
+
+async function postRound(url: string, payload?: Record<string, unknown>): Promise<RoomRound> {
+  const response = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    ...(payload
+      ? {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      : {}),
+  });
   const body = (await response.json().catch(() => ({}))) as { round?: RoomRound; error?: string };
   if (!response.ok || !body.round) {
     throw new RoomRequestError(response.status, body.error ?? "unknown");

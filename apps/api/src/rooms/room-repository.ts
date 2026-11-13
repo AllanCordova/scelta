@@ -54,6 +54,7 @@ export type StoredRound = {
   id: string;
   roomId: string;
   number: number;
+  officeLabel: string | null;
   status: StoredRoundStatus;
   outcome: RoundResult | null;
   openedAt: Date | null;
@@ -91,18 +92,44 @@ export type JoinedParticipant = {
   alreadyJoined: boolean;
 };
 
+export type StoredAccessCode = {
+  id: string;
+  roomId: string;
+  memberId: string | null;
+  displayName: string;
+  code: string;
+  isSimulated: boolean;
+  revokedAt: Date | null;
+  createdAt: Date;
+};
+
+export type JoinWithCodeResult =
+  | { ok: true; participant: JoinedParticipant }
+  | { ok: false; reason: "invalid_access_code" | "revoked_access_code" };
+
 export type RoomRepository = {
   createRoom(room: NewRoom): Promise<StoredRoom>;
   listRooms(): Promise<StoredRoom[]>;
   findRoomByInviteToken(inviteToken: string): Promise<StoredRoom | null>;
   findRoomById(roomId: string): Promise<StoredRoom | null>;
   deleteRoom(roomId: string): Promise<boolean>;
-  joinRoom(roomId: string, displayName: string, joinKeyHash: string): Promise<JoinedParticipant>;
+  joinRoomWithCode(roomId: string, code: string, joinKeyHash: string): Promise<JoinWithCodeResult>;
+  generateMemberAccessCodes(roomId: string): Promise<StoredAccessCode[]>;
+  createSimulatedAccessCodes(roomId: string, count: number): Promise<StoredAccessCode[]>;
+  listAccessCodes(roomId: string): Promise<StoredAccessCode[]>;
+  revokeAccessCode(roomId: string, codeId: string): Promise<StoredAccessCode | null>;
+  revokeAllAccessCodes(roomId: string): Promise<number>;
   removePresentParticipants(roomId: string, limit: number): Promise<number>;
   countPresent(roomId: string): Promise<number>;
   listCandidates(roomId: string): Promise<StoredCandidate[]>;
+  listAllCandidates(roomId: string): Promise<StoredCandidate[]>;
   listCandidatesByRooms(roomIds: string[]): Promise<StoredCandidate[]>;
-  openRound(roomId: string, eligibleCandidateIds?: readonly string[]): Promise<OpenRoundResult>;
+  openRound(
+    roomId: string,
+    eligibleCandidateIds?: readonly string[],
+    officeLabel?: string | null,
+  ): Promise<OpenRoundResult>;
+  listRounds(roomId: string): Promise<StoredRound[]>;
   closeRound(
     roomId: string,
     roundId: string,
@@ -117,10 +144,10 @@ export type RoomRepository = {
     roomId: string;
     roundId: string;
     joinKeyHash: string;
-    candidateId: string;
+    candidateId: string | null;
   }): Promise<CastBallotResult>;
   hasVotedInRound(roomId: string, roundId: string, joinKeyHash: string): Promise<boolean>;
-  listRoundBallotCandidateIds(roundId: string): Promise<string[]>;
+  listRoundBallotCandidateIds(roundId: string): Promise<(string | null)[]>;
   listRoundReceiptTimestamps(roundId: string): Promise<Date[]>;
   importMembers(
     rows: readonly ValidMemberImportRow[],

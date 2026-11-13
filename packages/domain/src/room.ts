@@ -1,7 +1,15 @@
 import type { QuorumUnit } from "./quorum.js";
 import type { RulesPreset } from "./rounds.js";
 
-export const ROOM_TYPES = ["pastor", "elder", "deacon", "upa_board", "custom"] as const;
+export const ROOM_TYPES = [
+  "pastor",
+  "elder",
+  "deacon",
+  "session_board",
+  "upa_board",
+  "ump_board",
+  "custom",
+] as const;
 export type RoomType = (typeof ROOM_TYPES)[number];
 
 export const CREATE_ROOM_STATUSES = ["draft", "open"] as const;

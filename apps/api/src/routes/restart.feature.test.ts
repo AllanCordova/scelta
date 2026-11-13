@@ -4,6 +4,7 @@ import {
   candidates,
   createPgliteDatabase,
   participants,
+  roomMemberCodes,
   rooms,
   rounds,
   voteReceipts,
@@ -71,6 +72,7 @@ describe("round lifecycle and restart", () => {
     await db.delete(candidates);
     await db.delete(rounds);
     await db.delete(participants);
+    await db.delete(roomMemberCodes);
     await db.delete(rooms);
   });
 
@@ -171,6 +173,7 @@ describe("round lifecycle and restart", () => {
       restartCount: 1,
       tally: {
         totalVotes: 2,
+        nullVotes: 0,
         threshold: 2,
         outcome: "elected",
         winnerId: silas.id,
@@ -286,7 +289,9 @@ describe("round lifecycle and restart", () => {
     expect(missingRound.statusCode).toBe(404);
     expect(missingRound.json()).toEqual({ error: "round_not_found" });
 
-    await closeRound(app, room.id, roundId);
+    expect((await castVote(app, room.inviteToken, anaKey, null)).statusCode).toBe(201);
+    const closedRound = await closeRound(app, room.id, roundId);
+    expect(closedRound.statusCode).toBe(200);
     const restartClosed = await restartRound(app, room.id, roundId);
     expect(restartClosed.statusCode).toBe(409);
     expect(restartClosed.json()).toEqual({ error: "round_not_open" });
@@ -322,16 +327,18 @@ describe("round lifecycle and restart", () => {
     };
   }
 
-  function join(
+  async function join(
     app: Awaited<ReturnType<typeof buildApp>>,
     token: string,
-    displayName: string,
+    _displayName: string,
     joinKey: string,
   ) {
+    const room = await repository.findRoomByInviteToken(token);
+    const [simCode] = room ? await repository.createSimulatedAccessCodes(room.id, 1) : [];
     return app.inject({
       method: "POST",
       url: `/v1/join/${token}`,
-      payload: { displayName, joinKey },
+      payload: { code: simCode?.code ?? "ZZZZZZ", joinKey },
     });
   }
 
@@ -367,7 +374,7 @@ describe("round lifecycle and restart", () => {
     app: Awaited<ReturnType<typeof buildApp>>,
     token: string,
     joinKey: string,
-    candidateId: string,
+    candidateId: string | null,
   ) {
     return app.inject({
       method: "POST",

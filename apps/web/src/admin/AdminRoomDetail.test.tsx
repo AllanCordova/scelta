@@ -76,6 +76,25 @@ describe("AdminRoomDetail", () => {
         if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
           return json({ room: currentRoom });
         }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        if (
+          url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes/simulate`) &&
+          method === "POST"
+        ) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { count?: number };
+          const total = body.count ?? 1;
+          const accessCodes = Array.from({ length: total }, (_, idx) => ({
+            id: `sim-${idx + 1}`,
+            memberId: null,
+            displayName: `Simulado ${idx + 1}`,
+            code: `SIM00${idx + 1}`,
+            revokedAt: null,
+            createdAt: "2026-11-13T12:00:00.000Z",
+          }));
+          return json({ accessCodes });
+        }
         if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/rounds/round-1/close`) && method === "POST") {
           const closedRound = {
             id: "round-1",
@@ -151,6 +170,25 @@ describe("AdminRoomDetail", () => {
         if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
           return json({ room: currentRoom });
         }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        if (
+          url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes/simulate`) &&
+          method === "POST"
+        ) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { count?: number };
+          const total = body.count ?? 1;
+          const accessCodes = Array.from({ length: total }, (_, idx) => ({
+            id: `sim-${idx + 1}`,
+            memberId: null,
+            displayName: `Simulado ${idx + 1}`,
+            code: `SIM00${idx + 1}`,
+            revokedAt: null,
+            createdAt: "2026-11-13T12:00:00.000Z",
+          }));
+          return json({ accessCodes });
+        }
         if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/rounds`) && method === "POST") {
           const opened = { id: "round-1", number: 1, status: "open" as const, outcome: null };
           currentRoom = { ...currentRoom, round: opened };
@@ -205,6 +243,25 @@ describe("AdminRoomDetail", () => {
         const method = init?.method ?? "GET";
         if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
           return json({ room: currentRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        if (
+          url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes/simulate`) &&
+          method === "POST"
+        ) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { count?: number };
+          const total = body.count ?? 1;
+          const accessCodes = Array.from({ length: total }, (_, idx) => ({
+            id: `sim-${idx + 1}`,
+            memberId: null,
+            displayName: `Simulado ${idx + 1}`,
+            code: `SIM00${idx + 1}`,
+            revokedAt: null,
+            createdAt: "2026-11-13T12:00:00.000Z",
+          }));
+          return json({ accessCodes });
         }
         if (url.endsWith(`/v1/join/${sampleRoom.inviteToken}`) && method === "POST") {
           joinedCount += 1;
@@ -296,6 +353,110 @@ describe("AdminRoomDetail", () => {
     }
     await waitFor(() => {
       expect(screen.getAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(3);
+    });
+  });
+
+  it("renders IPB board offices and lets admin follow IPB order or pick an unelected office", async () => {
+    let openedOfficePayload: string | undefined;
+    const boardRoom: RoomDetail = {
+      ...sampleRoom,
+      roomType: "ump_board",
+      rulesPreset: "ipb_society_board",
+      round: {
+        id: "round-1",
+        number: 1,
+        officeLabel: "Presidente",
+        officeRoundNumber: 1,
+        status: "closed",
+        outcome: "elected",
+      },
+      offices: [
+        {
+          officeLabel: "Presidente",
+          order: 1,
+          status: "elected",
+          roundCount: 1,
+          winnerCandidateId: "cand-1",
+          winnerName: "Paulo",
+        },
+        {
+          officeLabel: "Vice-Presidente",
+          order: 2,
+          status: "pending",
+          roundCount: 0,
+          winnerCandidateId: null,
+          winnerName: null,
+        },
+        {
+          officeLabel: "1º Secretário",
+          order: 3,
+          status: "pending",
+          roundCount: 0,
+          winnerCandidateId: null,
+          winnerName: null,
+        },
+        {
+          officeLabel: "2º Secretário",
+          order: 4,
+          status: "pending",
+          roundCount: 0,
+          winnerCandidateId: null,
+          winnerName: null,
+        },
+        {
+          officeLabel: "Tesoureiro",
+          order: 5,
+          status: "pending",
+          roundCount: 0,
+          winnerCandidateId: null,
+          winnerName: null,
+        },
+      ],
+      recommendedOffice: "Vice-Presidente",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: boardRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/rounds`) && method === "POST") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { officeLabel?: string };
+          openedOfficePayload = body.officeLabel;
+          return json({
+            round: {
+              id: "round-2",
+              number: 2,
+              officeLabel: body.officeLabel ?? "Vice-Presidente",
+              officeRoundNumber: 1,
+              status: "open",
+              outcome: null,
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    expect(await screen.findByText("Cargos da Diretoria (Ordem IPB)")).toBeInTheDocument();
+    expect(screen.getByText("Eleito: Paulo")).toBeInTheDocument();
+
+    const select = screen.getByLabelText("Cargo para votação") as HTMLSelectElement;
+    expect(select.value).toBe("Vice-Presidente");
+
+    fireEvent.change(select, { target: { value: "Tesoureiro" } });
+    fireEvent.click(screen.getByRole("button", { name: "Abrir escrutínio — Tesoureiro" }));
+
+    await waitFor(() => {
+      expect(openedOfficePayload).toBe("Tesoureiro");
     });
   });
 });

@@ -3,7 +3,10 @@ import {
   canPublishWinner,
   canRestartRound,
   closeRoundOutcome,
+  countOfficeRoundNumber,
+  isMultiOfficeRoomType,
   resolveNextRoundCandidateIds,
+  resolveTargetOffice,
   tallyRoundVotes,
   type RoundResult,
   type RoundTally,
@@ -13,6 +16,7 @@ import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
 import { requireAdmin } from "../auth/require-admin.js";
 import type { PresencePublisher } from "../realtime.js";
+import { loadRoomOfficeState } from "../rooms/office-state.js";
 import { quorumStatus } from "../rooms/quorum-status.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
 import { toRoundSummary } from "../rooms/round-summary.js";
@@ -48,7 +52,7 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
 
       const parsedBody = parseOpenRoundBody(request.body);
       if (!parsedBody.ok) {
-        return reply.code(400).send({ error: "invalid_candidate_subset" });
+        return reply.code(400).send({ error: parsedBody.error });
       }
 
       const { roomId } = request.params as { roomId: string };
@@ -61,8 +65,12 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "room_not_open" });
         }
 
-        const latest = await repository.latestRounds([room.id]);
-        if (latest[0]?.status === "open") {
+        const [allRounds, allRoomCandidates, eligibleRoomCandidates] = await Promise.all([
+          repository.listRounds(room.id),
+          repository.listAllCandidates(room.id),
+          repository.listCandidates(room.id),
+        ]);
+        if (allRounds.some((row) => row.status === "open")) {
           return reply.code(409).send({ error: "round_already_open" });
         }
 
@@ -72,30 +80,67 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "quorum_not_met" });
         }
 
-        const [latestClosed, roomCandidates] = await Promise.all([
-          repository.latestClosedRound(room.id),
-          repository.listCandidates(room.id),
-        ]);
+        const officeResolution = resolveTargetOffice(
+          room.roomType,
+          allRounds,
+          parsedBody.officeLabel,
+        );
+        if (!officeResolution.ok) {
+          if (officeResolution.reason === "invalid_office") {
+            return reply.code(400).send({ error: "invalid_office" });
+          }
+          return reply.code(409).send({ error: officeResolution.reason });
+        }
+
+        const targetOffice = officeResolution.officeLabel;
+        const officeRounds = allRounds.filter((round) => round.officeLabel === targetOffice);
+        const latestClosedForOffice = [...officeRounds]
+          .filter((round) => round.status === "closed")
+          .sort((a, b) => b.number - a.number)[0] ?? null;
+        const isFirstRoundOfOffice = officeRounds.length === 0;
+        let candidatePool = isFirstRoundOfOffice ? allRoomCandidates : eligibleRoomCandidates;
+        if (isFirstRoundOfOffice && isMultiOfficeRoomType(room.roomType) && allRounds.length > 0) {
+          const officeState = await loadRoomOfficeState(
+            repository,
+            room,
+            allRoomCandidates,
+            allRounds,
+          );
+          const electedIds = new Set(
+            officeState.offices
+              .map((item) => item.winnerCandidateId)
+              .filter((id): id is string => id !== null),
+          );
+          if (electedIds.size > 0) {
+            candidatePool = candidatePool.filter((candidate) => !electedIds.has(candidate.id));
+          }
+        }
 
         let previousTallies: TallyEntry[] = [];
         if (
-          latestClosed &&
-          latestClosed.outcome === "no_majority" &&
-          roomCandidates.length > 0
+          latestClosedForOffice &&
+          latestClosedForOffice.outcome === "no_majority" &&
+          candidatePool.length > 0
         ) {
-          const ballotCandidateIds = await repository.listRoundBallotCandidateIds(latestClosed.id);
-          const tally = tallyRoundVotes(roomCandidates, ballotCandidateIds);
+          const ballotCandidateIds = await repository.listRoundBallotCandidateIds(
+            latestClosedForOffice.id,
+          );
+          const tally = tallyRoundVotes(candidatePool, ballotCandidateIds);
           previousTallies = tally.standings.map((standing) => ({
             candidateId: standing.candidateId,
             votes: standing.votes,
           }));
         }
 
+        const previousOfficeRoundNumber = latestClosedForOffice
+          ? countOfficeRoundNumber(allRounds, latestClosedForOffice)
+          : null;
+
         const resolved = resolveNextRoundCandidateIds({
           preset: room.rulesPreset,
-          previousRoundNumber: latestClosed?.number ?? null,
-          previousOutcome: latestClosed?.outcome ?? null,
-          eligibleCandidateIds: roomCandidates.map((candidate) => candidate.id),
+          previousRoundNumber: previousOfficeRoundNumber,
+          previousOutcome: latestClosedForOffice?.outcome ?? null,
+          eligibleCandidateIds: candidatePool.map((candidate) => candidate.id),
           previousTallies,
           ...(parsedBody.candidateIds === undefined
             ? {}
@@ -109,22 +154,27 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(400).send({ error: "invalid_candidate_subset" });
         }
 
-        const opened = await repository.openRound(room.id, resolved.candidateIds);
+        const opened = await repository.openRound(room.id, resolved.candidateIds, targetOffice);
         if (!opened.ok) {
           return reply.code(409).send({ error: opened.reason });
         }
 
+        const officeRoundNumber = officeRounds.length + 1;
+
         options.presencePublisher?.publishRoundState?.(room.id, {
           roundId: opened.round.id,
           roundNumber: opened.round.number,
+          ...(opened.round.officeLabel !== null
+            ? { officeLabel: opened.round.officeLabel, officeRoundNumber }
+            : {}),
           state: "open",
         });
 
         const activeSet = new Set(resolved.candidateIds);
-        const activeCandidates = roomCandidates.filter((candidate) => activeSet.has(candidate.id));
+        const activeCandidates = candidatePool.filter((candidate) => activeSet.has(candidate.id));
 
         return reply.code(201).send({
-          round: toRoundSummary(opened.round),
+          round: toRoundSummary(opened.round, null, officeRoundNumber),
           ...(activeCandidates.length > 0
             ? {
                 candidates: activeCandidates.map((candidate) => ({
@@ -171,9 +221,25 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         let outcome: RoundResult | null = closeRoundOutcome(quorum.quorumMet);
 
         if (quorum.quorumMet) {
+          const ballotCandidateIds = await repository.listRoundBallotCandidateIds(roundId);
+          const votedCount = ballotCandidateIds.length;
+          if (votedCount < presentCount) {
+            return reply.code(409).send({
+              error: "voting_incomplete",
+              votedCount,
+              presentCount,
+            });
+          }
+          if (votedCount > presentCount) {
+            return reply.code(409).send({
+              error: "vote_count_mismatch",
+              votedCount,
+              presentCount,
+            });
+          }
+
           const candidates = await repository.listCandidates(roomId);
           if (candidates.length > 0) {
-            const ballotCandidateIds = await repository.listRoundBallotCandidateIds(roundId);
             tally = tallyRoundVotes(candidates, ballotCandidateIds);
             outcome = tally.outcome;
           }
@@ -184,13 +250,19 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "round_not_open" });
         }
 
+        const allRounds = await repository.listRounds(room.id);
+        const officeRoundNumber = countOfficeRoundNumber(allRounds, closed);
+
         options.presencePublisher?.publishRoundState?.(room.id, {
           roundId: closed.id,
           roundNumber: closed.number,
+          ...(closed.officeLabel !== null
+            ? { officeLabel: closed.officeLabel, officeRoundNumber }
+            : {}),
           state: "closed",
         });
 
-        return { round: toRoundSummary(closed, tally), quorum };
+        return { round: toRoundSummary(closed, tally, officeRoundNumber), quorum };
       } catch (error) {
         request.log.error({ err: error, roomId, roundId }, "Failed to close round");
         return reply.code(500).send({ error: "persistence_failed" });
@@ -229,13 +301,19 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "round_not_open" });
         }
 
+        const allRounds = await repository.listRounds(room.id);
+        const officeRoundNumber = countOfficeRoundNumber(allRounds, restarted);
+
         options.presencePublisher?.publishRoundState?.(room.id, {
           roundId: restarted.id,
           roundNumber: restarted.number,
+          ...(restarted.officeLabel !== null
+            ? { officeLabel: restarted.officeLabel, officeRoundNumber }
+            : {}),
           state: "restarted",
         });
 
-        return { round: toRoundSummary(restarted) };
+        return { round: toRoundSummary(restarted, null, officeRoundNumber) };
       } catch (error) {
         request.log.error({ err: error, roomId, roundId }, "Failed to restart round");
         return reply.code(500).send({ error: "persistence_failed" });
@@ -295,30 +373,50 @@ async function adminRepository(
 
 function parseOpenRoundBody(
   body: unknown,
-): { ok: true; candidateIds?: string[] } | { ok: false } {
+):
+  | { ok: true; candidateIds?: string[]; officeLabel?: string }
+  | { ok: false; error: "invalid_office" | "invalid_candidate_subset" } {
   if (body === undefined || body === null) {
     return { ok: true };
   }
   if (typeof body !== "object" || Array.isArray(body)) {
-    return { ok: false };
+    return { ok: false, error: "invalid_candidate_subset" };
   }
 
   const record = body as Record<string, unknown>;
   const keys = Object.keys(record);
-  if (keys.some((key) => key !== "candidateIds")) {
-    return { ok: false };
-  }
-  if (record.candidateIds === undefined) {
-    return { ok: true };
-  }
-  if (!Array.isArray(record.candidateIds) || record.candidateIds.length > 50) {
-    return { ok: false };
-  }
-  for (const item of record.candidateIds) {
-    if (typeof item !== "string" || !UUID_PATTERN.test(item)) {
-      return { ok: false };
-    }
+  if (keys.some((key) => key !== "candidateIds" && key !== "officeLabel")) {
+    return { ok: false, error: "invalid_candidate_subset" };
   }
 
-  return { ok: true, candidateIds: record.candidateIds as string[] };
+  let officeLabel: string | undefined;
+  if (record.officeLabel !== undefined) {
+    if (typeof record.officeLabel !== "string") {
+      return { ok: false, error: "invalid_office" };
+    }
+    const trimmed = record.officeLabel.trim();
+    if (trimmed.length === 0 || trimmed.length > 100) {
+      return { ok: false, error: "invalid_office" };
+    }
+    officeLabel = trimmed;
+  }
+
+  let candidateIds: string[] | undefined;
+  if (record.candidateIds !== undefined) {
+    if (!Array.isArray(record.candidateIds) || record.candidateIds.length > 50) {
+      return { ok: false, error: "invalid_candidate_subset" };
+    }
+    for (const item of record.candidateIds) {
+      if (typeof item !== "string" || !UUID_PATTERN.test(item)) {
+        return { ok: false, error: "invalid_candidate_subset" };
+      }
+    }
+    candidateIds = record.candidateIds as string[];
+  }
+
+  return {
+    ok: true,
+    ...(candidateIds === undefined ? {} : { candidateIds }),
+    ...(officeLabel === undefined ? {} : { officeLabel }),
+  };
 }

@@ -21,6 +21,7 @@ export type BallotCandidate = {
 
 export type BallotTally = {
   totalVotes: number;
+  nullVotes?: number;
   threshold: number;
   outcome: "elected" | "no_majority";
   winnerId: string | null;
@@ -35,15 +36,25 @@ export type BallotTally = {
 export type BallotRoundState = {
   id: string;
   number: number;
+  officeLabel?: string | null;
+  officeRoundNumber?: number;
   status: string;
   outcome: string | null;
   restartCount?: number;
   tally?: BallotTally;
 };
 
+export type BallotOfficeSummary = {
+  officeLabel: string;
+  order: number;
+  status: string;
+  winnerName: string | null;
+};
+
 export type BallotState = {
   roomStatus: string;
   candidates: BallotCandidate[];
+  offices?: BallotOfficeSummary[];
   round: BallotRoundState | null;
 };
 
@@ -70,7 +81,7 @@ export async function fetchJoinPreview(apiBase: string, token: string): Promise<
 export async function submitJoin(
   apiBase: string,
   token: string,
-  identity: { displayName: string; joinKey: string },
+  identity: { code: string; joinKey: string },
 ): Promise<JoinResult> {
   const response = await fetch(`${apiBase}/v1/join/${encodeURIComponent(token)}`, {
     method: "POST",
@@ -150,7 +161,7 @@ export async function fetchVoteReceipt(
 export async function submitBallot(
   apiBase: string,
   token: string,
-  payload: { joinKey: string; candidateId: string },
+  payload: { joinKey: string; candidateId: string | null },
 ): Promise<BallotReceipt> {
   const response = await fetch(`${apiBase}/v1/join/${encodeURIComponent(token)}/ballot`, {
     method: "POST",

@@ -24,11 +24,13 @@ test("admin sees presence against quorum and cannot open round until quorum is m
     throw new Error("Missing invite link");
   }
 
-  for (const name of ["Ana", "Bia"]) {
+  const codes = await createSimulatedCodes(page, title, 2);
+
+  for (const code of codes) {
     const context = await browser.newContext();
     const visitor = await context.newPage();
     await visitor.goto(href);
-    await visitor.getByLabel("Seu nome").fill(name);
+    await visitor.getByLabel("Código de acesso").fill(code);
     await visitor.getByRole("button", { name: "Entrar na sala" }).click();
     await expect(visitor.getByRole("heading", { name: "Você entrou" })).toBeVisible();
     await context.close();
@@ -62,9 +64,10 @@ test("admin sees quorum met when required presence joins and closes without fail
   await expect(item.getByText("0 / 1", { exact: true })).toBeVisible();
   await expect(item.getByText("Abaixo do quórum", { exact: true })).toBeVisible();
 
+  const [code] = await createSimulatedCodes(page, title, 1);
   const visitor = await page.context().newPage();
   await visitor.goto(href);
-  await visitor.getByLabel("Seu nome").fill("Maria Oliveira");
+  await visitor.getByLabel("Código de acesso").fill(code!);
   await visitor.getByRole("button", { name: "Entrar na sala" }).click();
   await expect(visitor.getByRole("heading", { name: "Você entrou" })).toBeVisible();
 
@@ -72,10 +75,28 @@ test("admin sees quorum met when required presence joins and closes without fail
   await expect(item.getByText("Quórum atingido", { exact: true })).toBeVisible();
 
   await item.getByRole("button", { name: "Abrir escrutínio" }).click();
+  await visitor.getByRole("button", { name: "Voto Nulo / Em Branco" }).click();
+  await visitor.getByRole("button", { name: "Confirmar voto" }).click();
+  await expect(visitor.getByRole("status")).toContainText("seu voto foi registrado com sigilo");
   await item.getByRole("button", { name: "Encerrar escrutínio" }).click();
   await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeVisible();
   await expect(item.getByRole("status")).not.toContainText("Quórum não atingido");
 });
+
+async function createSimulatedCodes(page: Page, roomTitle: string, count: number): Promise<string[]> {
+  const roomsRes = await page.request.get("http://127.0.0.1:3334/v1/admin/rooms");
+  const { rooms } = (await roomsRes.json()) as { rooms: Array<{ id: string; title: string }> };
+  const room = rooms.find((r) => r.title === roomTitle);
+  if (!room) {
+    throw new Error(`Room not found: ${roomTitle}`);
+  }
+  const simRes = await page.request.post(
+    `http://127.0.0.1:3334/v1/admin/rooms/${room.id}/access-codes/simulate`,
+    { data: { count } },
+  );
+  const { accessCodes } = (await simRes.json()) as { accessCodes: Array<{ code: string }> };
+  return accessCodes.map((c) => c.code);
+}
 
 async function loginAsAdmin(page: Page) {
   await page.goto("/entrar");

@@ -26,6 +26,19 @@ export type SuggestedCandidate = {
 const DEFAULT_MIN_AGE_YEARS = 18;
 const DEFAULT_MIN_SOCIETY_MONTHS = 6;
 
+export function isMemberEligibleVoter(
+  member: Pick<CandidateMemberRecord, "isCommunicant" | "societyFlags">,
+  roomType: RoomType,
+): boolean {
+  if (roomType === "upa_board") {
+    return member.societyFlags.upaActive === true;
+  }
+  if (roomType === "ump_board") {
+    return member.societyFlags.umpActive === true;
+  }
+  return member.isCommunicant;
+}
+
 export function isMemberEligibleForRoomType(
   member: CandidateMemberRecord,
   options: CandidateFilterOptions,
@@ -38,7 +51,8 @@ export function isMemberEligibleForRoomType(
   if (
     options.roomType === "pastor" ||
     options.roomType === "elder" ||
-    options.roomType === "deacon"
+    options.roomType === "deacon" ||
+    options.roomType === "session_board"
   ) {
     if (!member.isCommunicant) {
       return false;
@@ -62,23 +76,21 @@ export function isMemberEligibleForRoomType(
   }
 
   if (options.roomType === "upa_board") {
-    if (member.societyFlags.upaActive !== true) {
-      return false;
-    }
-    if (minSocietyMonths > 0) {
-      const enrolledAt = member.societyFlags.upaEnrolledAt;
-      if (!enrolledAt) {
-        return false;
-      }
-      const enrolled = parseCalendarParts(enrolledAt);
-      if (!enrolled) {
-        return false;
-      }
-      if (completedMonthsBetween(enrolled, reference) < minSocietyMonths) {
-        return false;
-      }
-    }
-    return true;
+    return isSocietyMemberEligible(
+      member.societyFlags.upaActive,
+      member.societyFlags.upaEnrolledAt,
+      reference,
+      minSocietyMonths,
+    );
+  }
+
+  if (options.roomType === "ump_board") {
+    return isSocietyMemberEligible(
+      member.societyFlags.umpActive,
+      member.societyFlags.umpEnrolledAt,
+      reference,
+      minSocietyMonths,
+    );
   }
 
   // custom room type: requires communicant member
@@ -99,6 +111,30 @@ export function suggestCandidates(
     }
   }
   return eligible;
+}
+
+function isSocietyMemberEligible(
+  active: boolean | undefined,
+  enrolledAt: string | undefined,
+  reference: CalendarParts,
+  minSocietyMonths: number,
+): boolean {
+  if (active !== true) {
+    return false;
+  }
+  if (minSocietyMonths > 0) {
+    if (!enrolledAt) {
+      return false;
+    }
+    const enrolled = parseCalendarParts(enrolledAt);
+    if (!enrolled) {
+      return false;
+    }
+    if (completedMonthsBetween(enrolled, reference) < minSocietyMonths) {
+      return false;
+    }
+  }
+  return true;
 }
 
 type CalendarParts = {

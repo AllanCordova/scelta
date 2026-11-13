@@ -29,7 +29,13 @@ describe("presence copy", () => {
     expect(roundErrorMessage("room_not_open")).toBe("Abra a sala antes do escrutínio.");
     expect(roundErrorMessage("round_already_open")).toBe("Já existe um escrutínio aberto.");
     expect(roundErrorMessage("round_not_open")).toBe("Esse escrutínio não está aberto.");
-    expect(roundErrorMessage("winner_already_elected")).toBe("Esta sala já elegeu um vencedor.");
+    expect(roundErrorMessage("winner_already_elected")).toBe(
+      "Este cargo ou sala já elegeu um vencedor.",
+    );
+    expect(roundErrorMessage("all_offices_elected")).toBe(
+      "Todos os cargos da diretoria já foram eleitos.",
+    );
+    expect(roundErrorMessage("invalid_office")).toBe("Cargo inválido para este tipo de sala.");
     expect(roundErrorMessage("invalid_candidate_subset")).toBe(
       "Conjunto de candidatos inválido para o próximo escrutínio.",
     );

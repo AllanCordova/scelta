@@ -1,8 +1,14 @@
-import { canOpenRound, tallyRoundVotes, type RoundTally } from "@scelta/domain";
+import {
+  canOpenRound,
+  countOfficeRoundNumber,
+  tallyRoundVotes,
+  type RoundTally,
+} from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
 import type { PresencePublisher } from "../realtime.js";
 import { hashJoinKey } from "../rooms/join-key.js";
+import { loadRoomOfficeState } from "../rooms/office-state.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
 import { toRoundSummary } from "../rooms/round-summary.js";
 
@@ -19,7 +25,7 @@ const Uuid = Type.String({
 const CastBallotBody = Type.Object(
   {
     joinKey: Type.String({ minLength: 1, maxLength: 128 }),
-    candidateId: Uuid,
+    candidateId: Type.Union([Uuid, Type.Null()]),
   },
   { additionalProperties: false },
 );
@@ -33,7 +39,7 @@ const ReceiptCheckBody = Type.Object(
 
 type CastBallotBodyType = {
   joinKey: string;
-  candidateId: string;
+  candidateId: string | null;
 };
 
 type ReceiptCheckBodyType = {
@@ -66,22 +72,26 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           return reply.code(404).send({ error: "invite_not_found" });
         }
 
-        const [candidates, latest] = await Promise.all([
+        const [candidates, allCandidates, allRounds] = await Promise.all([
           repository.listCandidates(room.id),
-          repository.latestRounds([room.id]),
+          repository.listAllCandidates(room.id),
+          repository.listRounds(room.id),
         ]);
-        const round = latest[0] ?? null;
+        const round = allRounds[allRounds.length - 1] ?? null;
         let tally: RoundTally | null = null;
 
         if (
           round &&
           round.status === "closed" &&
           (round.outcome === "elected" || round.outcome === "no_majority") &&
-          candidates.length > 0
+          allCandidates.length > 0
         ) {
           const ballotCandidateIds = await repository.listRoundBallotCandidateIds(round.id);
-          tally = tallyRoundVotes(candidates, ballotCandidateIds);
+          tally = tallyRoundVotes(allCandidates, ballotCandidateIds);
         }
+
+        const officeState = await loadRoomOfficeState(repository, room, allCandidates, allRounds);
+        const officeRoundNumber = round ? countOfficeRoundNumber(allRounds, round) : undefined;
 
         return {
           roomStatus: room.status,
@@ -89,7 +99,13 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
             id: candidate.id,
             displayName: candidate.displayName,
           })),
-          round: toRoundSummary(round, tally),
+          offices: officeState.offices.map(({ officeLabel, order, status, winnerName }) => ({
+            officeLabel,
+            order,
+            status,
+            winnerName,
+          })),
+          round: toRoundSummary(round, tally, officeRoundNumber),
         };
       } catch (error) {
         request.log.error({ err: error }, "Failed to load ballot state");
@@ -178,7 +194,10 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
         });
 
         if (!result.ok) {
-          if (result.reason === "participant_not_present") {
+          if (
+            result.reason === "participant_not_present" ||
+            result.reason === "access_code_revoked"
+          ) {
             return reply.code(403).send({ error: result.reason });
           }
           if (result.reason === "invalid_candidate") {

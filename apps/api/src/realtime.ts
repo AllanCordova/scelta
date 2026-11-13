@@ -13,6 +13,8 @@ export type RoundStateSnapshot = {
   roundId: string;
   roundNumber: number;
   state: RoundLifecycleState;
+  officeLabel?: string | null;
+  officeRoundNumber?: number;
 };
 
 export type PresencePublisher = {

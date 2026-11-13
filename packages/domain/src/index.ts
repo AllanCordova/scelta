@@ -57,8 +57,14 @@ export {
   type ValidRoomConfig,
 } from "./room.js";
 export {
+  ACCESS_CODE_ALPHABET,
+  ACCESS_CODE_LENGTH,
   canJoinRoom,
+  normalizeAccessCode,
+  validateAccessCodeJoin,
   validateJoinIdentity,
+  type AccessCodeJoinFieldError,
+  type AccessCodeJoinInput,
   type JoinFieldError,
   type JoinIdentity,
 } from "./join.js";
@@ -74,8 +80,26 @@ export {
 } from "./member-import.js";
 export {
   isMemberEligibleForRoomType,
+  isMemberEligibleVoter,
   suggestCandidates,
   type CandidateFilterOptions,
   type CandidateMemberRecord,
   type SuggestedCandidate,
 } from "./candidate-suggestions.js";
+export {
+  IPB_SESSION_BOARD_OFFICES,
+  IPB_SOCIETY_BOARD_OFFICES,
+  buildOfficeProgress,
+  countOfficeRoundNumber,
+  getElectedCandidateIds,
+  isMultiOfficeRoomType,
+  isValidOfficeForRoomType,
+  officesForRoomType,
+  resolveTargetOffice,
+  type IpbSessionBoardOffice,
+  type IpbSocietyBoardOffice,
+  type OfficeProgressItem,
+  type OfficeProgressStatus,
+  type OfficeRoundSnapshot,
+  type ResolveTargetOfficeResult,
+} from "./offices.js";

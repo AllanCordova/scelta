@@ -53,7 +53,7 @@ Convocation must be at least **7 days** in advance.
 
 ---
 
-## B. Internal societies — UPA (and similar: SAF)
+## B. Internal societies — UPA, UMP (and similar: SAF)
 
 ### Quorum (GTSI UPA)
 
@@ -62,7 +62,7 @@ Convocation must be at least **7 days** in advance.
 
 ### Election procedure (GTSI UPA art. 120)
 
-- Annual; **secret** ballot; **office by office**.
+- Annual; **secret** ballot; **office by office** in the mandatory IPB GTSI order: **Presidente → Vice-Presidente → 1º Secretário → 2º Secretário → Tesoureiro** (with admin option to select another unelected office if needed).
 - Only **active** members vote.
 - Candidates: active members who have been UPA members for **more than six months** (plus other art. 6 prerequisites).
 - If on the **1st and 2nd** ballots nobody reaches **absolute majority**, a **3rd** ballot is held with the **two** most voted candidates.
@@ -91,7 +91,7 @@ Convocation must be at least **7 days** in advance.
 Independent of preset, every voting room should support:
 
 1. **Admin-defined quorum** (absolute count or percentage of an eligible list).
-2. **Quorum gate** before a result can be published (see section D). Opening a round does not require quorum; closing one does.
+2. **Quorum gate** before opening a round and before a result can be published (see section D).
 3. **Anonymous ballots** (system knows *that* a person voted, not *for whom*).
 4. **One vote per person per round** (and per office when electing office-by-office).
 5. **Start / pause / restart** controlled by admin (restart only with audit trail).

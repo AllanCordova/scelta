@@ -92,17 +92,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS rooms_invite_token_uidx ON rooms (invite_token
 
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS eligible_count integer NOT NULL DEFAULT 0;
 
+CREATE TABLE IF NOT EXISTS room_member_codes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id uuid NOT NULL REFERENCES rooms (id),
+  member_id uuid REFERENCES members (id),
+  display_name text NOT NULL,
+  code text NOT NULL,
+  is_simulated boolean NOT NULL DEFAULT false,
+  revoked_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS room_member_codes_room_code_uidx
+  ON room_member_codes (room_id, code);
+CREATE UNIQUE INDEX IF NOT EXISTS room_member_codes_active_member_uidx
+  ON room_member_codes (room_id, member_id)
+  WHERE revoked_at IS NULL AND member_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS participants (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   room_id uuid NOT NULL REFERENCES rooms (id),
   member_id uuid REFERENCES members (id),
+  access_code_id uuid REFERENCES room_member_codes (id),
   display_name text NOT NULL,
   join_key_hash text NOT NULL,
   is_present boolean NOT NULL DEFAULT true,
   joined_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE participants ADD COLUMN IF NOT EXISTS access_code_id uuid REFERENCES room_member_codes (id);
 CREATE UNIQUE INDEX IF NOT EXISTS participants_room_member_uidx ON participants (room_id, member_id);
+CREATE UNIQUE INDEX IF NOT EXISTS participants_room_access_code_uidx
+  ON participants (room_id, access_code_id)
+  WHERE access_code_id IS NOT NULL;
 
 -- Rooms created before join keys already have the table. Backfill those rows, then enforce the column.
 ALTER TABLE participants ADD COLUMN IF NOT EXISTS join_key_hash text;
@@ -145,10 +167,12 @@ CREATE TABLE IF NOT EXISTS candidates (
 CREATE TABLE IF NOT EXISTS ballots (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   round_id uuid NOT NULL REFERENCES rounds (id),
-  candidate_id uuid NOT NULL REFERENCES candidates (id),
+  candidate_id uuid REFERENCES candidates (id),
   ballot_token text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE ballots ALTER COLUMN candidate_id DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS vote_receipts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

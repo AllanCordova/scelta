@@ -8,11 +8,13 @@ describe("JoinRoom", () => {
     window.localStorage.clear();
   });
 
-  it("asks for a name and confirms entry", async () => {
+  it("asks for an access code and confirms entry", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as { code: string; joinKey: string };
+          expect(body.code).toBe("A7K9M2");
           return json({
             title: "Eleição de presbíteros",
             status: "open",
@@ -28,25 +30,27 @@ describe("JoinRoom", () => {
     render(<JoinRoom token="invite-token" />);
 
     expect(await screen.findByText("Eleição de presbíteros")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Seu nome"), { target: { value: "João" } });
+    fireEvent.change(screen.getByLabelText("Código de acesso"), { target: { value: "a7k9m2" } });
     fireEvent.click(screen.getByRole("button", { name: "Entrar na sala" }));
 
     expect(await screen.findByRole("heading", { name: "Você entrou" })).toBeInTheDocument();
     expect(screen.getByText("Eleição de presbíteros")).toBeInTheDocument();
+    expect(screen.getByText("João")).toBeInTheDocument();
     expect(screen.getByText("Sua presença foi registrada.")).toBeInTheDocument();
   });
 
-  it("rejoins with the stored name", async () => {
+  it("rejoins with the stored access code", async () => {
     writeJoinIdentity(window.localStorage, "invite-token", {
       joinKey: "a".repeat(32),
       displayName: "João",
+      accessCode: "A7K9M2",
     });
     vi.stubGlobal(
       "fetch",
       vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === "POST") {
-          const body = JSON.parse(String(init.body)) as { displayName: string; joinKey: string };
-          expect(body).toEqual({ displayName: "João", joinKey: "a".repeat(32) });
+          const body = JSON.parse(String(init.body)) as { code: string; joinKey: string };
+          expect(body).toEqual({ code: "A7K9M2", joinKey: "a".repeat(32) });
           return json({
             title: "Eleição de presbíteros",
             status: "open",
@@ -62,7 +66,7 @@ describe("JoinRoom", () => {
     render(<JoinRoom token="invite-token" />);
 
     expect(await screen.findByRole("heading", { name: "Você entrou" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Seu nome")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Código de acesso")).not.toBeInTheDocument();
   });
 
   it("explains an invalid invite", async () => {
@@ -84,7 +88,7 @@ describe("JoinRoom", () => {
 
     expect(await screen.findByRole("heading", { name: "Assembleia" })).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Esta sala foi encerrada.");
-    expect(screen.queryByLabelText("Seu nome")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Código de acesso")).not.toBeInTheDocument();
   });
 
   it("lets a joined voter cast one anonymous vote and hides the chosen candidate on the receipt", async () => {
@@ -92,6 +96,7 @@ describe("JoinRoom", () => {
     writeJoinIdentity(window.localStorage, "invite-token", {
       joinKey: "a".repeat(32),
       displayName: "Ana",
+      accessCode: "A7K9M2",
     });
 
     vi.stubGlobal(
@@ -147,6 +152,7 @@ describe("JoinRoom", () => {
     writeJoinIdentity(window.localStorage, "invite-token", {
       joinKey: "a".repeat(32),
       displayName: "Ana",
+      accessCode: "A7K9M2",
     });
 
     vi.stubGlobal(
@@ -191,6 +197,7 @@ describe("JoinRoom", () => {
     writeJoinIdentity(window.localStorage, "invite-token", {
       joinKey: "a".repeat(32),
       displayName: "Ana",
+      accessCode: "A7K9M2",
     });
 
     vi.stubGlobal(

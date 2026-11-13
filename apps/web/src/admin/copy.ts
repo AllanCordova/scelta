@@ -4,7 +4,9 @@ export const ROOM_TYPE_OPTIONS: { value: RoomType; label: string }[] = [
   { value: "pastor", label: "Pastor" },
   { value: "elder", label: "Presbítero" },
   { value: "deacon", label: "Diácono" },
+  { value: "session_board", label: "Mesa do Conselho" },
   { value: "upa_board", label: "Diretoria UPA" },
+  { value: "ump_board", label: "Diretoria UMP" },
   { value: "custom", label: "Outro" },
 ];
 
@@ -12,7 +14,9 @@ export const ROOM_TYPE_LABELS: Record<RoomType, string> = {
   pastor: "Pastor",
   elder: "Presbítero",
   deacon: "Diácono",
+  session_board: "Mesa do Conselho",
   upa_board: "Diretoria UPA",
+  ump_board: "Diretoria UMP",
   custom: "Sessão Geral",
 };
 
@@ -146,7 +150,15 @@ export function roundErrorMessage(errorCode: string): string {
     case "round_not_open":
       return "Esse escrutínio não está aberto.";
     case "winner_already_elected":
-      return "Esta sala já elegeu um vencedor.";
+      return "Este cargo ou sala já elegeu um vencedor.";
+    case "all_offices_elected":
+      return "Todos os cargos da diretoria já foram eleitos.";
+    case "invalid_office":
+      return "Cargo inválido para este tipo de sala.";
+    case "voting_incomplete":
+      return "Todos os membros presentes precisam votar antes de encerrar o escrutínio.";
+    case "vote_count_mismatch":
+      return "Há mais votos registrados do que membros presentes. Reinicie o escrutínio.";
     case "invalid_candidate_subset":
       return "Conjunto de candidatos inválido para o próximo escrutínio.";
     default:
