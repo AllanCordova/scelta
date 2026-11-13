@@ -323,6 +323,90 @@ describe("JoinRoom", () => {
       { timeout: 2500 },
     );
   });
+
+  it("shows the wisdom verse on the ballot and toggles office guidance with Ler mais", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/join/invite-token") && init?.method === "POST") {
+          return json({
+            title: "Diretoria UPA",
+            status: "open",
+            displayName: "Maria",
+            presentCount: 1,
+            alreadyJoined: false,
+          });
+        }
+        if (url.endsWith("/v1/join/invite-token")) {
+          return json({ title: "Diretoria UPA", status: "open", canJoin: true });
+        }
+        if (url.endsWith("/v1/join/invite-token/ballot")) {
+          return json({
+            roomStatus: "open",
+            roomType: "upa_board",
+            candidates: [{ id: "c1", displayName: "Paulo" }],
+            offices: [
+              {
+                officeLabel: "Presidente",
+                order: 1,
+                status: "elected",
+                winnerName: "Melissa Cerconi",
+                winnerPhotoUrl: "https://example.com/melissa.jpg",
+              },
+              {
+                officeLabel: "Vice-Presidente",
+                order: 2,
+                status: "open",
+                winnerName: null,
+              },
+            ],
+            round: {
+              id: "r1",
+              number: 1,
+              officeLabel: "Presidente",
+              officeRoundNumber: 1,
+              status: "open",
+              outcome: null,
+            },
+          });
+        }
+        return json({});
+      }),
+    );
+
+    render(<JoinRoom token="invite-token" />);
+
+    fireEvent.change(await screen.findByLabelText("Código de acesso"), {
+      target: { value: "A7K9M2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar na sala" }));
+
+    expect(await screen.findByText(/Tiago 1:5/)).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "Ler mais" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Sobre o cargo: Presidente")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: "Ler menos" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByText("Sobre o cargo: Presidente")).toBeInTheDocument();
+    expect(screen.getByText(/Convoca e preside as reuniões/)).toBeInTheDocument();
+    expect(screen.queryByText(/Administra os recursos financeiros/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Ler menos" }));
+    expect(screen.queryByText("Sobre o cargo: Presidente")).not.toBeInTheDocument();
+
+    expect(screen.getByText("Cargos da Diretoria")).toBeInTheDocument();
+    const presidentCard = screen.getByText("1. Presidente").closest("li")!;
+    expect(presidentCard).toHaveTextContent("Melissa Cerconi");
+    expect(presidentCard.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://example.com/melissa.jpg",
+    );
+  });
 });
 
 function json(body: unknown, status = 200) {

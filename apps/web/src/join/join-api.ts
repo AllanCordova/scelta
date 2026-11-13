@@ -50,10 +50,12 @@ export type BallotOfficeSummary = {
   order: number;
   status: string;
   winnerName: string | null;
+  winnerPhotoUrl?: string | null;
 };
 
 export type BallotState = {
   roomStatus: string;
+  roomType?: string;
   candidates: BallotCandidate[];
   offices?: BallotOfficeSummary[];
   round: BallotRoundState | null;
@@ -123,7 +125,9 @@ export async function fetchBallotState(
 
   return {
     roomStatus: typeof body.roomStatus === "string" ? body.roomStatus : "open",
+    roomType: typeof body.roomType === "string" ? body.roomType : undefined,
     candidates: body.candidates,
+    offices: Array.isArray(body.offices) ? body.offices : undefined,
     round: body.round ?? null,
   };
 }

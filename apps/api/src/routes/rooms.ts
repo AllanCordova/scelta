@@ -299,7 +299,15 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
             presence: quorumStatus(room, presentCount),
             votedCount: receiptDates.length,
             receiptTimestamps: receiptDates.map((date) => date.toISOString()),
-            offices: officeState.offices,
+            offices: officeState.offices.map((office) => {
+              const winnerCandidate = office.winnerCandidateId
+                ? allCandidates.find((candidate) => candidate.id === office.winnerCandidateId)
+                : undefined;
+              return {
+                ...office,
+                winnerPhotoUrl: winnerCandidate?.photoUrl ?? null,
+              };
+            }),
             recommendedOffice: officeState.recommendedOffice,
             round: toRoundSummary(
               round,

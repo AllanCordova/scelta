@@ -112,6 +112,7 @@ export type OfficeProgressItem = {
   roundCount: number;
   winnerCandidateId: string | null;
   winnerName: string | null;
+  winnerPhotoUrl?: string | null;
 };
 
 export type RoomDetail = RoomSummary & {
