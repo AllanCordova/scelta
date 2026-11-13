@@ -1,4 +1,4 @@
-import type { FieldError, RoomStatus, RoomType, RulesPreset } from "./types";
+import type { FieldError, RoomStatus, RoomType, RoundTally, RulesPreset } from "./types";
 
 export const ROOM_TYPE_OPTIONS: { value: RoomType; label: string }[] = [
   { value: "pastor", label: "Pastor" },
@@ -61,6 +61,17 @@ export const CLOSE_ROUND_LABEL = "Encerrar escrutínio";
 export const FAILED_QUORUM_MESSAGE =
   "Quórum não atingido. O escrutínio foi encerrado sem eleger ninguém.";
 
+export function tallySummaryLabel(tally: RoundTally): string {
+  if (tally.outcome === "elected" && tally.winnerName) {
+    return `Eleito por maioria absoluta: ${tally.winnerName}`;
+  }
+  return "Sem maioria absoluta neste escrutínio.";
+}
+
+export function standingLabel(displayName: string, votes: number): string {
+  return `${displayName}: ${votes === 1 ? "1 voto" : `${votes} votos`}`;
+}
+
 const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   title: "Informe um título.",
   roomType: "Escolha o tipo da sala.",
@@ -69,6 +80,7 @@ const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   quorumUnit: "Informe a unidade do quórum.",
   eligibleCount: "Número de aptos inválido.",
   status: "Situação inválida.",
+  candidates: "Lista de candidatos inválida.",
 };
 
 export function roomErrorMessage(errorCode: string, field?: FieldError["field"]): string {

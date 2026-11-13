@@ -12,6 +12,26 @@ export type PresetDefinition = {
   roundBehavior: string;
 };
 
+export type CandidateOption = {
+  id: string;
+  displayName: string;
+};
+
+export type CandidateStanding = {
+  candidateId: string;
+  displayName: string;
+  votes: number;
+};
+
+export type RoundTally = {
+  totalVotes: number;
+  threshold: number;
+  outcome: "elected" | "no_majority";
+  winnerId: string | null;
+  winnerName: string | null;
+  standings: CandidateStanding[];
+};
+
 export type RoomSummary = {
   id: string;
   title: string;
@@ -21,6 +41,7 @@ export type RoomSummary = {
   quorumUnit: QuorumUnit;
   eligibleCount: number;
   status: RoomStatus;
+  candidates?: CandidateOption[];
   round: RoomRound | null;
   inviteToken: string;
   invitePath: string;
@@ -39,6 +60,7 @@ export type RoomRound = {
   number: number;
   status: RoundStatus;
   outcome: RoundResult | null;
+  tally?: RoundTally;
 };
 
 export type FieldError = {
@@ -49,6 +71,7 @@ export type FieldError = {
     | "quorumValue"
     | "quorumUnit"
     | "eligibleCount"
-    | "status";
+    | "status"
+    | "candidates";
   code: FieldErrorCode;
 };

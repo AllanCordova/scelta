@@ -1,6 +1,7 @@
+import type { RoundTally } from "@scelta/domain";
 import type { StoredRound } from "./room-repository.js";
 
-export function toRoundSummary(round: StoredRound | null) {
+export function toRoundSummary(round: StoredRound | null, tally?: RoundTally | null) {
   if (!round) {
     return null;
   }
@@ -10,5 +11,6 @@ export function toRoundSummary(round: StoredRound | null) {
     number: round.number,
     status: round.status,
     outcome: round.outcome,
+    ...(tally ? { tally } : {}),
   };
 }

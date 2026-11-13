@@ -5,6 +5,7 @@ import { env } from "./env.js";
 import type { PresencePublisher } from "./realtime.js";
 import type { UserRepository } from "./users/user-repository.js";
 import { authRoutes } from "./routes/auth.js";
+import { ballotRoutes } from "./routes/ballots.js";
 import { healthRoutes } from "./routes/health.js";
 import { joinRoutes } from "./routes/join.js";
 import { roomRoutes, type RoomRouteOptions } from "./routes/rooms.js";
@@ -49,6 +50,9 @@ export async function buildApp(dependencies: AppDependencies = {}) {
   await app.register(joinRoutes, {
     roomRepository: dependencies.roomRepository,
     presencePublisher: dependencies.presencePublisher,
+  });
+  await app.register(ballotRoutes, {
+    roomRepository: dependencies.roomRepository,
   });
 
   return app;

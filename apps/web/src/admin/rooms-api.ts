@@ -31,6 +31,7 @@ export type CreateRoomPayload = {
   quorumValue?: number;
   quorumUnit?: QuorumUnit;
   eligibleCount?: number;
+  candidates?: string[];
 };
 
 export async function fetchPresets(apiUrl: string): Promise<PresetDefinition[]> {

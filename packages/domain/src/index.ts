@@ -13,9 +13,20 @@ export {
 export {
   hasAbsoluteMajority,
   selectTopCandidates,
+  tallyRoundVotes,
+  type CandidateOption,
+  type CandidateStanding,
   type TallyEntry,
   type MajorityResult,
+  type RoundTally,
 } from "./majority.js";
+export {
+  canCastBallot,
+  validateCandidateNames,
+  type BallotCastCheckInput,
+  type BallotRejectionReason,
+  type CandidateValidationError,
+} from "./ballot.js";
 export {
   nextRoundPlan,
   type RulesPreset,

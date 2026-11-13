@@ -89,18 +89,18 @@
 
 ### B1.4 — Anonymous single ballot + automatic tally
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Each eligible participant votes once per round; choice is anonymous; system tallies and applies majority rules.
 
 **Acceptance criteria:**
 
-- [ ] Eligible participant can cast exactly one vote per open round
-- [ ] Second vote attempt is rejected
-- [ ] Stored ballots are not linkable to the participant (anonymity invariant)
-- [ ] System records a vote receipt (voted yes/no) without storing the choice on the participant
-- [ ] Tally computes vote counts and whether someone reached **> 50%** / absolute majority per room rules
-- [ ] Unit + feature tests for double-vote prevention and majority calculation
-- [ ] Browser test: two voters cast distinct votes; results match; neither UI exposes who voted for whom
+- [x] Eligible participant can cast exactly one vote per open round
+- [x] Second vote attempt is rejected
+- [x] Stored ballots are not linkable to the participant (anonymity invariant)
+- [x] System records a vote receipt (voted yes/no) without storing the choice on the participant
+- [x] Tally computes vote counts and whether someone reached **> 50%** / absolute majority per room rules
+- [x] Unit + feature tests for double-vote prevention and majority calculation
+- [x] Browser test: two voters cast distinct votes; results match; neither UI exposes who voted for whom
 
 ### B1.5 — Multi-round / runoff
 
