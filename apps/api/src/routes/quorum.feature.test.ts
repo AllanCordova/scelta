@@ -1,4 +1,14 @@
-import { ballots, candidates, createPgliteDatabase, participants, rooms, rounds, type Db } from "@scelta/db";
+import {
+  ballots,
+  candidates,
+  createPgliteDatabase,
+  participants,
+  roomMemberCodes,
+  rooms,
+  rounds,
+  voteReceipts,
+  type Db,
+} from "@scelta/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
@@ -55,9 +65,11 @@ describe("quorum gate", () => {
   beforeEach(async () => {
     resetAuthAttempts();
     await db.delete(ballots);
+    await db.delete(voteReceipts);
     await db.delete(rounds);
     await db.delete(candidates);
     await db.delete(participants);
+    await db.delete(roomMemberCodes);
     await db.delete(rooms);
   });
 
@@ -171,6 +183,20 @@ describe("quorum gate", () => {
       }),
     ]);
 
+    for (const joinKey of [
+      "join-key-ana-0001",
+      "join-key-bia-0002",
+      "join-key-caio-0003",
+      "join-key-davi-0004",
+    ]) {
+      const ballot = await app.inject({
+        method: "POST",
+        url: `/v1/join/${room.inviteToken}/ballot`,
+        payload: { joinKey, candidateId: null },
+      });
+      expect(ballot.statusCode).toBe(201);
+    }
+
     const closedSecond = await closeRound(app, room.id, nextRoundId);
     expect(closedSecond.statusCode).toBe(200);
     expect(closedSecond.json()).toMatchObject({
@@ -182,7 +208,7 @@ describe("quorum gate", () => {
     const electedLater = await publish(app, room.id);
     expect(electedLater.statusCode).toBe(200);
     expect(electedLater.json()).toEqual({ published: true, roundId: nextRoundId, outcome: "elected" });
-    expect(await db.select().from(ballots)).toEqual([]);
+    expect(await db.select().from(ballots)).toHaveLength(4);
 
     await app.close();
   });
@@ -231,6 +257,14 @@ describe("quorum gate", () => {
 
     const opened = await openRound(app, room.id);
     const roundId = opened.json().round.id as string;
+    for (const joinKey of ["join-key-ana-0001", "join-key-bia-0002"]) {
+      const ballot = await app.inject({
+        method: "POST",
+        url: `/v1/join/${room.inviteToken}/ballot`,
+        payload: { joinKey, candidateId: null },
+      });
+      expect(ballot.statusCode).toBe(201);
+    }
     const closed = await closeRound(app, room.id, roundId);
     expect(closed.statusCode).toBe(200);
     expect(closed.json()).toMatchObject({
@@ -251,7 +285,7 @@ describe("quorum gate", () => {
     const elected = await publish(app, room.id);
     expect(elected.statusCode).toBe(200);
     expect(elected.json()).toEqual({ published: true, roundId, outcome: "elected" });
-    expect(await db.select().from(ballots)).toEqual([]);
+    expect(await db.select().from(ballots)).toHaveLength(2);
 
     await app.close();
   });
@@ -376,16 +410,18 @@ describe("quorum gate", () => {
     });
   }
 
-  function join(
+  async function join(
     app: Awaited<ReturnType<typeof buildApp>>,
     token: string,
-    displayName: string,
+    _displayName: string,
     joinKey: string,
   ) {
+    const room = await repository.findRoomByInviteToken(token);
+    const [simCode] = room ? await repository.createSimulatedAccessCodes(room.id, 1) : [];
     return app.inject({
       method: "POST",
       url: `/v1/join/${token}`,
-      payload: { displayName, joinKey },
+      payload: { code: simCode?.code ?? "ZZZZZZ", joinKey },
     });
   }
 });

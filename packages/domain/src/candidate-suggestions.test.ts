@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isMemberEligibleForRoomType,
+  isMemberEligibleVoter,
   suggestCandidates,
   type CandidateMemberRecord,
 } from "./candidate-suggestions.js";
@@ -132,5 +133,44 @@ describe("suggestCandidates", () => {
     expect(isMemberEligibleForRoomType(sampleMembers[4]!, { roomType: "custom", referenceDate })).toBe(
       false,
     );
+  });
+
+  it("filters ump_board rooms by active UMP membership and seniority, and checks voter eligibility", () => {
+    const umpMembers: CandidateMemberRecord[] = [
+      {
+        id: "m-ump-ok",
+        fullName: "Davi Jovem",
+        isCommunicant: true,
+        isMale: true,
+        birthDate: "2002-01-10",
+        societyFlags: { umpActive: true, umpEnrolledAt: "2024-01-01" },
+      },
+      {
+        id: "m-ump-recent",
+        fullName: "Ester Recente",
+        isCommunicant: true,
+        isMale: false,
+        birthDate: "2004-03-15",
+        societyFlags: { umpActive: true, umpEnrolledAt: "2026-08-01" },
+      },
+      {
+        id: "m-ump-inactive",
+        fullName: "Lucas Inativo",
+        isCommunicant: true,
+        isMale: true,
+        birthDate: "2001-09-01",
+        societyFlags: { umpActive: false, umpEnrolledAt: "2023-01-01" },
+      },
+    ];
+
+    expect(
+      suggestCandidates(umpMembers, { roomType: "ump_board", referenceDate }),
+    ).toEqual([{ memberId: "m-ump-ok", fullName: "Davi Jovem" }]);
+
+    expect(isMemberEligibleVoter(umpMembers[0]!, "ump_board")).toBe(true);
+    expect(isMemberEligibleVoter(umpMembers[1]!, "ump_board")).toBe(true);
+    expect(isMemberEligibleVoter(umpMembers[2]!, "ump_board")).toBe(false);
+    expect(isMemberEligibleVoter(sampleMembers[1]!, "upa_board")).toBe(true);
+    expect(isMemberEligibleVoter(sampleMembers[0]!, "upa_board")).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import { canJoinRoom, validateJoinIdentity } from "@scelta/domain";
+import { canJoinRoom, validateAccessCodeJoin } from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import type { PresencePublisher, PresenceSnapshot } from "../realtime.js";
@@ -12,14 +12,14 @@ const TokenParams = Type.Object({
 
 const JoinBody = Type.Object(
   {
-    displayName: Type.String({ minLength: 1, maxLength: 80 }),
+    code: Type.String({ minLength: 1, maxLength: 32 }),
     joinKey: Type.String({ minLength: 1, maxLength: 128 }),
   },
   { additionalProperties: false },
 );
 
 type JoinBodyType = {
-  displayName: string;
+  code: string;
   joinKey: string;
 };
 
@@ -78,16 +78,20 @@ export const joinRoutes: FastifyPluginAsync<JoinRouteOptions> = async (app, opti
           return reply.code(409).send({ error: "room_not_joinable", status: room.status });
         }
 
-        const validated = validateJoinIdentity(body);
+        const validated = validateAccessCodeJoin(body);
         if (!validated.ok) {
           return reply.code(400).send({ error: "invalid_join", details: validated.errors });
         }
 
-        const joined = await repository.joinRoom(
+        const joinedResult = await repository.joinRoomWithCode(
           room.id,
-          validated.value.displayName,
+          validated.value.code,
           hashJoinKey(validated.value.joinKey),
         );
+        if (!joinedResult.ok) {
+          return reply.code(403).send({ error: joinedResult.reason });
+        }
+        const joined = joinedResult.participant;
         const presentCount = await repository.countPresent(room.id);
         publishPresence(
           options.presencePublisher,

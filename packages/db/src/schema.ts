@@ -105,6 +105,23 @@ export const rooms = pgTable(
   (table) => [uniqueIndex("rooms_invite_token_uidx").on(table.inviteToken)],
 );
 
+export const roomMemberCodes = pgTable(
+  "room_member_codes",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id),
+    memberId: uuid("member_id").references(() => members.id),
+    displayName: text("display_name").notNull(),
+    code: text("code").notNull(),
+    isSimulated: boolean("is_simulated").notNull().default(false),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("room_member_codes_room_code_uidx").on(table.roomId, table.code)],
+);
+
 export const participants = pgTable(
   "participants",
   {
@@ -113,6 +130,7 @@ export const participants = pgTable(
       .notNull()
       .references(() => rooms.id),
     memberId: uuid("member_id").references(() => members.id),
+    accessCodeId: uuid("access_code_id").references(() => roomMemberCodes.id),
     displayName: text("display_name").notNull(),
     /** SHA-256 of the client join key. One presence row per room and key. */
     joinKeyHash: text("join_key_hash").notNull(),
@@ -162,9 +180,8 @@ export const ballots = pgTable("ballots", {
   roundId: uuid("round_id")
     .notNull()
     .references(() => rounds.id),
-  candidateId: uuid("candidate_id")
-    .notNull()
-    .references(() => candidates.id),
+  /** Null represents a blank/null vote. */
+  candidateId: uuid("candidate_id").references(() => candidates.id),
   ballotToken: text("ballot_token").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

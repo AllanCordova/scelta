@@ -357,12 +357,31 @@ export function AdminRooms() {
                   type="button"
                   className={roomType === option.value ? "choice selected" : "choice"}
                   aria-pressed={roomType === option.value}
-                  onClick={() => setRoomType(option.value)}
+                  onClick={() => {
+                    setRoomType(option.value);
+                    if (option.value === "upa_board" || option.value === "ump_board") {
+                      setRulesPreset("ipb_society_board");
+                      setQuorumOverride(null);
+                    } else if (option.value === "session_board") {
+                      setRulesPreset("ipb_local_officers");
+                      setQuorumOverride(null);
+                    }
+                  }}
                 >
                   {option.label}
                 </button>
               ))}
             </div>
+            {roomType === "upa_board" || roomType === "ump_board" ? (
+              <p className="field-hint">
+                Cargos na ordem IPB: Presidente → Vice-Presidente → 1º Secretário → 2º Secretário →
+                Tesoureiro.
+              </p>
+            ) : roomType === "session_board" ? (
+              <p className="field-hint">
+                Cargos da Mesa do Conselho: Vice-Presidente → Secretário → Tesoureiro.
+              </p>
+            ) : null}
           </fieldset>
 
           <fieldset className="choice-field">

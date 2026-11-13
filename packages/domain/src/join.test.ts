@@ -4,6 +4,8 @@ import {
   JOIN_KEY_MAX_LENGTH,
   JOIN_KEY_MIN_LENGTH,
   canJoinRoom,
+  normalizeAccessCode,
+  validateAccessCodeJoin,
   validateJoinIdentity,
 } from "./join.js";
 
@@ -101,6 +103,33 @@ describe("validateJoinIdentity", () => {
     expect(tooLong).toEqual({
       ok: false,
       errors: [{ field: "joinKey", code: "out_of_range" }],
+    });
+  });
+});
+
+describe("validateAccessCodeJoin", () => {
+  const validKey = "a".repeat(JOIN_KEY_MIN_LENGTH);
+
+  it("normalizes and accepts a 6-character access code with a valid join key", () => {
+    expect(normalizeAccessCode("  a7k9m2 ")).toBe("A7K9M2");
+    expect(validateAccessCodeJoin({ code: "  a7k9m2 ", joinKey: validKey })).toEqual({
+      ok: true,
+      value: { code: "A7K9M2", joinKey: validKey },
+    });
+  });
+
+  it("rejects empty, wrong-length, or non-alphanumeric access codes", () => {
+    expect(validateAccessCodeJoin({ code: "   ", joinKey: validKey })).toEqual({
+      ok: false,
+      errors: [{ field: "code", code: "required" }],
+    });
+    expect(validateAccessCodeJoin({ code: "ABC", joinKey: validKey })).toEqual({
+      ok: false,
+      errors: [{ field: "code", code: "out_of_range" }],
+    });
+    expect(validateAccessCodeJoin({ code: "AB-123", joinKey: validKey })).toEqual({
+      ok: false,
+      errors: [{ field: "code", code: "invalid" }],
     });
   });
 });

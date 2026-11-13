@@ -1,6 +1,8 @@
 export type MemberSocietyFlags = {
   upaActive?: boolean;
   upaEnrolledAt?: string;
+  umpActive?: boolean;
+  umpEnrolledAt?: string;
 };
 
 export type ValidMemberImportRow = {
@@ -46,7 +48,9 @@ type ColumnKey =
   | "isMale"
   | "birthDate"
   | "upaActive"
-  | "upaEnrolledAt";
+  | "upaEnrolledAt"
+  | "umpActive"
+  | "umpEnrolledAt";
 
 const POSITIONAL_COLUMNS: readonly ColumnKey[] = [
   "fullName",
@@ -55,6 +59,8 @@ const POSITIONAL_COLUMNS: readonly ColumnKey[] = [
   "birthDate",
   "upaActive",
   "upaEnrolledAt",
+  "umpActive",
+  "umpEnrolledAt",
 ];
 
 const HEADER_ALIASES: Record<string, ColumnKey> = {
@@ -77,6 +83,11 @@ const HEADER_ALIASES: Record<string, ColumnKey> = {
   upaenrolledat: "upaEnrolledAt",
   upaingresso: "upaEnrolledAt",
   upadesde: "upaEnrolledAt",
+  umpactive: "umpActive",
+  umpativo: "umpActive",
+  umpenrolledat: "umpEnrolledAt",
+  umpingresso: "umpEnrolledAt",
+  umpdesde: "umpEnrolledAt",
 };
 
 export function parseMemberImportCsv(csvText: string): ParsedMemberImport {
@@ -173,21 +184,21 @@ function parseRow(
     return { ok: false, reason: "invalid_birth_date" };
   }
 
-  const upaActiveRaw = byKey.get("upaActive") ?? "";
-  const upaActive = upaActiveRaw.length === 0 ? undefined : parseBooleanFlag(upaActiveRaw);
-  if (upaActiveRaw.length > 0 && upaActive === null) {
-    return { ok: false, reason: "invalid_society_flag" };
+  const upa = parseSocietyPair(byKey, "upaActive", "upaEnrolledAt");
+  if (!upa.ok) {
+    return { ok: false, reason: upa.reason };
   }
 
-  const upaEnrolledAtRaw = byKey.get("upaEnrolledAt") ?? "";
-  const upaEnrolledAt = upaEnrolledAtRaw.length === 0 ? undefined : parseIsoDate(upaEnrolledAtRaw);
-  if (upaEnrolledAtRaw.length > 0 && upaEnrolledAt === null) {
-    return { ok: false, reason: "invalid_society_date" };
+  const ump = parseSocietyPair(byKey, "umpActive", "umpEnrolledAt");
+  if (!ump.ok) {
+    return { ok: false, reason: ump.reason };
   }
 
   const societyFlags: MemberSocietyFlags = {
-    ...(upaActive === undefined || upaActive === null ? {} : { upaActive }),
-    ...(upaEnrolledAt === undefined || upaEnrolledAt === null ? {} : { upaEnrolledAt }),
+    ...(upa.active === undefined ? {} : { upaActive: upa.active }),
+    ...(upa.enrolledAt === undefined ? {} : { upaEnrolledAt: upa.enrolledAt }),
+    ...(ump.active === undefined ? {} : { umpActive: ump.active }),
+    ...(ump.enrolledAt === undefined ? {} : { umpEnrolledAt: ump.enrolledAt }),
   };
 
   return {
@@ -200,6 +211,32 @@ function parseRow(
       birthDate,
       societyFlags,
     },
+  };
+}
+
+function parseSocietyPair(
+  byKey: ReadonlyMap<ColumnKey, string>,
+  activeKey: ColumnKey,
+  enrolledKey: ColumnKey,
+):
+  | { ok: true; active?: boolean; enrolledAt?: string }
+  | { ok: false; reason: "invalid_society_flag" | "invalid_society_date" } {
+  const activeRaw = byKey.get(activeKey) ?? "";
+  const active = activeRaw.length === 0 ? undefined : parseBooleanFlag(activeRaw);
+  if (activeRaw.length > 0 && active === null) {
+    return { ok: false, reason: "invalid_society_flag" };
+  }
+
+  const enrolledRaw = byKey.get(enrolledKey) ?? "";
+  const enrolledAt = enrolledRaw.length === 0 ? undefined : parseIsoDate(enrolledRaw);
+  if (enrolledRaw.length > 0 && enrolledAt === null) {
+    return { ok: false, reason: "invalid_society_date" };
+  }
+
+  return {
+    ok: true,
+    ...(active === undefined || active === null ? {} : { active }),
+    ...(enrolledAt === undefined || enrolledAt === null ? {} : { enrolledAt }),
   };
 }
 

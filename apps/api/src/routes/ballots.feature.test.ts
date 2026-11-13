@@ -3,6 +3,7 @@ import {
   candidates,
   createPgliteDatabase,
   participants,
+  roomMemberCodes,
   rooms,
   rounds,
   voteReceipts,
@@ -59,6 +60,7 @@ describe("anonymous single ballot and automatic tally", () => {
     await db.delete(candidates);
     await db.delete(rounds);
     await db.delete(participants);
+    await db.delete(roomMemberCodes);
     await db.delete(rooms);
   });
 
@@ -147,6 +149,7 @@ describe("anonymous single ballot and automatic tally", () => {
         outcome: "elected",
         tally: {
           totalVotes: 3,
+          nullVotes: 0,
           threshold: 2,
           outcome: "elected",
           winnerId: paulo.id,
@@ -210,6 +213,7 @@ describe("anonymous single ballot and automatic tally", () => {
       outcome: "no_majority",
       tally: {
         totalVotes: 2,
+        nullVotes: 0,
         threshold: 2,
         outcome: "no_majority",
         winnerId: null,
@@ -269,13 +273,91 @@ describe("anonymous single ballot and automatic tally", () => {
     expect(crossRoomCandidate.statusCode).toBe(400);
     expect(crossRoomCandidate.json()).toEqual({ error: "invalid_candidate" });
 
-    await closeRound(app, room.id, roundId);
+    await db.update(participants).set({ isPresent: false });
+    const closed = await closeRound(app, room.id, roundId);
+    expect(closed.statusCode).toBe(200);
     const afterClose = await castVote(app, room.inviteToken, anaKey, paulo.id);
     expect(afterClose.statusCode).toBe(409);
     expect(afterClose.json()).toEqual({ error: "round_not_open" });
 
     expect(await db.select().from(ballots)).toEqual([]);
     expect(await db.select().from(voteReceipts)).toEqual([]);
+
+    await app.close();
+  });
+
+  it("enforces votedCount === presentCount on close and counts null/blank votes in threshold", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+    const room = await createRoomWithCandidates(app, {
+      title: "Assembleia com voto nulo",
+      quorumValue: 2,
+      candidates: ["Paulo", "Barnabé"],
+    });
+    const paulo = room.candidates.find((c) => c.displayName === "Paulo")!;
+    const barnabe = room.candidates.find((c) => c.displayName === "Barnabé")!;
+
+    await join(app, room.inviteToken, "Ana", anaKey);
+    await join(app, room.inviteToken, "Bia", biaKey);
+    await join(app, room.inviteToken, "Caio", caioKey);
+
+    const opened = await openRound(app, room.id);
+    const roundId = opened.json().round.id as string;
+
+    // 2 of 3 present voted -> closing must fail with voting_incomplete
+    expect((await castVote(app, room.inviteToken, anaKey, paulo.id)).statusCode).toBe(201);
+    expect((await castVote(app, room.inviteToken, biaKey, barnabe.id)).statusCode).toBe(201);
+
+    const incompleteClose = await closeRound(app, room.id, roundId);
+    expect(incompleteClose.statusCode).toBe(409);
+    expect(incompleteClose.json()).toEqual({
+      error: "voting_incomplete",
+      votedCount: 2,
+      presentCount: 3,
+    });
+
+    // Caio casts a null/blank vote -> 3 of 3 present voted -> 1 Paulo, 1 Barnabé, 1 null -> no_majority (threshold 2)
+    expect((await castVote(app, room.inviteToken, caioKey, null)).statusCode).toBe(201);
+
+    const validClose = await closeRound(app, room.id, roundId);
+    expect(validClose.statusCode).toBe(200);
+    expect(validClose.json().round).toEqual({
+      id: roundId,
+      number: 1,
+      status: "closed",
+      outcome: "no_majority",
+      tally: {
+        totalVotes: 3,
+        nullVotes: 1,
+        threshold: 2,
+        outcome: "no_majority",
+        winnerId: null,
+        winnerName: null,
+        standings: [
+          { candidateId: barnabe.id, displayName: "Barnabé", votes: 1 },
+          { candidateId: paulo.id, displayName: "Paulo", votes: 1 },
+        ],
+      },
+    });
+
+    // Round 2: if ballots exceed presentCount, closing must fail with vote_count_mismatch
+    const round2 = await openRound(app, room.id);
+    const round2Id = round2.json().round.id as string;
+    expect((await castVote(app, room.inviteToken, anaKey, paulo.id)).statusCode).toBe(201);
+    expect((await castVote(app, room.inviteToken, biaKey, barnabe.id)).statusCode).toBe(201);
+    expect((await castVote(app, room.inviteToken, caioKey, null)).statusCode).toBe(201);
+    await db.insert(ballots).values({
+      roundId: round2Id,
+      candidateId: paulo.id,
+      ballotToken: "extra-ballot-token",
+    });
+
+    const mismatchClose = await closeRound(app, room.id, round2Id);
+    expect(mismatchClose.statusCode).toBe(409);
+    expect(mismatchClose.json()).toEqual({
+      error: "vote_count_mismatch",
+      votedCount: 4,
+      presentCount: 3,
+    });
 
     await app.close();
   });
@@ -306,16 +388,18 @@ describe("anonymous single ballot and automatic tally", () => {
     };
   }
 
-  function join(
+  async function join(
     app: Awaited<ReturnType<typeof buildApp>>,
     token: string,
-    displayName: string,
+    _displayName: string,
     joinKey: string,
   ) {
+    const room = await repository.findRoomByInviteToken(token);
+    const [simCode] = room ? await repository.createSimulatedAccessCodes(room.id, 1) : [];
     return app.inject({
       method: "POST",
       url: `/v1/join/${token}`,
-      payload: { displayName, joinKey },
+      payload: { code: simCode?.code ?? "ZZZZZZ", joinKey },
     });
   }
 
@@ -339,7 +423,7 @@ describe("anonymous single ballot and automatic tally", () => {
     app: Awaited<ReturnType<typeof buildApp>>,
     token: string,
     joinKey: string,
-    candidateId: string,
+    candidateId: string | null,
   ) {
     return app.inject({
       method: "POST",

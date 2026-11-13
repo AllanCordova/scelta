@@ -1,6 +1,13 @@
 export type RulesPreset = "ipb_local_officers" | "ipb_society_board" | "custom";
 export type QuorumUnit = "absolute" | "percent";
-export type RoomType = "pastor" | "elder" | "deacon" | "upa_board" | "custom";
+export type RoomType =
+  | "pastor"
+  | "elder"
+  | "deacon"
+  | "session_board"
+  | "upa_board"
+  | "ump_board"
+  | "custom";
 export type CreatableRoomStatus = "draft" | "open";
 export type RoomStatus = CreatableRoomStatus | "voting" | "closed" | "cancelled";
 
@@ -38,7 +45,18 @@ export type StoredMemberItem = {
   societyFlags: {
     upaActive?: boolean;
     upaEnrolledAt?: string;
+    umpActive?: boolean;
+    umpEnrolledAt?: string;
   };
+};
+
+export type MemberAccessCodeItem = {
+  id: string;
+  memberId: string | null;
+  displayName: string;
+  code: string;
+  revokedAt: string | null;
+  createdAt: string;
 };
 
 export type CandidateStanding = {
@@ -49,6 +67,7 @@ export type CandidateStanding = {
 
 export type RoundTally = {
   totalVotes: number;
+  nullVotes?: number;
   threshold: number;
   outcome: "elected" | "no_majority";
   winnerId: string | null;
@@ -74,6 +93,17 @@ export type RoomSummary = {
   createdAt: string;
 };
 
+export type OfficeProgressStatus = "pending" | "open" | "in_progress" | "elected";
+
+export type OfficeProgressItem = {
+  officeLabel: string;
+  order: number;
+  status: OfficeProgressStatus;
+  roundCount: number;
+  winnerCandidateId: string | null;
+  winnerName: string | null;
+};
+
 export type RoomDetail = RoomSummary & {
   presence: {
     presentCount: number;
@@ -83,6 +113,8 @@ export type RoomDetail = RoomSummary & {
   };
   votedCount: number;
   receiptTimestamps: string[];
+  offices?: OfficeProgressItem[];
+  recommendedOffice?: string | null;
 };
 
 export type FieldErrorCode = "required" | "invalid" | "out_of_range" | "incomplete";
@@ -93,6 +125,8 @@ export type RoundStatus = "pending" | "open" | "closed" | "restarted";
 export type RoomRound = {
   id: string;
   number: number;
+  officeLabel?: string | null;
+  officeRoundNumber?: number;
   status: RoundStatus;
   outcome: RoundResult | null;
   restartCount?: number;

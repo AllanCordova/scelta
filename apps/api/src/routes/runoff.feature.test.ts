@@ -3,6 +3,7 @@ import {
   candidates,
   createPgliteDatabase,
   participants,
+  roomMemberCodes,
   rooms,
   rounds,
   voteReceipts,
@@ -60,6 +61,7 @@ describe("multi-round and runoff elections", () => {
     await db.delete(candidates);
     await db.delete(rounds);
     await db.delete(participants);
+    await db.delete(roomMemberCodes);
     await db.delete(rooms);
   });
 
@@ -109,9 +111,10 @@ describe("multi-round and runoff elections", () => {
     const receiptStartR2 = await checkReceipt(app, room.inviteToken, voterOneKey);
     expect(receiptStartR2.json()).toEqual({ roundId: round2Id, hasVoted: false });
 
-    // In Round 2, only Voter 1 (Ana) and Voter 2 (Bia) cast votes (1-1-0 -> no majority, Ana & Bia are top 2)
+    // In Round 2, Voter 1 (Ana), Voter 2 (Bia), and Voter 3 (null) cast votes -> no majority, Ana & Bia are top 2
     expect((await castVote(app, room.inviteToken, voterOneKey, ana.id)).statusCode).toBe(201);
     expect((await castVote(app, room.inviteToken, voterTwoKey, bia.id)).statusCode).toBe(201);
+    expect((await castVote(app, room.inviteToken, voterThreeKey, null)).statusCode).toBe(201);
 
     const closeR2 = await closeRound(app, room.id, round2Id);
     expect(closeR2.statusCode).toBe(200);
@@ -121,7 +124,8 @@ describe("multi-round and runoff elections", () => {
       status: "closed",
       outcome: "no_majority",
       tally: {
-        totalVotes: 2,
+        totalVotes: 3,
+        nullVotes: 1,
         threshold: 2,
         outcome: "no_majority",
         standings: [
@@ -176,10 +180,13 @@ describe("multi-round and runoff elections", () => {
     expect(closeR3.json().round).toEqual({
       id: round3Id,
       number: 3,
+      officeLabel: "Presidente",
+      officeRoundNumber: 3,
       status: "closed",
       outcome: "elected",
       tally: {
         totalVotes: 3,
+        nullVotes: 0,
         threshold: 2,
         outcome: "elected",
         winnerId: ana.id,
@@ -191,8 +198,8 @@ describe("multi-round and runoff elections", () => {
       },
     });
 
-    // Cannot open Round 4 once a winner is elected
-    const openR4 = await openRound(app, room.id);
+    // Cannot open another round for Presidente once Presidente is elected
+    const openR4 = await openRound(app, room.id, { officeLabel: "Presidente" });
     expect(openR4.statusCode).toBe(409);
     expect(openR4.json()).toEqual({ error: "winner_already_elected" });
 
@@ -293,16 +300,18 @@ describe("multi-round and runoff elections", () => {
     };
   }
 
-  function join(
+  async function join(
     app: Awaited<ReturnType<typeof buildApp>>,
     token: string,
-    displayName: string,
+    _displayName: string,
     joinKey: string,
   ) {
+    const room = await repository.findRoomByInviteToken(token);
+    const [simCode] = room ? await repository.createSimulatedAccessCodes(room.id, 1) : [];
     return app.inject({
       method: "POST",
       url: `/v1/join/${token}`,
-      payload: { displayName, joinKey },
+      payload: { code: simCode?.code ?? "ZZZZZZ", joinKey },
     });
   }
 
@@ -331,7 +340,7 @@ describe("multi-round and runoff elections", () => {
     app: Awaited<ReturnType<typeof buildApp>>,
     token: string,
     joinKey: string,
-    candidateId: string,
+    candidateId: string | null,
   ) {
     return app.inject({
       method: "POST",

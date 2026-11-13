@@ -1,4 +1,5 @@
 import {
+  countOfficeRoundNumber,
   findPreset,
   isMemberEligibleForRoomType,
   tallyRoundVotes,
@@ -11,6 +12,7 @@ import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
 import { requireAdmin } from "../auth/require-admin.js";
 import type { PresencePublisher } from "../realtime.js";
+import { loadRoomOfficeState } from "../rooms/office-state.js";
 import { quorumStatus } from "../rooms/quorum-status.js";
 import type {
   RoomRepository,
@@ -28,7 +30,9 @@ const CreateRoomBody = Type.Object(
       Type.Literal("pastor"),
       Type.Literal("elder"),
       Type.Literal("deacon"),
+      Type.Literal("session_board"),
       Type.Literal("upa_board"),
+      Type.Literal("ump_board"),
       Type.Literal("custom"),
     ]),
     rulesPreset: Type.Union([
@@ -77,6 +81,26 @@ export type RoomRouteOptions = {
   userRepository?: UserRepository;
   presencePublisher?: PresencePublisher;
 };
+
+const CodeIdParams = Type.Object({
+  roomId: Type.String({
+    minLength: 36,
+    maxLength: 36,
+    pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+  }),
+  codeId: Type.String({
+    minLength: 36,
+    maxLength: 36,
+    pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+  }),
+});
+
+const SimulateCodesBody = Type.Object(
+  {
+    count: Type.Integer({ minimum: 1, maximum: 500 }),
+  },
+  { additionalProperties: false },
+);
 
 export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, options) => {
   app.addHook("onRequest", async (_request, reply) => {
@@ -236,21 +260,26 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           return reply.code(404).send({ error: "room_not_found" });
         }
 
-        const [roomCandidates, latest, presentCount] = await Promise.all([
+        const [roomCandidates, allCandidates, allRounds, presentCount] = await Promise.all([
           options.roomRepository.listCandidates(roomId),
-          options.roomRepository.latestRounds([roomId]),
+          options.roomRepository.listAllCandidates(roomId),
+          options.roomRepository.listRounds(roomId),
           options.roomRepository.countPresent(roomId),
         ]);
-        const round = latest[0] ?? null;
-        const candidatesByRoom = new Map([[roomId, roomCandidates]]);
+        const round = allRounds[allRounds.length - 1] ?? null;
+        const candidatesByRoom = new Map([[roomId, allCandidates]]);
         const tallyByRound = await loadTalliesForClosedRounds(
           options.roomRepository,
           round ? [round] : [],
           candidatesByRoom,
         );
-        const receiptDates = round
-          ? await options.roomRepository.listRoundReceiptTimestamps(round.id)
-          : [];
+        const [receiptDates, officeState] = await Promise.all([
+          round
+            ? options.roomRepository.listRoundReceiptTimestamps(round.id)
+            : Promise.resolve([]),
+          loadRoomOfficeState(options.roomRepository, room, allCandidates, allRounds),
+        ]);
+        const officeRoundNumber = round ? countOfficeRoundNumber(allRounds, round) : undefined;
 
         return {
           room: {
@@ -258,7 +287,13 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
             presence: quorumStatus(room, presentCount),
             votedCount: receiptDates.length,
             receiptTimestamps: receiptDates.map((date) => date.toISOString()),
-            round: toRoundSummary(round, round ? (tallyByRound.get(round.id) ?? null) : null),
+            offices: officeState.offices,
+            recommendedOffice: officeState.recommendedOffice,
+            round: toRoundSummary(
+              round,
+              round ? (tallyByRound.get(round.id) ?? null) : null,
+              officeRoundNumber,
+            ),
           },
         };
       } catch (error) {
@@ -367,7 +402,165 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
       }
     },
   );
+
+  app.get(
+    "/v1/admin/rooms/:roomId/access-codes",
+    { schema: { params: RoomIdParams } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        const codes = await options.roomRepository.listAccessCodes(roomId);
+        return { accessCodes: codes.map(toAccessCodeResponse) };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to list access codes");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/access-codes/generate",
+    { schema: { params: RoomIdParams } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        const codes = await options.roomRepository.generateMemberAccessCodes(roomId);
+        return { accessCodes: codes.map(toAccessCodeResponse) };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to generate access codes");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/access-codes/simulate",
+    { schema: { params: RoomIdParams, body: SimulateCodesBody } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      const { count } = request.body as { count: number };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        const codes = await options.roomRepository.createSimulatedAccessCodes(roomId, count);
+        return { accessCodes: codes.map(toAccessCodeResponse) };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to create simulated access codes");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/access-codes/:codeId/revoke",
+    { schema: { params: CodeIdParams } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId, codeId } = request.params as { roomId: string; codeId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        const revoked = await options.roomRepository.revokeAccessCode(roomId, codeId);
+        if (!revoked) {
+          return reply.code(404).send({ error: "access_code_not_found" });
+        }
+        const presentCount = await options.roomRepository.countPresent(roomId);
+        const presence = quorumStatus(room, presentCount);
+        options.presencePublisher?.publishPresence(roomId, presence);
+        return { accessCode: toAccessCodeResponse(revoked), presence };
+      } catch (error) {
+        request.log.error({ err: error, roomId, codeId }, "Failed to revoke access code");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/access-codes/revoke-all",
+    { schema: { params: RoomIdParams } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        const revokedCount = await options.roomRepository.revokeAllAccessCodes(roomId);
+        const presentCount = await options.roomRepository.countPresent(roomId);
+        const presence = quorumStatus(room, presentCount);
+        options.presencePublisher?.publishPresence(roomId, presence);
+        return { revokedCount, presence };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to revoke all access codes");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
 };
+
+function toAccessCodeResponse(row: {
+  id: string;
+  memberId: string | null;
+  displayName: string;
+  code: string;
+  revokedAt: Date | null;
+  createdAt: Date;
+}) {
+  return {
+    id: row.id,
+    memberId: row.memberId,
+    displayName: row.displayName,
+    code: row.code,
+    revokedAt: row.revokedAt ? row.revokedAt.toISOString() : null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
 
 function toRoomResponse(
   room: StoredRoom,

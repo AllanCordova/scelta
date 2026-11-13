@@ -19,8 +19,14 @@ export function joinErrorMessage(error: unknown): string {
     if (error.errorCode === "room_not_joinable") {
       return joinBlockedMessage(error.roomStatus ?? "");
     }
+    if (error.errorCode === "invalid_access_code") {
+      return "Código de acesso inválido. Confira o código no seu cartão.";
+    }
+    if (error.errorCode === "revoked_access_code") {
+      return "Este código de acesso foi revogado pelo administrador.";
+    }
     if (error.errorCode === "invalid_join") {
-      return "Não foi possível confirmar sua entrada. Verifique o nome e tente de novo.";
+      return "Código inválido. Digite os 6 caracteres do seu cartão.";
     }
   }
 
@@ -36,6 +42,8 @@ export function ballotErrorMessage(error: unknown): string {
         return "Este escrutínio não está aberto.";
       case "participant_not_present":
         return "Confirme sua presença antes de votar.";
+      case "access_code_revoked":
+        return "Seu código de acesso foi revogado pelo administrador.";
       case "invalid_candidate":
         return "Escolha um candidato válido.";
       default:

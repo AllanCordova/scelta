@@ -33,6 +33,7 @@ describe("tallyRoundVotes", () => {
     const tally = tallyRoundVotes(candidates, ["cand-1", "cand-2", "cand-1"]);
     expect(tally).toEqual({
       totalVotes: 3,
+      nullVotes: 0,
       threshold: 2,
       outcome: "elected",
       winnerId: "cand-1",
@@ -48,6 +49,7 @@ describe("tallyRoundVotes", () => {
     const split = tallyRoundVotes(candidates, ["cand-1", "cand-2"]);
     expect(split).toEqual({
       totalVotes: 2,
+      nullVotes: 0,
       threshold: 2,
       outcome: "no_majority",
       winnerId: null,
@@ -62,6 +64,23 @@ describe("tallyRoundVotes", () => {
     expect(empty.outcome).toBe("no_majority");
     expect(empty.winnerId).toBeNull();
     expect(empty.totalVotes).toBe(0);
+    expect(empty.nullVotes).toBe(0);
+  });
+
+  it("counts null/blank votes in totalVotes and threshold", () => {
+    const tally = tallyRoundVotes(candidates, ["cand-1", "cand-1", null, null]);
+    expect(tally).toEqual({
+      totalVotes: 4,
+      nullVotes: 2,
+      threshold: 3,
+      outcome: "no_majority",
+      winnerId: null,
+      winnerName: null,
+      standings: [
+        { candidateId: "cand-1", displayName: "Paulo", votes: 2 },
+        { candidateId: "cand-2", displayName: "Silas", votes: 0 },
+      ],
+    });
   });
 
   it("throws when a ballot references an unknown candidate", () => {

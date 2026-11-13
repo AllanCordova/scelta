@@ -1,4 +1,4 @@
-import { candidates, createPgliteDatabase, participants, rooms, type Db } from "@scelta/db";
+import { candidates, createPgliteDatabase, participants, roomMemberCodes, rooms, type Db } from "@scelta/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
@@ -58,6 +58,7 @@ describe("join room", () => {
     resetAuthAttempts();
     await db.delete(candidates);
     await db.delete(participants);
+    await db.delete(roomMemberCodes);
     await db.delete(rooms);
   });
 
@@ -79,35 +80,39 @@ describe("join room", () => {
       },
     });
     const room = await createRoom(app, "Assembleia", "open");
+    const codes = await createSimCodes(app, room.id, 2, adminCookie);
+    const anaCode = codes[0]!;
+    const biaCode = codes[1]!;
 
     const preview = await app.inject({ method: "GET", url: `/v1/join/${room.inviteToken}` });
     expect(preview.statusCode).toBe(200);
     expect(preview.json()).toEqual({ title: "Assembleia", status: "open", canJoin: true });
     expect(preview.json()).not.toHaveProperty("inviteToken");
 
-    const first = await join(app, room.inviteToken, "  Ana  ", anaKey);
+    const first = await join(app, room.inviteToken, anaCode.code.toLowerCase(), anaKey);
     expect(first.statusCode).toBe(200);
     expect(first.json()).toEqual({
       title: "Assembleia",
       status: "open",
-      displayName: "Ana",
+      displayName: anaCode.displayName,
       presentCount: 1,
       alreadyJoined: false,
     });
     expect(first.body).not.toContain(anaKey);
 
-    const duplicate = await join(app, room.inviteToken, "Ana Maria", anaKey);
+    // Same member code on another device/cleared storage reuses the same participant row
+    const duplicate = await join(app, room.inviteToken, anaCode.code, anaKey);
     expect(duplicate.statusCode).toBe(200);
     expect(duplicate.json()).toMatchObject({
-      displayName: "Ana",
+      displayName: anaCode.displayName,
       presentCount: 1,
       alreadyJoined: true,
     });
 
-    const secondPerson = await join(app, room.inviteToken, "Ana", biaKey);
+    const secondPerson = await join(app, room.inviteToken, biaCode.code, biaKey);
     expect(secondPerson.statusCode).toBe(200);
     expect(secondPerson.json()).toMatchObject({
-      displayName: "Ana",
+      displayName: biaCode.displayName,
       presentCount: 2,
       alreadyJoined: false,
     });
@@ -146,9 +151,10 @@ describe("join room", () => {
   it("lets a voting room be joined and restores presence without a second row", async () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoom(app, "Votação", "open");
+    const [anaCode] = await createSimCodes(app, room.id, 1, adminCookie);
     await db.update(rooms).set({ status: "voting" }).where(eq(rooms.id, room.id));
 
-    const first = await join(app, room.inviteToken, "Ana", anaKey);
+    const first = await join(app, room.inviteToken, anaCode!.code, anaKey);
     expect(first.statusCode).toBe(200);
     expect(first.json()).toMatchObject({ status: "voting", presentCount: 1, alreadyJoined: false });
 
@@ -165,9 +171,13 @@ describe("join room", () => {
       quorumMet: false,
     });
 
-    const restored = await join(app, room.inviteToken, "Ana", anaKey);
+    const restored = await join(app, room.inviteToken, anaCode!.code, anaKey);
     expect(restored.statusCode).toBe(200);
-    expect(restored.json()).toMatchObject({ presentCount: 1, alreadyJoined: true, displayName: "Ana" });
+    expect(restored.json()).toMatchObject({
+      presentCount: 1,
+      alreadyJoined: true,
+      displayName: anaCode!.displayName,
+    });
 
     const stored = await db.select().from(participants);
     expect(stored).toHaveLength(1);
@@ -201,14 +211,14 @@ describe("join room", () => {
     expect(preview.statusCode).toBe(404);
     expect(preview.json()).toEqual({ error: "invite_not_found" });
 
-    const joined = await join(app, token, "Ana", anaKey);
+    const joined = await join(app, token, "A7K9M2", anaKey);
     expect(joined.statusCode).toBe(404);
     expect(joined.json()).toEqual({ error: "invite_not_found" });
 
     await app.close();
   });
 
-  it("rejects a blank name and a short join key", async () => {
+  it("rejects a blank code and a short join key", async () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoom(app, "Assembleia", "open");
 
@@ -217,11 +227,34 @@ describe("join room", () => {
     expect(response.json()).toEqual({
       error: "invalid_join",
       details: [
-        { field: "displayName", code: "required" },
+        { field: "code", code: "required" },
         { field: "joinKey", code: "out_of_range" },
       ],
     });
     expect(await db.select().from(participants)).toHaveLength(0);
+
+    await app.close();
+  });
+
+  it("rejects unknown and revoked access codes", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+    const room = await createRoom(app, "Assembleia", "open");
+    const [codeItem] = await createSimCodes(app, room.id, 1, adminCookie);
+
+    const unknown = await join(app, room.inviteToken, "ZZZZZZ", anaKey);
+    expect(unknown.statusCode).toBe(403);
+    expect(unknown.json()).toEqual({ error: "invalid_access_code" });
+
+    const revoke = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/${codeItem!.id}/revoke`,
+      headers: { cookie: adminCookie },
+    });
+    expect(revoke.statusCode).toBe(200);
+
+    const revokedJoin = await join(app, room.inviteToken, codeItem!.code, anaKey);
+    expect(revokedJoin.statusCode).toBe(403);
+    expect(revokedJoin.json()).toEqual({ error: "revoked_access_code" });
 
     await app.close();
   });
@@ -245,8 +278,23 @@ describe("join room", () => {
         async deleteRoom() {
           return false;
         },
-        async joinRoom() {
+        async joinRoomWithCode() {
           throw new Error("not implemented");
+        },
+        async generateMemberAccessCodes() {
+          return [];
+        },
+        async createSimulatedAccessCodes() {
+          return [];
+        },
+        async listAccessCodes() {
+          return [];
+        },
+        async revokeAccessCode() {
+          return null;
+        },
+        async revokeAllAccessCodes() {
+          return 0;
         },
         async removePresentParticipants() {
           return 0;
@@ -374,21 +422,38 @@ async function expectRejected(
   expect(preview.statusCode).toBe(200);
   expect(preview.json()).toMatchObject({ status, canJoin: false });
 
-  const joined = await join(app, token, "Ana", anaKey);
+  const joined = await join(app, token, "A7K9M2", anaKey);
   expect(joined.statusCode).toBe(409);
   expect(joined.json()).toEqual({ error: "room_not_joinable", status });
+}
+
+async function createSimCodes(
+  app: Awaited<ReturnType<typeof buildApp>>,
+  roomId: string,
+  count: number,
+  cookie: string,
+) {
+  const response = await app.inject({
+    method: "POST",
+    url: `/v1/admin/rooms/${roomId}/access-codes/simulate`,
+    headers: { cookie },
+    payload: { count },
+  });
+  expect(response.statusCode).toBe(200);
+  return (response.json() as { accessCodes: Array<{ id: string; code: string; displayName: string }> })
+    .accessCodes;
 }
 
 function join(
   app: Awaited<ReturnType<typeof buildApp>>,
   token: string,
-  displayName: string,
+  code: string,
   joinKey: string,
 ) {
   return app.inject({
     method: "POST",
     url: `/v1/join/${token}`,
-    payload: { displayName, joinKey },
+    payload: { code, joinKey },
   });
 }
 

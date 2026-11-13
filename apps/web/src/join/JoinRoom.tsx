@@ -21,13 +21,19 @@ import {
 import { createJoinKey, isJoinKey, readJoinIdentity, writeJoinIdentity } from "./join-identity";
 
 const BALLOT_POLL_MS = 1000;
+const NULL_VOTE_CHOICE = "__NULL__";
 
-const joinRoomSchema = z.object({
-  name: z
+const joinCodeSchema = z.object({
+  code: z
     .string()
     .trim()
-    .min(1, "Informe seu nome.")
-    .max(80, "Use no máximo 80 caracteres."),
+    .transform((value) => value.toUpperCase())
+    .pipe(
+      z
+        .string()
+        .min(1, "Informe seu código de acesso.")
+        .regex(/^[A-Z0-9]{6}$/, "O código deve ter 6 letras ou números."),
+    ),
 });
 
 type Phase =
@@ -35,17 +41,18 @@ type Phase =
   | { kind: "invalid"; message: string }
   | { kind: "blocked"; title: string; message: string }
   | { kind: "ready"; title: string; joinKey: string }
-  | { kind: "joined"; title: string; joinKey: string };
+  | { kind: "joined"; title: string; joinKey: string; displayName: string };
 
 type StoredIdentity = {
   joinKey: string;
   displayName: string;
+  accessCode?: string;
 };
 
 export function JoinRoom({ token }: { token: string }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
-  const [name, setName] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors<"name">>({});
+  const [code, setCode] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors<"code">>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -82,30 +89,41 @@ export function JoinRoom({ token }: { token: string }) {
 
       const stored = readStored(token);
       const joinKey = stored && isJoinKey(stored.joinKey) ? stored.joinKey : createJoinKey();
-      const storedName = stored?.displayName.trim() ?? "";
-      writeStored(token, { joinKey, displayName: storedName });
+      const queryCode = readAccessCodeFromSearch(window.location.search);
+      const candidateCode = queryCode || stored?.accessCode?.trim() || "";
 
-      if (storedName.length === 0) {
+      if (candidateCode.length === 0) {
+        writeStored(token, { joinKey, displayName: "" });
         setPhase({ kind: "ready", title: preview.title, joinKey });
         return;
       }
 
-      setName(storedName);
+      setCode(candidateCode);
       setIsSubmitting(true);
       try {
         const result = await submitJoin(apiUrl(""), token, {
-          displayName: storedName,
+          code: candidateCode,
           joinKey,
         });
         if (cancelled) {
           return;
         }
-        writeStored(token, { joinKey, displayName: result.displayName });
-        setPhase({ kind: "joined", title: result.title, joinKey });
+        writeStored(token, {
+          joinKey,
+          displayName: result.displayName,
+          accessCode: candidateCode.toUpperCase(),
+        });
+        setPhase({
+          kind: "joined",
+          title: result.title,
+          joinKey,
+          displayName: result.displayName,
+        });
       } catch (error) {
         if (cancelled) {
           return;
         }
+        writeStored(token, { joinKey, displayName: "" });
         setErrorMessage(joinErrorMessage(error));
         setPhase({ kind: "ready", title: preview.title, joinKey });
       } finally {
@@ -127,7 +145,7 @@ export function JoinRoom({ token }: { token: string }) {
       return;
     }
 
-    const validation = validateWithZod(joinRoomSchema, { name });
+    const validation = validateWithZod(joinCodeSchema, { code });
     if (!validation.ok) {
       setFieldErrors(validation.fieldErrors);
       setErrorMessage(validation.firstError);
@@ -135,17 +153,26 @@ export function JoinRoom({ token }: { token: string }) {
     }
 
     setFieldErrors({});
-    const displayName = validation.data.name;
+    const normalizedCode = validation.data.code;
 
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
       const result = await submitJoin(apiUrl(""), token, {
-        displayName,
+        code: normalizedCode,
         joinKey: phase.joinKey,
       });
-      writeStored(token, { joinKey: phase.joinKey, displayName: result.displayName });
-      setPhase({ kind: "joined", title: result.title, joinKey: phase.joinKey });
+      writeStored(token, {
+        joinKey: phase.joinKey,
+        displayName: result.displayName,
+        accessCode: normalizedCode,
+      });
+      setPhase({
+        kind: "joined",
+        title: result.title,
+        joinKey: phase.joinKey,
+        displayName: result.displayName,
+      });
     } catch (error) {
       setErrorMessage(joinErrorMessage(error));
     } finally {
@@ -188,7 +215,14 @@ export function JoinRoom({ token }: { token: string }) {
   }
 
   if (phase.kind === "joined") {
-    return <JoinedRoomView token={token} title={phase.title} joinKey={phase.joinKey} />;
+    return (
+      <JoinedRoomView
+        token={token}
+        title={phase.title}
+        joinKey={phase.joinKey}
+        displayName={phase.displayName}
+      />
+    );
   }
 
   return (
@@ -204,18 +238,21 @@ export function JoinRoom({ token }: { token: string }) {
         <form className="stack-form" onSubmit={handleSubmit} noValidate>
           <div className="field">
             <label>
-              Seu nome
+              Código de acesso
               <input
-                value={name}
-                aria-invalid={Boolean(fieldErrors.name)}
+                value={code}
+                aria-invalid={Boolean(fieldErrors.code)}
                 onChange={(event) => {
-                  setName(event.target.value);
-                  setFieldErrors((current) => ({ ...current, name: undefined }));
+                  setCode(event.target.value.toUpperCase());
+                  setFieldErrors((current) => ({ ...current, code: undefined }));
                 }}
-                autoComplete="name"
+                placeholder="Ex.: A7K9M2"
+                maxLength={6}
+                autoCapitalize="characters"
+                autoComplete="one-time-code"
               />
             </label>
-            {fieldErrors.name ? <span className="field-error">{fieldErrors.name}</span> : null}
+            {fieldErrors.code ? <span className="field-error">{fieldErrors.code}</span> : null}
           </div>
           {errorMessage ? (
             <p className="form-error" role="alert">
@@ -235,10 +272,12 @@ function JoinedRoomView({
   token,
   title,
   joinKey,
+  displayName,
 }: {
   token: string;
   title: string;
   joinKey: string;
+  displayName: string;
 }) {
   const [ballotState, setBallotState] = useState<BallotState | null>(null);
   const [votedRoundIds, setVotedRoundIds] = useState<Record<string, boolean>>({});
@@ -284,11 +323,11 @@ function JoinedRoomView({
   const candidates = ballotState?.candidates ?? [];
   const currentRoundKey = round ? roundInstanceKey(round.id, round.restartCount) : null;
   const hasVotedInCurrentRound = Boolean(currentRoundKey && votedRoundIds[currentRoundKey]);
-  const activeSelectedCandidateId = candidates.some(
-    (candidate) => candidate.id === selectedCandidateId,
-  )
-    ? selectedCandidateId
-    : "";
+  const activeSelectedCandidateId =
+    selectedCandidateId === NULL_VOTE_CHOICE ||
+    candidates.some((candidate) => candidate.id === selectedCandidateId)
+      ? selectedCandidateId
+      : "";
 
   async function handleCastVote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -296,7 +335,7 @@ function JoinedRoomView({
       return;
     }
     if (!activeSelectedCandidateId) {
-      setVoteError("Escolha um candidato.");
+      setVoteError("Escolha um candidato ou Voto Nulo / Em Branco.");
       return;
     }
 
@@ -305,7 +344,8 @@ function JoinedRoomView({
     try {
       const receipt = await submitBallot(apiUrl(""), token, {
         joinKey,
-        candidateId: activeSelectedCandidateId,
+        candidateId:
+          activeSelectedCandidateId === NULL_VOTE_CHOICE ? null : activeSelectedCandidateId,
       });
       setSelectedCandidateId("");
       const key = roundInstanceKey(receipt.roundId, round.restartCount);
@@ -323,6 +363,7 @@ function JoinedRoomView({
       <header className="page-intro">
         <h1>Você entrou</h1>
         <p className="lede">{title}</p>
+        <p className="meta">Votante: <strong>{displayName}</strong></p>
       </header>
       <section className="panel">
         <p>Sua presença foi registrada.</p>
@@ -330,7 +371,11 @@ function JoinedRoomView({
 
       {round?.status === "open" && candidates.length > 0 ? (
         <section className="panel" aria-label="Cédula">
-          <h2>{`${round.number}º escrutínio`}</h2>
+          <h2>
+            {round.officeLabel
+              ? `${round.officeLabel} — ${round.officeRoundNumber ?? round.number}º escrutínio`
+              : `${round.number}º escrutínio`}
+          </h2>
           <p className="round-notice" aria-live="polite">
             {voterRoundStateNotice(round.status, round.restartCount)}
           </p>
@@ -354,6 +399,16 @@ function JoinedRoomView({
                       {candidate.displayName}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    className={
+                      activeSelectedCandidateId === NULL_VOTE_CHOICE ? "choice selected" : "choice"
+                    }
+                    aria-pressed={activeSelectedCandidateId === NULL_VOTE_CHOICE}
+                    onClick={() => setSelectedCandidateId(NULL_VOTE_CHOICE)}
+                  >
+                    Voto Nulo / Em Branco
+                  </button>
                 </div>
               </fieldset>
               {voteError ? (
@@ -371,7 +426,11 @@ function JoinedRoomView({
 
       {round?.status === "closed" && round.tally ? (
         <section className="panel" aria-label="Resultado do escrutínio">
-          <h2>{`Resultado — ${round.number}º escrutínio`}</h2>
+          <h2>
+            {round.officeLabel
+              ? `Resultado — ${round.officeLabel} (${round.officeRoundNumber ?? round.number}º escrutínio)`
+              : `Resultado — ${round.number}º escrutínio`}
+          </h2>
           <p className="round-notice" aria-live="polite">
             {voterRoundStateNotice(round.status, round.restartCount)}
           </p>
@@ -384,11 +443,46 @@ function JoinedRoomView({
                 {voterStandingLabel(item.displayName, item.votes)}
               </li>
             ))}
+            {(round.tally.nullVotes ?? 0) > 0 ? (
+              <li>{voterStandingLabel("Votos Nulos / Em Branco", round.tally.nullVotes ?? 0)}</li>
+            ) : null}
           </ul>
+        </section>
+      ) : null}
+      {ballotState?.offices && ballotState.offices.length > 0 ? (
+        <section className="panel" aria-label="Cargos da diretoria">
+          <h2>Cargos da Diretoria</h2>
+          <ol className="office-progress-list">
+            {ballotState.offices.map((office) => (
+              <li key={office.officeLabel} className={`office-progress-item ${office.status}`}>
+                <strong>
+                  {office.order}. {office.officeLabel}
+                </strong>
+                <span>
+                  {office.status === "elected"
+                    ? `Eleito: ${office.winnerName ?? "Confirmado"}`
+                    : office.status === "open"
+                      ? "Em votação"
+                      : office.status === "in_progress"
+                        ? "Em andamento"
+                        : "Aguardando"}
+                </span>
+              </li>
+            ))}
+          </ol>
         </section>
       ) : null}
     </div>
   );
+}
+
+function readAccessCodeFromSearch(search: string): string {
+  try {
+    const params = new URLSearchParams(search);
+    return (params.get("code") ?? "").trim().toUpperCase();
+  } catch {
+    return "";
+  }
 }
 
 function roundInstanceKey(roundId: string, restartCount?: number): string {

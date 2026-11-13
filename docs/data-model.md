@@ -153,7 +153,7 @@ A single election session created by an admin (QR join target).
 
 | Field | Notes |
 | --- | --- |
-| `room_type` | `pastor`, `elder`, `deacon`, `upa_board`, or `custom` |
+| `room_type` | `pastor`, `elder`, `deacon`, `session_board`, `upa_board`, `ump_board`, or `custom` |
 | `rules_preset` | `ipb_local_officers`, `ipb_society_board`, or `custom`. Majority and round behavior are derived from the preset, not stored as separate columns |
 | `quorum_value` + `quorum_unit` | Absolute count, or percent of `eligible_count` |
 | `eligible_count` | Denominator for a percent quorum. Stays 0 until the admin sets it. Absolute quorum ignores it. A percent quorum with 0 cannot be met |
@@ -176,7 +176,7 @@ Invites do not expire by time yet. An unknown token is rejected. Draft, closed, 
 
 ### Round
 
-One ballot open period (1st, 2nd, 3rd/runoff). Society elections may also be **office-by-office** (`office_label`).
+One ballot open period (1st, 2nd, 3rd/runoff). Society board rooms (`upa_board`, `ump_board`) run **office-by-office** (`office_label`: `Presidente`, `Vice-Presidente`, `1º Secretário`, `2º Secretário`, `Tesoureiro`), with per-office round numbering for majority and runoff rules.
 
 `outcome` is null while the round is open, and null after a close that met quorum but has not been tallied yet. Otherwise it is `failed_quorum`, `no_majority`, or `elected`. Closing below the required presence writes `failed_quorum`. At most one round per room is `open`.
 

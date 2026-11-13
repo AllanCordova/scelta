@@ -3,6 +3,7 @@ import {
   candidates,
   createPgliteDatabase,
   participants,
+  roomMemberCodes,
   rooms,
   rounds,
   voteReceipts,
@@ -66,6 +67,7 @@ describe("admin rooms", () => {
     await db.delete(rounds);
     await db.delete(candidates);
     await db.delete(participants);
+    await db.delete(roomMemberCodes);
     await db.delete(rooms);
   });
 
@@ -309,8 +311,23 @@ describe("admin rooms", () => {
         async deleteRoom() {
           return false;
         },
-        async joinRoom() {
+        async joinRoomWithCode() {
           throw new Error("not implemented");
+        },
+        async generateMemberAccessCodes() {
+          return [];
+        },
+        async createSimulatedAccessCodes() {
+          return [];
+        },
+        async listAccessCodes() {
+          return [];
+        },
+        async revokeAccessCode() {
+          return null;
+        },
+        async revokeAllAccessCodes() {
+          return 0;
         },
         async removePresentParticipants() {
           return 0;
@@ -519,10 +536,19 @@ describe("admin rooms", () => {
     expect(notFound.statusCode).toBe(404);
     expect(notFound.json()).toEqual({ error: "room_not_found" });
 
+    const simRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/simulate`,
+      headers: { cookie: adminCookie },
+      payload: { count: 1 },
+    });
+    expect(simRes.statusCode).toBe(200);
+    const simCode = (simRes.json() as { accessCodes: Array<{ code: string }> }).accessCodes[0]!;
+
     const joinRes = await app.inject({
       method: "POST",
       url: `/v1/join/${room.inviteToken}`,
-      payload: { displayName: "Ana", joinKey: "join-key-ana-0001" },
+      payload: { code: simCode.code, joinKey: "join-key-ana-0001" },
     });
     expect(joinRes.statusCode).toBe(200);
 
@@ -627,14 +653,20 @@ describe("admin rooms", () => {
     expect(created.statusCode).toBe(201);
     const room = created.json().room as { id: string; inviteToken: string };
 
-    for (const [name, key] of [
-      ["Ana", "join-key-ana-0001"],
-      ["Bia", "join-key-bia-0002"],
-    ] as const) {
+    const simRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/simulate`,
+      headers: { cookie: adminCookie },
+      payload: { count: 2 },
+    });
+    expect(simRes.statusCode).toBe(200);
+    const simCodes = (simRes.json() as { accessCodes: Array<{ code: string }> }).accessCodes;
+
+    for (const [index, key] of ["join-key-ana-0001", "join-key-bia-0002"].entries()) {
       const joinRes = await app.inject({
         method: "POST",
         url: `/v1/join/${room.inviteToken}`,
-        payload: { displayName: name, joinKey: key },
+        payload: { code: simCodes[index]!.code, joinKey: key },
       });
       expect(joinRes.statusCode).toBe(200);
     }

@@ -50,10 +50,15 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await page.getByRole("button", { name: "Remover participantes" }).click();
   await expect(page.getByText("1 participantes removidos da presença.")).toBeVisible();
 
-  // Join as a voter and cast a ballot after admin opens round from detail view
+  // Generate access codes from the admin detail view and join as a voter
+  await page.getByRole("button", { name: "Gerar códigos do rol" }).click();
+  await expect(page.getByText(/códigos ativos prontos para credenciamento/)).toBeVisible();
+  const firstPin = await page.locator(".access-code-pin").first().textContent();
+  expect(firstPin).toBeTruthy();
+
   const voterPage = await context.newPage();
   await voterPage.goto(inviteUrlValue);
-  await voterPage.getByLabel("Seu nome").fill("Ana");
+  await voterPage.getByLabel("Código de acesso").fill(firstPin!.trim());
   await voterPage.getByRole("button", { name: "Entrar na sala" }).click();
   await expect(voterPage.getByRole("heading", { name: "Você entrou" })).toBeVisible();
 

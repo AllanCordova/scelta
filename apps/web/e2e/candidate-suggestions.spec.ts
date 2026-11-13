@@ -78,9 +78,17 @@ test("admin imports members via CSV file on /admin/membros, sees room-type candi
   if (!href) {
     throw new Error("Missing invite link");
   }
+  const roomsRes = await page.request.get("http://127.0.0.1:3334/v1/admin/rooms");
+  const { rooms } = (await roomsRes.json()) as { rooms: Array<{ id: string; title: string }> };
+  const createdRoom = rooms.find((r) => r.title === title)!;
+  const genRes = await page.request.post(
+    `http://127.0.0.1:3334/v1/admin/rooms/${createdRoom.id}/access-codes/generate`,
+  );
+  const { accessCodes } = (await genRes.json()) as { accessCodes: Array<{ code: string }> };
+
   const visitor = await page.context().newPage();
   await visitor.goto(href);
-  await visitor.getByLabel("Seu nome").fill("Ana");
+  await visitor.getByLabel("Código de acesso").fill(accessCodes[0]!.code);
   await visitor.getByRole("button", { name: "Entrar na sala" }).click();
   await expect(visitor.getByRole("heading", { name: "Você entrou" })).toBeVisible();
   await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeEnabled({

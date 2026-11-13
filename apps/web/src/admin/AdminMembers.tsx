@@ -15,13 +15,15 @@ const EXPECTED_COLUMNS = [
   "data_nascimento",
   "upa_ativo",
   "upa_ingresso",
+  "ump_ativo",
+  "ump_ingresso",
 ] as const;
 
 const CSV_TEMPLATE_CONTENT = [
   EXPECTED_COLUMNS.join(","),
-  "Paulo Apóstolo,sim,M,1985-04-12,nao,",
-  "Silas Companheiro,sim,M,1998-06-01,sim,2024-01-10",
-  "Lídia de Tiatira,sim,F,1995-03-20,sim,2023-05-01",
+  "Paulo Apóstolo,sim,M,1985-04-12,nao,,nao,",
+  "Silas Companheiro,sim,M,1998-06-01,sim,2024-01-10,nao,",
+  "Lídia de Tiatira,sim,F,1995-03-20,sim,2023-05-01,sim,2023-05-01",
 ].join("\n");
 
 const TEMPLATE_DATA_URL = `data:text/csv;charset=utf-8,${encodeURIComponent(CSV_TEMPLATE_CONTENT)}`;

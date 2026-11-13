@@ -22,19 +22,21 @@ test("two voters cast distinct votes, results match, and neither UI exposes who 
     throw new Error("Missing invite link");
   }
 
+  const codes = await createSimulatedCodes(page, title, 2);
+
   const voterOneContext = await page.context().browser()!.newContext();
   const voterTwoContext = await page.context().browser()!.newContext();
   try {
     const inviteUrl = new URL(href, page.url()).toString();
     const voterOne = await voterOneContext.newPage();
     await voterOne.goto(inviteUrl);
-    await voterOne.getByLabel("Seu nome").fill("Votante Alfa");
+    await voterOne.getByLabel("Código de acesso").fill(codes[0]!);
     await voterOne.getByRole("button", { name: "Entrar na sala" }).click();
     await expect(voterOne.getByRole("heading", { name: "Você entrou" })).toBeVisible();
 
     const voterTwo = await voterTwoContext.newPage();
     await voterTwo.goto(inviteUrl);
-    await voterTwo.getByLabel("Seu nome").fill("Votante Beta");
+    await voterTwo.getByLabel("Código de acesso").fill(codes[1]!);
     await voterTwo.getByRole("button", { name: "Entrar na sala" }).click();
     await expect(voterTwo.getByRole("heading", { name: "Você entrou" })).toBeVisible();
 
@@ -78,6 +80,21 @@ test("two voters cast distinct votes, results match, and neither UI exposes who 
     await voterTwoContext.close();
   }
 });
+
+async function createSimulatedCodes(page: Page, roomTitle: string, count: number): Promise<string[]> {
+  const roomsRes = await page.request.get("http://127.0.0.1:3334/v1/admin/rooms");
+  const { rooms } = (await roomsRes.json()) as { rooms: Array<{ id: string; title: string }> };
+  const room = rooms.find((r) => r.title === roomTitle);
+  if (!room) {
+    throw new Error(`Room not found: ${roomTitle}`);
+  }
+  const simRes = await page.request.post(
+    `http://127.0.0.1:3334/v1/admin/rooms/${room.id}/access-codes/simulate`,
+    { data: { count } },
+  );
+  const { accessCodes } = (await simRes.json()) as { accessCodes: Array<{ code: string }> };
+  return accessCodes.map((c) => c.code);
+}
 
 async function loginAsAdmin(page: Page) {
   await page.goto("/entrar");

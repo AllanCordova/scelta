@@ -21,6 +21,7 @@ export type BallotRejectionReason =
   | "room_not_open"
   | "round_not_open"
   | "participant_not_present"
+  | "access_code_revoked"
   | "already_voted"
   | "invalid_candidate";
 

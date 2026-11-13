@@ -4,6 +4,7 @@ const STORAGE_PREFIX = "scelta.join.";
 export type StoredJoinIdentity = {
   joinKey: string;
   displayName: string;
+  accessCode?: string;
 };
 
 type KeyValueStore = {
@@ -35,6 +36,7 @@ export function readJoinIdentity(storage: KeyValueStore, token: string): StoredJ
     return {
       joinKey: parsed.joinKey,
       displayName: typeof parsed.displayName === "string" ? parsed.displayName : "",
+      ...(typeof parsed.accessCode === "string" ? { accessCode: parsed.accessCode } : {}),
     };
   } catch {
     return null;
