@@ -8,6 +8,7 @@ import { authRoutes } from "./routes/auth.js";
 import { ballotRoutes } from "./routes/ballots.js";
 import { healthRoutes } from "./routes/health.js";
 import { joinRoutes } from "./routes/join.js";
+import { memberRoutes } from "./routes/members.js";
 import { roomRoutes, type RoomRouteOptions } from "./routes/rooms.js";
 import { roundRoutes } from "./routes/rounds.js";
 import { rulesRoutes } from "./routes/rules.js";
@@ -40,6 +41,10 @@ export async function buildApp(dependencies: AppDependencies = {}) {
     userRepository: dependencies.userRepository,
   });
   await app.register(roomRoutes, {
+    roomRepository: dependencies.roomRepository,
+    userRepository: dependencies.userRepository,
+  });
+  await app.register(memberRoutes, {
     roomRepository: dependencies.roomRepository,
     userRepository: dependencies.userRepository,
   });

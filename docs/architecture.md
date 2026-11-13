@@ -28,7 +28,7 @@ C4Context
     Person(admin, "Room admin", "Creates rooms, sets quorum, starts/restarts votes")
     Person(voter, "Eligible member", "Joins room, votes once per round, may react")
     System(scelta, "Scelta", "Web voting rooms with IPB-aware rules")
-    System_Ext(members, "Member roll source", "Communicant / society lists — import TBD")
+    System_Ext(members, "Member roll source", "Communicant / society lists — CSV import")
 
     Rel(admin, scelta, "Manages rooms and elections")
     Rel(voter, scelta, "Joins via QR / link, votes")
@@ -127,6 +127,7 @@ sequenceDiagram
 | 2026-11-13 | Casting a ballot inserts a `vote_receipts` row (`round_id`, `participant_id`) and an anonymous `ballots` row (`round_id`, `candidate_id`, random `ballot_token`) in a single database transaction. Closing a round that meets quorum automatically tallies ballots against eligible candidates and sets outcome `elected` (> 50%) or `no_majority` | Enforces one-vote-per-round via `vote_receipts` unique index while keeping `ballots` unlinkable to participants | Accepted |
 | 2026-11-13 | Opening a round after `no_majority` resolves the next round's eligible candidate subset via `resolveNextRoundCandidateIds` (`nextRoundPlan` or admin subset) and marks eliminated candidates `is_eligible = false` inside the round-opening transaction; opening after `elected` is rejected | Ensures 3rd-round runoffs (top-2 for `ipb_society_board`, most-voted or admin subset for `ipb_local_officers`) enforce candidate eligibility at the DB and API boundaries while resetting per-round ballots and receipts | Accepted |
 | 2026-11-13 | Restarting an open round (`POST /v1/admin/rooms/:roomId/rounds/:roundId/restart`) deletes `ballots` and `vote_receipts` for that `round_id` and records an `audit_events` row (`action = 'round_restarted'`) in a single transaction, incrementing `restartCount` and emitting round lifecycle events (`open`, `closed`, `restarted`) | Allows the assembly chair to restart a flawed ballot with a tamper-evident audit trail while notifying participants to cast a fresh anonymous vote | Accepted |
+| 2026-11-13 | Member roll import (`POST /v1/admin/members/import`) parses CSV rows in `@scelta/domain` (`parseMemberImportCsv`), transactionally upserts valid rows into `members` by case-insensitive `full_name` per church, and returns `{ createdCount, updatedCount, rejectedCount, rejectedRows }` | Stores communicant status, gender, birth date, and UPA society flags for candidate suggestion filters while isolating malformed CSV lines with explicit rejection reasons | Accepted |
 
 ## Open questions
 

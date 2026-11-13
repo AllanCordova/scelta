@@ -62,3 +62,13 @@ export {
   type JoinFieldError,
   type JoinIdentity,
 } from "./join.js";
+export {
+  parseIsoDate,
+  parseMemberImportCsv,
+  type MemberImportRejectionReason,
+  type MemberImportReport,
+  type MemberSocietyFlags,
+  type ParsedMemberImport,
+  type RejectedMemberImportRow,
+  type ValidMemberImportRow,
+} from "./member-import.js";

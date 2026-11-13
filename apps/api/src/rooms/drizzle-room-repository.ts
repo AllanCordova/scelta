@@ -2,6 +2,7 @@ import {
   auditEvents,
   ballots,
   candidates,
+  members,
   participants,
   rooms,
   rounds,
@@ -11,6 +12,7 @@ import {
 import {
   canCastBallot,
   ROUND_RESULTS,
+  type MemberSocietyFlags,
   type QuorumUnit,
   type RoomStatus,
   type RoomType,
@@ -26,6 +28,7 @@ import type {
   RoomRepository,
   StoredAuditEvent,
   StoredCandidate,
+  StoredMember,
   StoredRound,
   StoredRoundStatus,
   StoredRoom,
@@ -463,6 +466,82 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .orderBy(asc(ballots.candidateId));
       return rows.map((row) => row.candidateId);
     },
+
+    async importMembers(rows) {
+      if (rows.length === 0) {
+        return { createdCount: 0, updatedCount: 0 };
+      }
+
+      const churchId = await getOrCreateChurch(db, churchName);
+      return db.transaction(async (tx) => {
+        const existingRows = await tx
+          .select()
+          .from(members)
+          .where(eq(members.churchId, churchId));
+        const existingByName = new Map(
+          existingRows.map((row) => [row.fullName.toLocaleLowerCase(), row]),
+        );
+
+        let createdCount = 0;
+        let updatedCount = 0;
+
+        for (const row of rows) {
+          const key = row.fullName.toLocaleLowerCase();
+          const birthDate = row.birthDate ? new Date(`${row.birthDate}T00:00:00.000Z`) : null;
+          const existing = existingByName.get(key);
+
+          if (existing) {
+            const updated = await tx
+              .update(members)
+              .set({
+                fullName: row.fullName,
+                isCommunicant: row.isCommunicant,
+                isMale: row.isMale,
+                birthDate,
+                societyFlags: row.societyFlags,
+              })
+              .where(eq(members.id, existing.id))
+              .returning();
+            if (updated[0]) {
+              existingByName.set(key, updated[0]);
+            }
+            updatedCount += 1;
+          } else {
+            const inserted = await tx
+              .insert(members)
+              .values({
+                churchId,
+                fullName: row.fullName,
+                isCommunicant: row.isCommunicant,
+                isMale: row.isMale,
+                birthDate,
+                societyFlags: row.societyFlags,
+              })
+              .returning();
+            if (inserted[0]) {
+              existingByName.set(key, inserted[0]);
+            }
+            createdCount += 1;
+          }
+        }
+
+        return { createdCount, updatedCount };
+      });
+    },
+
+    async listMembers() {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return [];
+      }
+
+      const rows = await db
+        .select()
+        .from(members)
+        .where(eq(members.churchId, church.id))
+        .orderBy(asc(members.fullName));
+      return rows.map(toStoredMember);
+    },
   };
 }
 
@@ -477,6 +556,34 @@ function toStoredCandidate(row: {
     roomId: row.roomId,
     displayName: row.displayName,
     isEligible: row.isEligible,
+  };
+}
+
+function toStoredMember(row: {
+  id: string;
+  fullName: string;
+  isCommunicant: boolean;
+  isMale: boolean | null;
+  birthDate: Date | null;
+  societyFlags: Record<string, unknown> | null;
+  createdAt: Date;
+}): StoredMember {
+  const rawFlags = row.societyFlags ?? {};
+  const societyFlags: MemberSocietyFlags = {
+    ...(typeof rawFlags.upaActive === "boolean" ? { upaActive: rawFlags.upaActive } : {}),
+    ...(typeof rawFlags.upaEnrolledAt === "string"
+      ? { upaEnrolledAt: rawFlags.upaEnrolledAt }
+      : {}),
+  };
+
+  return {
+    id: row.id,
+    fullName: row.fullName,
+    isCommunicant: row.isCommunicant,
+    isMale: row.isMale,
+    birthDate: row.birthDate ? row.birthDate.toISOString().slice(0, 10) : null,
+    societyFlags,
+    createdAt: row.createdAt,
   };
 }
 
