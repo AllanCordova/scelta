@@ -57,6 +57,16 @@ export function voterStandingLabel(displayName: string, votes: number): string {
   return `${displayName}: ${votes === 1 ? "1 voto" : `${votes} votos`}`;
 }
 
+export function voterRoundStateNotice(status: string, restartCount?: number): string {
+  if (status === "open") {
+    if ((restartCount ?? 0) > 0) {
+      return "Escrutínio reiniciado — os votos anteriores foram limpos. Vote novamente.";
+    }
+    return "Escrutínio aberto para votação.";
+  }
+  return "Escrutínio encerrado.";
+}
+
 function isJoinError(
   error: unknown,
 ): error is { status: number; errorCode: string; roomStatus?: string } {

@@ -7,11 +7,24 @@ const ROOM_CHANNEL_ID =
 
 export type PresenceSnapshot = QuorumStatus;
 
+export type RoundLifecycleState = "open" | "closed" | "restarted";
+
+export type RoundStateSnapshot = {
+  roundId: string;
+  roundNumber: number;
+  state: RoundLifecycleState;
+};
+
 export type PresencePublisher = {
   publishPresence(roomId: string, presence: PresenceSnapshot): void;
+  publishRoundState?(roomId: string, roundState: RoundStateSnapshot): void;
 };
 
 export type PresenceUpdate = PresenceSnapshot & {
+  roomId: string;
+};
+
+export type RoundStateUpdate = RoundStateSnapshot & {
   roomId: string;
 };
 
@@ -24,6 +37,10 @@ export function createSocketPresencePublisher(io: Server): PresencePublisher {
     publishPresence(roomId, presence) {
       const update: PresenceUpdate = { roomId, ...presence };
       io.to(`room:${roomId}`).emit("presence", update);
+    },
+    publishRoundState(roomId, roundState) {
+      const update: RoundStateUpdate = { roomId, ...roundState };
+      io.to(`room:${roomId}`).emit("round:state", update);
     },
   };
 }

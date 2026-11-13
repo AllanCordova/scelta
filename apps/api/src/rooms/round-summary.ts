@@ -11,6 +11,7 @@ export function toRoundSummary(round: StoredRound | null, tally?: RoundTally | n
     number: round.number,
     status: round.status,
     outcome: round.outcome,
+    ...(round.restartCount ? { restartCount: round.restartCount } : {}),
     ...(tally ? { tally } : {}),
   };
 }

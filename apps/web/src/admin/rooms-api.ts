@@ -107,6 +107,16 @@ export async function closeRound(apiBase: string, roomId: string, roundId: strin
   );
 }
 
+export async function restartRound(
+  apiBase: string,
+  roomId: string,
+  roundId: string,
+): Promise<RoomRound> {
+  return postRound(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds/${encodeURIComponent(roundId)}/restart`,
+  );
+}
+
 async function postRound(url: string): Promise<RoomRound> {
   const response = await fetch(url, { method: "POST", credentials: "include" });
   const body = (await response.json().catch(() => ({}))) as { round?: RoomRound; error?: string };

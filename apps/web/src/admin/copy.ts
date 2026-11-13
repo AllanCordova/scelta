@@ -58,6 +58,9 @@ export function quorumStateLabel(quorumMet: boolean): string {
 
 export const OPEN_ROUND_LABEL = "Abrir escrutínio";
 export const CLOSE_ROUND_LABEL = "Encerrar escrutínio";
+export const RESTART_ROUND_LABEL = "Reiniciar escrutínio";
+export const ROUND_RESTARTED_MESSAGE =
+  "Escrutínio reiniciado — os votos anteriores foram limpos.";
 export const FAILED_QUORUM_MESSAGE =
   "Quórum não atingido. O escrutínio foi encerrado sem eleger ninguém.";
 

@@ -56,6 +56,16 @@ export type StoredRound = {
   outcome: RoundResult | null;
   openedAt: Date | null;
   closedAt: Date | null;
+  restartCount?: number;
+};
+
+export type StoredAuditEvent = {
+  id: string;
+  roomId: string;
+  actorRole: string;
+  action: string;
+  payload: Record<string, unknown>;
+  createdAt: Date;
 };
 
 export type OpenRoundResult =
@@ -84,9 +94,11 @@ export type RoomRepository = {
     roundId: string,
     outcome: RoundResult | null,
   ): Promise<StoredRound | null>;
+  restartRound(roomId: string, roundId: string): Promise<StoredRound | null>;
   findRound(roomId: string, roundId: string): Promise<StoredRound | null>;
   latestRounds(roomIds: string[]): Promise<StoredRound[]>;
   latestClosedRound(roomId: string): Promise<StoredRound | null>;
+  listAuditEvents(roomId: string): Promise<StoredAuditEvent[]>;
   castBallot(input: {
     roomId: string;
     roundId: string;

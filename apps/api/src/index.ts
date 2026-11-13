@@ -32,6 +32,9 @@ async function main() {
     publishPresence(roomId, presence) {
       presenceSink.current?.publishPresence(roomId, presence);
     },
+    publishRoundState(roomId, roundState) {
+      presenceSink.current?.publishRoundState?.(roomId, roundState);
+    },
   };
   const app = await buildApp({ roomRepository, userRepository, presencePublisher });
   await app.ready();

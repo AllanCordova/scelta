@@ -186,6 +186,49 @@ describe("JoinRoom", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Você já votou neste escrutínio.");
   });
+
+  it("shows restarted round notification and lets the voter cast a fresh ballot", async () => {
+    writeJoinIdentity(window.localStorage, "invite-token", {
+      joinKey: "a".repeat(32),
+      displayName: "Ana",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/ballot/receipt")) {
+          return json({ roundId: "round-1", hasVoted: false });
+        }
+        if (url.endsWith("/ballot")) {
+          return json({
+            roomStatus: "open",
+            candidates: [{ id: "cand-1", displayName: "Paulo" }],
+            round: { id: "round-1", number: 1, status: "open", outcome: null, restartCount: 1 },
+          });
+        }
+        if (init?.method === "POST") {
+          return json({
+            title: "Eleição de presbíteros",
+            status: "open",
+            displayName: "Ana",
+            presentCount: 1,
+            alreadyJoined: true,
+          });
+        }
+        return json({ title: "Eleição de presbíteros", status: "open", canJoin: true });
+      }),
+    );
+
+    render(<JoinRoom token="invite-token" />);
+
+    expect(
+      await screen.findByText(
+        "Escrutínio reiniciado — os votos anteriores foram limpos. Vote novamente.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Paulo" })).toBeInTheDocument();
+  });
 });
 
 function json(body: unknown, status = 200) {

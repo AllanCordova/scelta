@@ -60,6 +60,7 @@ export type RoomRound = {
   number: number;
   status: RoundStatus;
   outcome: RoundResult | null;
+  restartCount?: number;
   tally?: RoundTally;
 };
 

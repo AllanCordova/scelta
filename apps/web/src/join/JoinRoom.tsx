@@ -4,6 +4,7 @@ import {
   ballotErrorMessage,
   joinBlockedMessage,
   joinErrorMessage,
+  voterRoundStateNotice,
   voterStandingLabel,
   voterTallyOutcome,
 } from "./copy";
@@ -227,7 +228,7 @@ function JoinedRoomView({
 
   useEffect(() => {
     let cancelled = false;
-    const checkedRoundIds = new Set<string>();
+    const checkedRoundKeys = new Set<string>();
 
     async function poll() {
       const next = await fetchBallotState(apiUrl(""), token);
@@ -236,14 +237,14 @@ function JoinedRoomView({
       }
       setBallotState(next);
 
-      if (next.round?.status === "open" && !checkedRoundIds.has(next.round.id)) {
-        checkedRoundIds.add(next.round.id);
-        const receipt = await fetchVoteReceipt(apiUrl(""), token, joinKey);
-        if (!cancelled && receipt?.roundId && receipt.hasVoted) {
-          const roundId = receipt.roundId;
-          setVotedRoundIds((current) =>
-            current[roundId] ? current : { ...current, [roundId]: true },
-          );
+      if (next.round?.status === "open") {
+        const key = roundInstanceKey(next.round.id, next.round.restartCount);
+        if (!checkedRoundKeys.has(key)) {
+          checkedRoundKeys.add(key);
+          const receipt = await fetchVoteReceipt(apiUrl(""), token, joinKey);
+          if (!cancelled && receipt?.roundId === next.round.id && receipt.hasVoted) {
+            setVotedRoundIds((current) => (current[key] ? current : { ...current, [key]: true }));
+          }
         }
       }
     }
@@ -261,7 +262,8 @@ function JoinedRoomView({
 
   const round = ballotState?.round ?? null;
   const candidates = ballotState?.candidates ?? [];
-  const hasVotedInCurrentRound = Boolean(round && votedRoundIds[round.id]);
+  const currentRoundKey = round ? roundInstanceKey(round.id, round.restartCount) : null;
+  const hasVotedInCurrentRound = Boolean(currentRoundKey && votedRoundIds[currentRoundKey]);
   const activeSelectedCandidateId = candidates.some(
     (candidate) => candidate.id === selectedCandidateId,
   )
@@ -286,7 +288,8 @@ function JoinedRoomView({
         candidateId: activeSelectedCandidateId,
       });
       setSelectedCandidateId("");
-      setVotedRoundIds((current) => ({ ...current, [receipt.roundId]: true }));
+      const key = roundInstanceKey(receipt.roundId, round.restartCount);
+      setVotedRoundIds((current) => ({ ...current, [key]: true }));
     } catch (error) {
       const message = ballotErrorMessage(error);
       setVoteError(message);
@@ -308,6 +311,9 @@ function JoinedRoomView({
       {round?.status === "open" && candidates.length > 0 ? (
         <section className="panel" aria-label="Cédula">
           <h2>{`${round.number}º escrutínio`}</h2>
+          <p className="round-notice" aria-live="polite">
+            {voterRoundStateNotice(round.status, round.restartCount)}
+          </p>
           {hasVotedInCurrentRound ? (
             <p role="status">Comprovante: seu voto foi registrado com sigilo neste escrutínio.</p>
           ) : (
@@ -346,6 +352,9 @@ function JoinedRoomView({
       {round?.status === "closed" && round.tally ? (
         <section className="panel" aria-label="Resultado do escrutínio">
           <h2>{`Resultado — ${round.number}º escrutínio`}</h2>
+          <p className="round-notice" aria-live="polite">
+            {voterRoundStateNotice(round.status, round.restartCount)}
+          </p>
           <p role="status">
             {voterTallyOutcome(round.tally.outcome, round.tally.winnerName)}
           </p>
@@ -360,6 +369,10 @@ function JoinedRoomView({
       ) : null}
     </div>
   );
+}
+
+function roundInstanceKey(roundId: string, restartCount?: number): string {
+  return `${roundId}:${restartCount ?? 0}`;
 }
 
 function readStored(token: string): StoredIdentity | null {
