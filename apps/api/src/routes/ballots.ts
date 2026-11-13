@@ -1,6 +1,7 @@
 import { canOpenRound, tallyRoundVotes, type RoundTally } from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
+import type { PresencePublisher } from "../realtime.js";
 import { hashJoinKey } from "../rooms/join-key.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
 import { toRoundSummary } from "../rooms/round-summary.js";
@@ -41,6 +42,7 @@ type ReceiptCheckBodyType = {
 
 export type BallotRouteOptions = {
   roomRepository?: RoomRepository;
+  presencePublisher?: PresencePublisher;
 };
 
 export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, options) => {
@@ -184,6 +186,8 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           }
           return reply.code(409).send({ error: result.reason });
         }
+
+        options.presencePublisher?.publishBallotActivity?.(room.id, round.id);
 
         return reply.code(201).send({
           receipt: {

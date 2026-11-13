@@ -1,4 +1,4 @@
-import { ballots, createPgliteDatabase, participants, rooms, rounds, type Db } from "@scelta/db";
+import { ballots, candidates, createPgliteDatabase, participants, rooms, rounds, type Db } from "@scelta/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
@@ -56,6 +56,7 @@ describe("quorum gate", () => {
     resetAuthAttempts();
     await db.delete(ballots);
     await db.delete(rounds);
+    await db.delete(candidates);
     await db.delete(participants);
     await db.delete(rooms);
   });
@@ -102,7 +103,7 @@ describe("quorum gate", () => {
     await app.close();
   });
 
-  it("closes below quorum as failed_quorum and refuses to publish a winner", async () => {
+  it("rejects opening below quorum, closes below quorum as failed_quorum if presence drops, and refuses to publish a winner", async () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoom(app, {
       title: "Abaixo",
@@ -111,9 +112,20 @@ describe("quorum gate", () => {
       eligibleCount: 100,
     });
 
+    const blockedOpen = await openRound(app, room.id);
+    expect(blockedOpen.statusCode).toBe(409);
+    expect(blockedOpen.json()).toEqual({ error: "quorum_not_met" });
+
+    await join(app, room.inviteToken, "Ana", "join-key-ana-0001");
+    await join(app, room.inviteToken, "Bia", "join-key-bia-0002");
+    await join(app, room.inviteToken, "Caio", "join-key-caio-0003");
+    await join(app, room.inviteToken, "Davi", "join-key-davi-0004");
+
     const opened = await openRound(app, room.id);
     expect(opened.statusCode).toBe(201);
     const roundId = opened.json().round.id as string;
+
+    await db.update(participants).set({ isPresent: false }).where(eq(participants.roomId, room.id));
 
     const closed = await closeRound(app, room.id, roundId);
     expect(closed.statusCode).toBe(200);
@@ -136,6 +148,8 @@ describe("quorum gate", () => {
     expect(published.json()).toEqual({ error: "failed_quorum" });
     expect(published.body).not.toContain("candidate-1");
 
+    await db.update(participants).set({ isPresent: true }).where(eq(participants.roomId, room.id));
+
     const next = await openRound(app, room.id);
     expect(next.statusCode).toBe(201);
     const nextRoundId = next.json().round.id as string;
@@ -157,15 +171,10 @@ describe("quorum gate", () => {
       }),
     ]);
 
-    await join(app, room.inviteToken, "Ana", "join-key-ana-0001");
-    await join(app, room.inviteToken, "Bia", "join-key-bia-0002");
-    await join(app, room.inviteToken, "Caio", "join-key-caio-0003");
-    await join(app, room.inviteToken, "Davi", "join-key-davi-0004");
-
     const closedSecond = await closeRound(app, room.id, nextRoundId);
     expect(closedSecond.statusCode).toBe(200);
-    expect(closedSecond.json()).toEqual({
-      round: { id: nextRoundId, number: 2, status: "closed", outcome: null },
+    expect(closedSecond.json()).toMatchObject({
+      round: { id: nextRoundId, number: 2, status: "closed", outcome: "no_majority" },
       quorum: { presentCount: 4, eligibleCount: 100, requiredCount: 4, quorumMet: true },
     });
 
@@ -178,7 +187,7 @@ describe("quorum gate", () => {
     await app.close();
   });
 
-  it("fails a percent quorum closed when the eligible list is empty", async () => {
+  it("rejects opening a percent quorum when the eligible list is empty", async () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoom(app, {
       title: "Percentual sem aptos",
@@ -189,12 +198,8 @@ describe("quorum gate", () => {
     await join(app, room.inviteToken, "Bia", "join-key-bia-0002");
 
     const opened = await openRound(app, room.id);
-    const closed = await closeRound(app, room.id, opened.json().round.id as string);
-    expect(closed.statusCode).toBe(200);
-    expect(closed.json()).toMatchObject({
-      round: { outcome: "failed_quorum", status: "closed" },
-      quorum: { presentCount: 2, eligibleCount: 0, requiredCount: 0, quorumMet: false },
-    });
+    expect(opened.statusCode).toBe(409);
+    expect(opened.json()).toEqual({ error: "quorum_not_met" });
 
     await app.close();
   });
@@ -228,8 +233,8 @@ describe("quorum gate", () => {
     const roundId = opened.json().round.id as string;
     const closed = await closeRound(app, room.id, roundId);
     expect(closed.statusCode).toBe(200);
-    expect(closed.json()).toEqual({
-      round: { id: roundId, number: 1, status: "closed", outcome: null },
+    expect(closed.json()).toMatchObject({
+      round: { id: roundId, number: 1, status: "closed", outcome: "no_majority" },
       quorum: { presentCount: 2, eligibleCount: 3, requiredCount: 2, quorumMet: true },
     });
 
@@ -268,6 +273,8 @@ describe("quorum gate", () => {
       quorumValue: 2,
       quorumUnit: "absolute",
     });
+    await join(app, room.inviteToken, "Ana", "join-key-ana-0001");
+    await join(app, room.inviteToken, "Bia", "join-key-bia-0002");
     await db.update(rooms).set({ status: "voting" }).where(eq(rooms.id, room.id));
 
     const opened = await openRound(app, room.id);
@@ -323,6 +330,7 @@ describe("quorum gate", () => {
         status: input.status ?? "open",
         quorumValue: input.quorumValue,
         quorumUnit: input.quorumUnit,
+        candidates: ["Paulo", "Silas"],
         ...(input.eligibleCount === undefined ? {} : { eligibleCount: input.eligibleCount }),
       },
     });

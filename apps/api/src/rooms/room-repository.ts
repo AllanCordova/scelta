@@ -98,6 +98,7 @@ export type RoomRepository = {
   findRoomById(roomId: string): Promise<StoredRoom | null>;
   deleteRoom(roomId: string): Promise<boolean>;
   joinRoom(roomId: string, displayName: string, joinKeyHash: string): Promise<JoinedParticipant>;
+  removePresentParticipants(roomId: string, limit: number): Promise<number>;
   countPresent(roomId: string): Promise<number>;
   listCandidates(roomId: string): Promise<StoredCandidate[]>;
   listCandidatesByRooms(roomIds: string[]): Promise<StoredCandidate[]>;
@@ -120,6 +121,7 @@ export type RoomRepository = {
   }): Promise<CastBallotResult>;
   hasVotedInRound(roomId: string, roundId: string, joinKeyHash: string): Promise<boolean>;
   listRoundBallotCandidateIds(roundId: string): Promise<string[]>;
+  listRoundReceiptTimestamps(roundId: string): Promise<Date[]>;
   importMembers(
     rows: readonly ValidMemberImportRow[],
   ): Promise<{ createdCount: number; updatedCount: number }>;

@@ -20,7 +20,7 @@ import {
   type RoundResult,
   type RulesPreset,
 } from "@scelta/domain";
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, ne } from "drizzle-orm";
 import { findChurchByName, getOrCreateChurch, isUniqueViolation } from "../churches/church-store.js";
 import { createBallotToken } from "./ballot-token.js";
 import { createInviteToken } from "./invite-token.js";
@@ -204,6 +204,28 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       }
     },
 
+    async removePresentParticipants(roomId, limit) {
+      if (limit <= 0) {
+        return 0;
+      }
+      const rows = await db
+        .select({ id: participants.id })
+        .from(participants)
+        .where(and(eq(participants.roomId, roomId), eq(participants.isPresent, true)))
+        .orderBy(desc(participants.joinedAt), desc(participants.id))
+        .limit(limit);
+      const ids = rows.map((row) => row.id);
+      if (ids.length === 0) {
+        return 0;
+      }
+      const updated = await db
+        .update(participants)
+        .set({ isPresent: false })
+        .where(and(eq(participants.roomId, roomId), inArray(participants.id, ids)))
+        .returning({ id: participants.id });
+      return updated.length;
+    },
+
     async countPresent(roomId) {
       const rows = await db
         .select({ value: count() })
@@ -321,12 +343,22 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           return null;
         }
 
-        await tx.delete(ballots).where(eq(ballots.roundId, roundId));
-        await tx.delete(voteReceipts).where(eq(voteReceipts.roundId, roundId));
+        const roomRoundRows = await tx
+          .select({ id: rounds.id })
+          .from(rounds)
+          .where(eq(rounds.roomId, roomId));
+        const roomRoundIds = roomRoundRows.map((item) => item.id);
+        if (roomRoundIds.length > 0) {
+          await tx.delete(ballots).where(inArray(ballots.roundId, roomRoundIds));
+          await tx.delete(voteReceipts).where(inArray(voteReceipts.roundId, roomRoundIds));
+        }
+        await tx.delete(rounds).where(and(eq(rounds.roomId, roomId), ne(rounds.id, roundId)));
+        await tx.update(candidates).set({ isEligible: true }).where(eq(candidates.roomId, roomId));
 
         const updated = await tx
           .update(rounds)
           .set({
+            number: 1,
             status: "open",
             outcome: null,
             closedAt: null,
@@ -505,6 +537,15 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .where(eq(ballots.roundId, roundId))
         .orderBy(asc(ballots.candidateId));
       return rows.map((row) => row.candidateId);
+    },
+
+    async listRoundReceiptTimestamps(roundId) {
+      const rows = await db
+        .select({ castAt: voteReceipts.castAt })
+        .from(voteReceipts)
+        .where(eq(voteReceipts.roundId, roundId))
+        .orderBy(desc(voteReceipts.castAt));
+      return rows.map((row) => row.castAt);
     },
 
     async importMembers(rows) {

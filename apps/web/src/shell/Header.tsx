@@ -21,7 +21,11 @@ export function Header() {
         <a className="nav-link" href="/" aria-current={path === "/" ? "page" : undefined}>
           Início
         </a>
-        <a className="nav-link" href="/admin" aria-current={path === "/admin" ? "page" : undefined}>
+        <a
+          className="nav-link"
+          href="/admin"
+          aria-current={path === "/admin" || path.startsWith("/admin/salas/") ? "page" : undefined}
+        >
           Salas
         </a>
         <a

@@ -74,6 +74,17 @@ export type RoomSummary = {
   createdAt: string;
 };
 
+export type RoomDetail = RoomSummary & {
+  presence: {
+    presentCount: number;
+    eligibleCount: number;
+    requiredCount: number;
+    quorumMet: boolean;
+  };
+  votedCount: number;
+  receiptTimestamps: string[];
+};
+
 export type FieldErrorCode = "required" | "invalid" | "out_of_range" | "incomplete";
 
 export type RoundResult = "failed_quorum" | "no_majority" | "elected";

@@ -5,6 +5,7 @@ import type {
   MemberImportReport,
   PresetDefinition,
   QuorumUnit,
+  RoomDetail,
   RoomRound,
   RoomSummary,
   RoomType,
@@ -58,6 +59,20 @@ export async function listRooms(apiUrl: string): Promise<RoomSummary[]> {
 
   const body = (await response.json()) as { rooms: RoomSummary[] };
   return body.rooms;
+}
+
+export async function fetchRoomDetail(apiBase: string, roomId: string): Promise<RoomDetail> {
+  const response = await fetch(`${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}`, {
+    credentials: "include",
+  });
+  const body = (await response.json().catch(() => ({}))) as {
+    room?: RoomDetail;
+    error?: string;
+  };
+  if (!response.ok || !body.room) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.room;
 }
 
 export async function createRoom(apiUrl: string, payload: CreateRoomPayload): Promise<RoomSummary> {
@@ -183,6 +198,30 @@ export async function deleteRoom(apiBase: string, roomId: string): Promise<void>
     const body = (await response.json().catch(() => ({}))) as { error?: string };
     throw new RoomRequestError(response.status, body.error ?? "unknown");
   }
+}
+
+export async function removeParticipants(
+  apiBase: string,
+  roomId: string,
+  count: number,
+): Promise<{ removedCount: number }> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/participants/remove`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ count }),
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    removedCount?: number;
+    error?: string;
+  };
+  if (!response.ok || typeof body.removedCount !== "number") {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return { removedCount: body.removedCount };
 }
 
 async function postRound(url: string): Promise<RoomRound> {

@@ -192,6 +192,67 @@ describe("round lifecycle and restart", () => {
     await app.close();
   });
 
+  it("resets round number back to 1 and restores all candidates when restarting a later round", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+    const room = await createRoom(app, {
+      title: "Reinício para marca 1",
+      quorumValue: 2,
+      candidates: ["Paulo", "Silas", "Barnabé"],
+    });
+    const paulo = room.candidates.find((c) => c.displayName === "Paulo")!;
+    const silas = room.candidates.find((c) => c.displayName === "Silas")!;
+
+    await join(app, room.inviteToken, "Ana", anaKey);
+    await join(app, room.inviteToken, "Bia", biaKey);
+
+    // 1st round: tie -> no_majority
+    const r1 = await openRound(app, room.id);
+    const r1Id = r1.json().round.id as string;
+    await castVote(app, room.inviteToken, anaKey, paulo.id);
+    await castVote(app, room.inviteToken, biaKey, silas.id);
+    await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/rounds/${r1Id}/close`,
+      headers: { cookie: adminCookie },
+    });
+
+    // 2nd round: tie -> no_majority
+    const r2 = await openRound(app, room.id);
+    const r2Id = r2.json().round.id as string;
+    await castVote(app, room.inviteToken, anaKey, paulo.id);
+    await castVote(app, room.inviteToken, biaKey, silas.id);
+    await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/rounds/${r2Id}/close`,
+      headers: { cookie: adminCookie },
+    });
+
+    // 3rd round: narrowed to top 2 (Paulo, Silas), Barnabé eliminated
+    const r3 = await openRound(app, room.id);
+    expect(r3.statusCode).toBe(201);
+    expect(r3.json().round.number).toBe(3);
+    expect(r3.json().candidates).toHaveLength(2);
+    const r3Id = r3.json().round.id as string;
+
+    // Restarting 3rd round resets back to round 1 and restores all 3 candidates
+    const restarted = await restartRound(app, room.id, r3Id);
+    expect(restarted.statusCode).toBe(200);
+    expect(restarted.json()).toEqual({
+      round: {
+        id: r3Id,
+        number: 1,
+        status: "open",
+        outcome: null,
+        restartCount: 1,
+      },
+    });
+
+    const eligibleAfterRestart = await repository.listCandidates(room.id);
+    expect(eligibleAfterRestart.map((c) => c.displayName)).toEqual(["Barnabé", "Paulo", "Silas"]);
+
+    await app.close();
+  });
+
   it("enforces admin authorization and rejects restarting closed or missing rounds", async () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoom(app, {

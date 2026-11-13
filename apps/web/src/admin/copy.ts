@@ -8,6 +8,14 @@ export const ROOM_TYPE_OPTIONS: { value: RoomType; label: string }[] = [
   { value: "custom", label: "Outro" },
 ];
 
+export const ROOM_TYPE_LABELS: Record<RoomType, string> = {
+  pastor: "Pastor",
+  elder: "Presbítero",
+  deacon: "Diácono",
+  upa_board: "Diretoria UPA",
+  custom: "Sessão Geral",
+};
+
 export const PRESET_OPTIONS: { value: RulesPreset; label: string }[] = [
   { value: "ipb_local_officers", label: "Oficiais da igreja local" },
   { value: "ipb_society_board", label: "Diretoria de sociedade" },
@@ -95,7 +103,7 @@ const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   quorumUnit: "Informe a unidade do quórum.",
   eligibleCount: "Número de aptos inválido.",
   status: "Situação inválida.",
-  candidates: "Lista de candidatos inválida.",
+  candidates: "Informe ao menos um candidato.",
 };
 
 export function roomErrorMessage(errorCode: string, field?: FieldError["field"]): string {
@@ -131,6 +139,8 @@ export function roundErrorMessage(errorCode: string): string {
       return "Não encontrei essa sala ou escrutínio.";
     case "room_not_open":
       return "Abra a sala antes do escrutínio.";
+    case "quorum_not_met":
+      return "Quórum mínimo não atingido para abrir o escrutínio.";
     case "round_already_open":
       return "Já existe um escrutínio aberto.";
     case "round_not_open":

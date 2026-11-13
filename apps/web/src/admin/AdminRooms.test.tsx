@@ -71,6 +71,9 @@ describe("AdminRooms", () => {
     fireEvent.change(screen.getByLabelText("Título"), {
       target: { value: "Eleição de presbíteros" },
     });
+    fireEvent.change(screen.getByLabelText("Candidatos"), {
+      target: { value: "Paulo, Silas" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
 
     const link = await screen.findByRole("link");
@@ -97,6 +100,9 @@ describe("AdminRooms", () => {
     fireEvent.change(screen.getByLabelText("Título"), {
       target: { value: "Assembleia" },
     });
+    fireEvent.change(screen.getByLabelText("Candidatos"), {
+      target: { value: "Paulo, Silas" },
+    });
     fireEvent.click(within(rulesGroup()).getByRole("button", { name: "Personalizado" }));
     await waitFor(() => {
       expect(screen.getByLabelText("Quórum")).toHaveValue("");
@@ -119,12 +125,33 @@ describe("AdminRooms", () => {
     fireEvent.change(screen.getByLabelText("Título"), {
       target: { value: "Assembleia" },
     });
+    fireEvent.change(screen.getByLabelText("Candidatos"), {
+      target: { value: "Paulo, Silas" },
+    });
     fireEvent.change(screen.getByLabelText("Quórum"), {
       target: { value: "" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Quórum inválido.");
+    const fetchMock = vi.mocked(fetch);
+    const posted = fetchMock.mock.calls.some(([, init]) => init?.method === "POST");
+    expect(posted).toBe(false);
+  });
+
+  it("rejects creating a room without candidates", async () => {
+    render(<AdminRooms />);
+    await screen.findByDisplayValue("34");
+
+    fireEvent.change(screen.getByLabelText("Título"), {
+      target: { value: "Assembleia" },
+    });
+    fireEvent.change(screen.getByLabelText("Candidatos"), {
+      target: { value: "   " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Informe ao menos um candidato.");
     const fetchMock = vi.mocked(fetch);
     const posted = fetchMock.mock.calls.some(([, init]) => init?.method === "POST");
     expect(posted).toBe(false);
@@ -158,11 +185,11 @@ describe("AdminRooms", () => {
     expect(item).toHaveTextContent("Assembleia aberta");
     expect(await within(item).findByText("1 / 4")).toBeInTheDocument();
     expect(item).toHaveTextContent("Abaixo do quórum");
-    expect(within(item).getByRole("button", { name: "Abrir escrutínio" })).toBeInTheDocument();
+    expect(within(item).getByRole("button", { name: "Abrir escrutínio" })).toBeDisabled();
     expect(item).toHaveTextContent("Aberta");
   });
 
-  it("closes a short round and shows that quorum failed", async () => {
+  it("opens when quorum is met and shows failed_quorum guidance if presence drops before close", async () => {
     const room = {
       id: "room-1",
       title: "Assembleia aberta",
@@ -184,10 +211,10 @@ describe("AdminRooms", () => {
         }
         if (url.endsWith("/presence")) {
           return json({
-            presentCount: 1,
+            presentCount: 4,
             eligibleCount: 10,
             requiredCount: 4,
-            quorumMet: false,
+            quorumMet: true,
           });
         }
         if (url.endsWith("/close") && init?.method === "POST") {
@@ -204,7 +231,12 @@ describe("AdminRooms", () => {
 
     render(<AdminRooms />);
     const item = await screen.findByRole("listitem");
-    fireEvent.click(await within(item).findByRole("button", { name: "Abrir escrutínio" }));
+    const openBtn = await within(item).findByRole("button", { name: "Abrir escrutínio" });
+    await waitFor(() => {
+      expect(openBtn).toBeEnabled();
+    });
+
+    fireEvent.click(openBtn);
     fireEvent.click(await within(item).findByRole("button", { name: "Encerrar escrutínio" }));
 
     expect(await within(item).findByRole("status")).toHaveTextContent(
@@ -378,6 +410,7 @@ describe("AdminRooms", () => {
     render(<AdminRooms />);
     await screen.findByDisplayValue("34");
     fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Assembleia" } });
+    fireEvent.change(screen.getByLabelText("Candidatos"), { target: { value: "Paulo, Silas" } });
     fireEvent.change(screen.getByLabelText("Aptos"), { target: { value: "40" } });
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
     await screen.findByRole("link");
@@ -388,6 +421,7 @@ describe("AdminRooms", () => {
     expect(body.eligibleCount).toBe(40);
 
     fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Outra" } });
+    fireEvent.change(screen.getByLabelText("Candidatos"), { target: { value: "Paulo, Silas" } });
     fireEvent.change(screen.getByLabelText("Aptos"), { target: { value: "nope" } });
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Número de aptos inválido.");

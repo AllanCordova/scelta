@@ -7,6 +7,7 @@ test("a visitor joins an open room and the admin sees one presence", async ({ pa
   const title = `Sala aberta ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   await loginAsAdmin(page);
   await page.getByLabel("Título").fill(title);
+  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.locator("fieldset", { hasText: "Situação" }).getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
@@ -40,6 +41,7 @@ test("a draft room invite explains that the room is not open", async ({ page }) 
   const title = `Sala rascunho ${Date.now().toString(36)}`;
   await loginAsAdmin(page);
   await page.getByLabel("Título").fill(title);
+  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.getByRole("button", { name: "Criar sala" }).click();
 
   const href = await page.getByRole("link", { name: /\/join\// }).getAttribute("href");

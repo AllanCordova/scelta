@@ -66,6 +66,12 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "round_already_open" });
         }
 
+        const presentCount = await repository.countPresent(room.id);
+        const quorum = quorumStatus(room, presentCount);
+        if (!quorum.quorumMet) {
+          return reply.code(409).send({ error: "quorum_not_met" });
+        }
+
         const [latestClosed, roomCandidates] = await Promise.all([
           repository.latestClosedRound(room.id),
           repository.listCandidates(room.id),
