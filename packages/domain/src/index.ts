@@ -19,6 +19,7 @@ export {
 export {
   CREATE_ROOM_STATUSES,
   PRESET_DEFINITIONS,
+  ROOM_STATUSES,
   ROOM_TYPES,
   findPreset,
   validateCreateRoom,
@@ -27,6 +28,13 @@ export {
   type MajorityRule,
   type PresetDefinition,
   type RoomFieldError,
+  type RoomStatus,
   type RoomType,
   type ValidRoomConfig,
 } from "./room.js";
+export {
+  canJoinRoom,
+  validateJoinIdentity,
+  type JoinFieldError,
+  type JoinIdentity,
+} from "./join.js";

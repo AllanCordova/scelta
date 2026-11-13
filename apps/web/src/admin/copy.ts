@@ -39,7 +39,18 @@ export function describePreset(preset: RulesPreset, majorityRule?: string): {
 export const STATUS_LABELS: Record<RoomStatus, string> = {
   draft: "Rascunho",
   open: "Aberta",
+  voting: "Em votação",
+  closed: "Encerrada",
+  cancelled: "Cancelada",
 };
+
+export function showsPresence(status: RoomStatus): boolean {
+  return status === "open" || status === "voting";
+}
+
+export function presenceLabel(count: number): string {
+  return count === 1 ? "1 presente" : `${count} presentes`;
+}
 
 const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   title: "Informe um título.",

@@ -69,6 +69,16 @@ describe("App access", () => {
     expect(screen.queryByRole("button", { name: "Criar sala" })).not.toBeInTheDocument();
   });
 
+  it("shows an invalid invite instead of the home page", async () => {
+    window.history.pushState(null, "", "/join/exemplo");
+    installSession(null);
+    render(<App />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Convite inválido ou expirado.");
+    expect(screen.queryByRole("heading", { name: "Votação com ordem e clareza" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Nova sala" })).not.toBeInTheDocument();
+  });
+
   it("shows room management to an admin", async () => {
     window.history.pushState(null, "", "/admin");
     installSession(admin);
@@ -92,6 +102,9 @@ function installSession(user: SessionUser | null) {
       }
       if (url.endsWith("/v1/admin/rooms")) {
         return json({ rooms: [] });
+      }
+      if (url.includes("/v1/join/")) {
+        return json({ error: "invite_not_found" }, 404);
       }
       return json({ error: "unknown" }, 500);
     }),

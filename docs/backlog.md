@@ -63,16 +63,16 @@
 
 ### B1.2 — Join room via QR / link
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Eligible people enter the room through QR code or short link; presence is counted toward quorum.
 
 **Acceptance criteria:**
 
-- [ ] Opening a valid invite joins (or prompts identity) and registers presence
-- [ ] Invalid / expired / closed room invite is rejected with a clear message
-- [ ] Presence count updates for admin in near real time
-- [ ] Duplicate join by the same eligible person does not double-count presence
-- [ ] Feature + browser tests for happy path and invalid token
+- [x] Opening a valid invite joins (or prompts identity) and registers presence
+- [x] Invalid / expired / closed room invite is rejected with a clear message
+- [x] Presence count updates for admin in near real time
+- [x] Duplicate join by the same eligible person does not double-count presence
+- [x] Feature + browser tests for happy path and invalid token
 
 ### B1.3 — Quorum gate
 

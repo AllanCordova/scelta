@@ -122,9 +122,10 @@ sequenceDiagram
 | 2026-03-26 | Fastify + React + PostgreSQL + Socket.io + Docker | Serious schema-validated API, TS end-to-end, self-host | Accepted |
 | 2026-11-12 | Admin routes use a server-side bearer token (`ADMIN_TOKEN`) until an auth provider is chosen | Fail closed on room create/list; voters do not receive this token | Superseded |
 | 2026-11-12 | Admin access is a user role (`admin` or `member`) with an httpOnly session cookie. Invite and ballot routes stay anonymous | A shared bearer token cannot tell admins from members, and a login must not be required to cast an anonymous vote. Passwords are scrypt hashes. OIDC can replace the password check later without changing the role model | Accepted |
+| 2026-11-13 | QR join identity is a display name plus a client join key. The server stores the SHA-256 only. Draft, closed, and cancelled rooms reject the invite; open and voting accept it. Presence is pushed on Socket.io and polled by the admin | Member import does not exist yet, and the same browser must not count twice toward quorum | Accepted |
 
 ## Open questions
 
 - Whether a later OIDC provider replaces the email/password check
-- Exact voter identity claim UX at QR join
 - Multi-tenant SaaS vs single-church deploy defaults
+- When invite links should expire by time (today a missing token is invalid, and closing the room is what shuts the door)

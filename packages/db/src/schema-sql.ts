@@ -94,11 +94,18 @@ CREATE TABLE IF NOT EXISTS participants (
   room_id uuid NOT NULL REFERENCES rooms (id),
   member_id uuid REFERENCES members (id),
   display_name text NOT NULL,
+  join_key_hash text NOT NULL,
   is_present boolean NOT NULL DEFAULT true,
   joined_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS participants_room_member_uidx ON participants (room_id, member_id);
+
+-- Rooms created before join keys already have the table. Backfill those rows, then enforce the column.
+ALTER TABLE participants ADD COLUMN IF NOT EXISTS join_key_hash text;
+UPDATE participants SET join_key_hash = id::text WHERE join_key_hash IS NULL;
+ALTER TABLE participants ALTER COLUMN join_key_hash SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS participants_room_join_key_uidx ON participants (room_id, join_key_hash);
 
 CREATE TABLE IF NOT EXISTS rounds (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

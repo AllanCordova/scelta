@@ -2,13 +2,17 @@ import { AdminRooms } from "../admin/AdminRooms";
 import { LoginPage } from "../auth/LoginPage";
 import { RegisterPage } from "../auth/RegisterPage";
 import { useAuth } from "../auth/AuthProvider";
+import { JoinRoom } from "../join/JoinRoom";
+import { joinTokenFromPath } from "../join/path";
 import { AccountPage } from "./AccountPage";
 import { Header } from "./Header";
 import { Home } from "./Home";
 import { TabBar } from "./TabBar";
 
 export function Shell() {
-  const page = pageFor(window.location.pathname);
+  const pathname = window.location.pathname;
+  const page = pageFor(pathname);
+  const joinToken = page === "join" ? joinTokenFromPath(pathname) : null;
 
   return (
     <div className="app-frame">
@@ -20,6 +24,7 @@ export function Shell() {
           {page === "register" ? <RegisterPage /> : null}
           {page === "admin" ? <AdminGate /> : null}
           {page === "account" ? <AccountPage /> : null}
+          {page === "join" && joinToken ? <JoinRoom token={joinToken} /> : null}
         </main>
       </div>
       <TabBar />
@@ -50,7 +55,7 @@ function AdminGate() {
  * Join (`/join/...`) and future ballot pages stay on the public branch.
  * Only `/admin` asks for an admin session.
  */
-function pageFor(pathname: string): "home" | "login" | "register" | "admin" | "account" {
+function pageFor(pathname: string): "home" | "login" | "register" | "admin" | "account" | "join" {
   const path = pathname.replace(/\/+$/, "") || "/";
   if (path === "/entrar") {
     return "login";
@@ -63,6 +68,9 @@ function pageFor(pathname: string): "home" | "login" | "register" | "admin" | "a
   }
   if (path === "/conta") {
     return "account";
+  }
+  if (joinTokenFromPath(path)) {
+    return "join";
   }
   return "home";
 }

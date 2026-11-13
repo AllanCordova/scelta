@@ -7,6 +7,9 @@ export type RoomType = (typeof ROOM_TYPES)[number];
 export const CREATE_ROOM_STATUSES = ["draft", "open"] as const;
 export type CreateRoomStatus = (typeof CREATE_ROOM_STATUSES)[number];
 
+export const ROOM_STATUSES = ["draft", "open", "voting", "closed", "cancelled"] as const;
+export type RoomStatus = (typeof ROOM_STATUSES)[number];
+
 export type MajorityRule = "absolute_majority";
 
 export type PresetDefinition = {

@@ -2,15 +2,18 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
 import { env } from "./env.js";
+import type { PresencePublisher } from "./realtime.js";
 import type { UserRepository } from "./users/user-repository.js";
 import { authRoutes } from "./routes/auth.js";
 import { healthRoutes } from "./routes/health.js";
+import { joinRoutes } from "./routes/join.js";
 import { roomRoutes, type RoomRouteOptions } from "./routes/rooms.js";
 import { rulesRoutes } from "./routes/rules.js";
 
 export type AppDependencies = {
   roomRepository?: RoomRouteOptions["roomRepository"];
   userRepository?: UserRepository;
+  presencePublisher?: PresencePublisher;
 };
 
 export async function buildApp(dependencies: AppDependencies = {}) {
@@ -37,6 +40,10 @@ export async function buildApp(dependencies: AppDependencies = {}) {
   await app.register(roomRoutes, {
     roomRepository: dependencies.roomRepository,
     userRepository: dependencies.userRepository,
+  });
+  await app.register(joinRoutes, {
+    roomRepository: dependencies.roomRepository,
+    presencePublisher: dependencies.presencePublisher,
   });
 
   return app;

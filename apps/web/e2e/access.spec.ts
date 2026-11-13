@@ -9,7 +9,8 @@ test("home and invite links stay open without a login", async ({ page }) => {
 
   await page.goto("/join/exemplo");
   await expect(page).toHaveURL(/\/join\/exemplo$/);
-  await expect(page.getByRole("heading", { name: "Votação com ordem e clareza" })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("Convite inválido ou expirado.");
+  await expect(page.getByRole("heading", { name: "Votação com ordem e clareza" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Criar sala" })).toHaveCount(0);
 });
 

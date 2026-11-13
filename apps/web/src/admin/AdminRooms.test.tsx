@@ -3,6 +3,15 @@ import QRCode from "qrcode";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminRooms } from "./AdminRooms";
 
+vi.mock("socket.io-client", () => ({
+  io: () => ({
+    on: () => undefined,
+    off: () => undefined,
+    emit: () => undefined,
+    disconnect: () => undefined,
+  }),
+}));
+
 vi.mock("qrcode", () => ({
   default: {
     toDataURL: vi.fn(async () => "data:image/png;base64,invite"),
@@ -115,6 +124,31 @@ describe("AdminRooms", () => {
     const fetchMock = vi.mocked(fetch);
     const posted = fetchMock.mock.calls.some(([, init]) => init?.method === "POST");
     expect(posted).toBe(false);
+  });
+
+  it("shows how many people are present in an open room", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/v1/rules/presets")) {
+          return json({ presets });
+        }
+        if (url.endsWith("/presence")) {
+          return json({ presentCount: 3 });
+        }
+        return json({
+          rooms: [{ id: "room-1", title: "Assembleia aberta", status: "open" }],
+        });
+      }),
+    );
+
+    render(<AdminRooms />);
+
+    const item = await screen.findByRole("listitem");
+    expect(item).toHaveTextContent("Assembleia aberta");
+    expect(await screen.findByText("3 presentes")).toBeInTheDocument();
+    expect(item).toHaveTextContent("Aberta");
   });
 
   it("shows a list failure instead of an empty room list", async () => {

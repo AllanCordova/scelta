@@ -1,4 +1,10 @@
-import type { CreateRoomStatus, QuorumUnit, RoomType, RulesPreset } from "@scelta/domain";
+import type {
+  CreateRoomStatus,
+  QuorumUnit,
+  RoomStatus,
+  RoomType,
+  RulesPreset,
+} from "@scelta/domain";
 
 export type StoredRoom = {
   id: string;
@@ -8,7 +14,7 @@ export type StoredRoom = {
   quorumValue: number;
   quorumUnit: QuorumUnit;
   inviteToken: string;
-  status: CreateRoomStatus;
+  status: RoomStatus;
   createdAt: Date;
 };
 
@@ -21,7 +27,18 @@ export type NewRoom = {
   status: CreateRoomStatus;
 };
 
+export type JoinedParticipant = {
+  id: string;
+  roomId: string;
+  displayName: string;
+  alreadyJoined: boolean;
+};
+
 export type RoomRepository = {
   createRoom(room: NewRoom): Promise<StoredRoom>;
   listRooms(): Promise<StoredRoom[]>;
+  findRoomByInviteToken(inviteToken: string): Promise<StoredRoom | null>;
+  findRoomById(roomId: string): Promise<StoredRoom | null>;
+  joinRoom(roomId: string, displayName: string, joinKeyHash: string): Promise<JoinedParticipant>;
+  countPresent(roomId: string): Promise<number>;
 };

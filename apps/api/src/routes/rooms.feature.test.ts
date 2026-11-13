@@ -256,6 +256,18 @@ describe("admin rooms", () => {
         async listRooms() {
           return [];
         },
+        async findRoomByInviteToken() {
+          return null;
+        },
+        async findRoomById() {
+          return null;
+        },
+        async joinRoom() {
+          throw new Error("not implemented");
+        },
+        async countPresent() {
+          return 0;
+        },
       },
     });
 

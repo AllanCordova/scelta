@@ -65,6 +65,8 @@ erDiagram
         uuid id PK
         uuid room_id FK
         uuid member_id FK
+        string display_name
+        string join_key_hash
         datetime joined_at
         boolean is_present
     }
@@ -157,7 +159,17 @@ A single election session created by an admin (QR join target).
 
 ### Participant
 
-Member who joined the room. Tracks **presence**, not ballot content.
+Person present in the room. Tracks **presence**, not ballot content.
+
+Until the member roll exists (B2.1), identity is a display name plus a random join key kept in the browser. The server stores only `join_key_hash` (SHA-256). The same key joins again without a second presence row. `member_id` stays empty until import.
+
+| Field | Notes |
+| --- | --- |
+| `display_name` | Name typed at the door. Not an eligibility check |
+| `join_key_hash` | SHA-256 of the client join key. Unique together with `room_id` |
+| `is_present` | Counts toward quorum while true. A repeat join sets this back to true without inserting another row |
+
+Invites do not expire by time yet. An unknown token is rejected. Draft, closed, and cancelled rooms cannot be joined; `open` and `voting` can.
 
 ### Round
 
@@ -190,6 +202,7 @@ Admin actions: create room, change quorum, start/restart round, force close, etc
 3. **Quorum gate:** published results require presence count ≥ configured quorum at the agreed checkpoint.
 4. **Eligibility:** only eligible participants may receive a receipt; only eligible candidates appear on the ballot for that room type.
 5. **Restart:** clearing ballots/receipts for a round must write an `AuditEvent`.
+6. **Presence identity:** at most one participant per `(room, join_key_hash)`. The raw join key is never stored.
 
 ## Open questions
 
