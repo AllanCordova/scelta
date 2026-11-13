@@ -11,6 +11,7 @@ export type ValidMemberImportRow = {
   isCommunicant: boolean;
   isMale: boolean | null;
   birthDate: string | null;
+  photoUrl: string | null;
   societyFlags: MemberSocietyFlags;
 };
 
@@ -20,11 +21,14 @@ export type MemberImportRejectionReason =
   | "invalid_communicant"
   | "invalid_gender"
   | "invalid_birth_date"
+  | "invalid_photo_url"
   | "invalid_society_flag"
-  | "invalid_society_date";
+  | "invalid_society_date"
+  | "conflicting_societies";
 
 export type RejectedMemberImportRow = {
   line: number;
+  name?: string;
   reason: MemberImportRejectionReason;
 };
 
@@ -50,7 +54,8 @@ type ColumnKey =
   | "upaActive"
   | "upaEnrolledAt"
   | "umpActive"
-  | "umpEnrolledAt";
+  | "umpEnrolledAt"
+  | "photoUrl";
 
 const POSITIONAL_COLUMNS: readonly ColumnKey[] = [
   "fullName",
@@ -61,6 +66,7 @@ const POSITIONAL_COLUMNS: readonly ColumnKey[] = [
   "upaEnrolledAt",
   "umpActive",
   "umpEnrolledAt",
+  "photoUrl",
 ];
 
 const HEADER_ALIASES: Record<string, ColumnKey> = {
@@ -88,6 +94,16 @@ const HEADER_ALIASES: Record<string, ColumnKey> = {
   umpenrolledat: "umpEnrolledAt",
   umpingresso: "umpEnrolledAt",
   umpdesde: "umpEnrolledAt",
+  photo: "photoUrl",
+  photourl: "photoUrl",
+  foto: "photoUrl",
+  fotourl: "photoUrl",
+  urlfoto: "photoUrl",
+  linkfoto: "photoUrl",
+  image: "photoUrl",
+  imageurl: "photoUrl",
+  imagem: "photoUrl",
+  linkimagem: "photoUrl",
 };
 
 export function parseMemberImportCsv(csvText: string): ParsedMemberImport {
@@ -119,7 +135,11 @@ export function parseMemberImportCsv(csvText: string): ParsedMemberImport {
     if (parsed.ok) {
       validRows.push(parsed.row);
     } else {
-      rejectedRows.push({ line: lineNumber, reason: parsed.reason });
+      rejectedRows.push({
+        line: lineNumber,
+        ...(parsed.name ? { name: parsed.name } : {}),
+        reason: parsed.reason,
+      });
     }
   }
 
@@ -149,7 +169,7 @@ function parseRow(
   columns: readonly (ColumnKey | null)[],
 ):
   | { ok: true; row: ValidMemberImportRow }
-  | { ok: false; reason: MemberImportRejectionReason } {
+  | { ok: false; name?: string; reason: MemberImportRejectionReason } {
   const byKey = new Map<ColumnKey, string>();
   for (let i = 0; i < columns.length; i += 1) {
     const col = columns[i];
@@ -163,35 +183,44 @@ function parseRow(
     return { ok: false, reason: "missing_name" };
   }
   if (fullName.length > MAX_NAME_LENGTH) {
-    return { ok: false, reason: "name_too_long" };
+    return { ok: false, name: fullName, reason: "name_too_long" };
   }
 
   const communicantRaw = byKey.get("isCommunicant") ?? "";
   const isCommunicant = communicantRaw.length === 0 ? true : parseBooleanFlag(communicantRaw);
   if (isCommunicant === null) {
-    return { ok: false, reason: "invalid_communicant" };
+    return { ok: false, name: fullName, reason: "invalid_communicant" };
   }
 
   const genderRaw = byKey.get("isMale") ?? "";
   const isMale = genderRaw.length === 0 ? null : parseGenderFlag(genderRaw);
   if (genderRaw.length > 0 && isMale === null) {
-    return { ok: false, reason: "invalid_gender" };
+    return { ok: false, name: fullName, reason: "invalid_gender" };
   }
 
   const birthDateRaw = byKey.get("birthDate") ?? "";
   const birthDate = birthDateRaw.length === 0 ? null : parseIsoDate(birthDateRaw);
   if (birthDateRaw.length > 0 && birthDate === null) {
-    return { ok: false, reason: "invalid_birth_date" };
+    return { ok: false, name: fullName, reason: "invalid_birth_date" };
   }
 
   const upa = parseSocietyPair(byKey, "upaActive", "upaEnrolledAt");
   if (!upa.ok) {
-    return { ok: false, reason: upa.reason };
+    return { ok: false, name: fullName, reason: upa.reason };
   }
 
   const ump = parseSocietyPair(byKey, "umpActive", "umpEnrolledAt");
   if (!ump.ok) {
-    return { ok: false, reason: ump.reason };
+    return { ok: false, name: fullName, reason: ump.reason };
+  }
+
+  if (hasConflictingSocietyFlags({ upaActive: upa.active, umpActive: ump.active })) {
+    return { ok: false, name: fullName, reason: "conflicting_societies" };
+  }
+
+  const photoParsed = parsePhotoUrl(byKey.get("photoUrl") ?? "");
+  if (!photoParsed.ok) {
+    return { ok: false, name: fullName, reason: "invalid_photo_url" };
   }
 
   const societyFlags: MemberSocietyFlags = {
@@ -209,6 +238,7 @@ function parseRow(
       isCommunicant,
       isMale,
       birthDate,
+      photoUrl: photoParsed.value,
       societyFlags,
     },
   };
@@ -260,6 +290,47 @@ function parseGenderFlag(value: string): boolean | null {
     return false;
   }
   return null;
+}
+
+const MAX_HTTP_PHOTO_URL_LENGTH = 2048;
+const MAX_DATA_PHOTO_URL_LENGTH = 12_000_000;
+const IMAGE_DATA_URL_PATTERN = /^data:image\/(?:png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i;
+
+export function hasConflictingSocietyFlags(flags: {
+  upaActive?: boolean;
+  umpActive?: boolean;
+}): boolean {
+  return flags.upaActive === true && flags.umpActive === true;
+}
+
+export function parsePhotoUrl(
+  value: string | null | undefined,
+): { ok: true; value: string | null } | { ok: false } {
+  if (value === null || value === undefined) {
+    return { ok: true, value: null };
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return { ok: true, value: null };
+  }
+  if (trimmed.startsWith("data:")) {
+    if (trimmed.length > MAX_DATA_PHOTO_URL_LENGTH || !IMAGE_DATA_URL_PATTERN.test(trimmed)) {
+      return { ok: false };
+    }
+    return { ok: true, value: trimmed };
+  }
+  if (trimmed.length > MAX_HTTP_PHOTO_URL_LENGTH) {
+    return { ok: false };
+  }
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { ok: false };
+    }
+    return { ok: true, value: trimmed };
+  } catch {
+    return { ok: false };
+  }
 }
 
 export function parseIsoDate(value: string): string | null {

@@ -1,6 +1,7 @@
 import { logout } from "../auth/auth-api";
 import { useAuth } from "../auth/AuthProvider";
 import { currentPath } from "./paths";
+import { initialsFromName } from "./ImageDropzone";
 import { ThemeToggle } from "./ThemeToggle";
 
 export function Header() {
@@ -18,39 +19,55 @@ export function Header() {
         Scelta
       </a>
       <nav className="topbar-nav" aria-label="Navegação">
-        <a className="nav-link" href="/" aria-current={path === "/" ? "page" : undefined}>
-          Início
-        </a>
-        <a
-          className="nav-link"
-          href="/admin/salas"
-          aria-current={
-            path === "/admin/salas" || path.startsWith("/admin/salas/") ? "page" : undefined
-          }
-        >
-          Salas
-        </a>
         {auth.status === "authenticated" && auth.user.role === "admin" ? (
-          <a
-            className="nav-link"
-            href="/admin"
-            aria-current={
-              path === "/admin" || path === "/admin/codigos" || path === "/admin/membros"
-                ? "page"
-                : undefined
-            }
-          >
-            Admin
-          </a>
+          <>
+            <a
+              className="nav-link"
+              href="/admin/salas"
+              aria-current={
+                path === "/admin/salas" || path.startsWith("/admin/salas/") ? "page" : undefined
+              }
+            >
+              Salas
+            </a>
+            <a
+              className="nav-link"
+              href="/admin"
+              aria-current={
+                path === "/admin" || path === "/admin/codigos" || path === "/admin/membros"
+                  ? "page"
+                  : undefined
+              }
+            >
+              Admin
+            </a>
+          </>
         ) : null}
       </nav>
       <div className="account">
         <ThemeToggle />
         {auth.status === "authenticated" ? (
-          <span className="account-identity" title={auth.user.name}>
-            <UserIcon />
-            <span className="account-name">{auth.user.name}</span>
-          </span>
+          auth.user.role === "admin" ? (
+            <a
+              href="/admin/perfil"
+              className="account-identity account-identity-link"
+              title={`${auth.user.name} — Editar perfil`}
+            >
+              {auth.user.photoUrl ? (
+                <img src={auth.user.photoUrl} alt="" className="header-avatar-img" />
+              ) : (
+                <span className="header-avatar-initials" aria-hidden="true">
+                  {initialsFromName(auth.user.name)}
+                </span>
+              )}
+              <span className="account-name">{auth.user.name}</span>
+            </a>
+          ) : (
+            <span className="account-identity" title={auth.user.name}>
+              <UserIcon />
+              <span className="account-name">{auth.user.name}</span>
+            </span>
+          )
         ) : null}
         <div className="account-actions">
           {auth.status === "authenticated" ? (
@@ -65,14 +82,9 @@ export function Header() {
             </button>
           ) : null}
           {auth.status === "anonymous" ? (
-            <>
-              <button type="button" className="ghost" onClick={() => window.location.assign("/entrar")}>
-                Entrar
-              </button>
-              <button type="button" onClick={() => window.location.assign("/cadastrar")}>
-                Cadastrar
-              </button>
-            </>
+            <button type="button" className="ghost" onClick={() => window.location.assign("/entrar")}>
+              Entrar
+            </button>
           ) : null}
         </div>
       </div>

@@ -32,8 +32,9 @@ describe("App access", () => {
     installSession(null);
     render(<App />);
 
-    expect(await screen.findByRole("button", { name: "Entrar" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cadastrar" })).toBeInTheDocument();
+    expect((await screen.findAllByRole("button", { name: "Entrar" })).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("heading", { name: "Entrar" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cadastrar" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Scelta" })).toHaveAttribute("href", "/");
     expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Membros" })).not.toBeInTheDocument();
@@ -45,7 +46,9 @@ describe("App access", () => {
     render(<App />);
 
     const name = await screen.findByText("Ana Admin");
-    expect(name.closest(".account-identity")?.querySelector("svg")).toBeTruthy();
+    const identityLink = name.closest(".account-identity");
+    expect(identityLink).toHaveAttribute("href", "/admin/perfil");
+    expect(identityLink?.querySelector(".header-avatar-initials")?.textContent).toBe("AA");
     const salas = screen.getAllByRole("link", { name: "Salas" });
     expect(salas.length).toBeGreaterThan(0);
     expect(salas.every((link) => link.getAttribute("href") === "/admin/salas")).toBe(true);

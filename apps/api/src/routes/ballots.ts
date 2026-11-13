@@ -98,6 +98,7 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           candidates: candidates.map((candidate) => ({
             id: candidate.id,
             displayName: candidate.displayName,
+            photoUrl: candidate.photoUrl ?? null,
           })),
           offices: officeState.offices.map(({ officeLabel, order, status, winnerName }) => ({
             officeLabel,

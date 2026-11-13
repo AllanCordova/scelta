@@ -47,9 +47,12 @@ CREATE TABLE IF NOT EXISTS users (
   name text NOT NULL,
   email text NOT NULL,
   password_hash text NOT NULL,
+  photo_url text,
   role user_role NOT NULL DEFAULT 'member',
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url text;
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_uidx ON users (email);
 
@@ -70,9 +73,12 @@ CREATE TABLE IF NOT EXISTS members (
   is_communicant boolean NOT NULL DEFAULT true,
   is_male boolean,
   birth_date timestamp,
+  photo_url text,
   society_flags jsonb DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE members ADD COLUMN IF NOT EXISTS photo_url text;
 
 CREATE TABLE IF NOT EXISTS rooms (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -164,8 +170,11 @@ CREATE TABLE IF NOT EXISTS candidates (
   room_id uuid NOT NULL REFERENCES rooms (id),
   member_id uuid REFERENCES members (id),
   display_name text NOT NULL,
+  photo_url text,
   is_eligible boolean NOT NULL DEFAULT true
 );
+
+ALTER TABLE candidates ADD COLUMN IF NOT EXISTS photo_url text;
 
 CREATE TABLE IF NOT EXISTS ballots (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

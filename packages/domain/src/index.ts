@@ -71,8 +71,10 @@ export {
   type JoinIdentity,
 } from "./join.js";
 export {
+  hasConflictingSocietyFlags,
   parseIsoDate,
   parseMemberImportCsv,
+  parsePhotoUrl,
   type MemberImportRejectionReason,
   type MemberImportReport,
   type MemberSocietyFlags,

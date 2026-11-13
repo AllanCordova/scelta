@@ -167,8 +167,8 @@ describe("candidate suggestions by room type", () => {
     });
     expect(validRoom.statusCode).toBe(201);
     expect(validRoom.json().room.candidates).toEqual([
-      { id: expect.any(String), displayName: "Paulo Apóstolo" },
-      { id: expect.any(String), displayName: "Silas Companheiro" },
+      { id: expect.any(String), displayName: "Paulo Apóstolo", photoUrl: null },
+      { id: expect.any(String), displayName: "Silas Companheiro", photoUrl: null },
     ]);
 
     await app.close();

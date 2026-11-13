@@ -70,12 +70,28 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           }
 
           if (room.candidates && room.candidates.length > 0) {
+            const churchMembers = await db
+              .select({
+                id: members.id,
+                fullName: members.fullName,
+                photoUrl: members.photoUrl,
+              })
+              .from(members)
+              .where(eq(members.churchId, churchId));
+            const memberByName = new Map(
+              churchMembers.map((member) => [member.fullName.toLocaleLowerCase(), member]),
+            );
             await db.insert(candidates).values(
-              room.candidates.map((displayName) => ({
-                roomId: row.id,
-                displayName,
-                isEligible: true,
-              })),
+              room.candidates.map((displayName) => {
+                const matched = memberByName.get(displayName.toLocaleLowerCase());
+                return {
+                  roomId: row.id,
+                  memberId: matched?.id ?? null,
+                  displayName,
+                  photoUrl: matched?.photoUrl ?? null,
+                  isEligible: true,
+                };
+              }),
             );
           }
 
@@ -450,8 +466,16 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
 
     async listCandidates(roomId) {
       const rows = await db
-        .select()
+        .select({
+          id: candidates.id,
+          roomId: candidates.roomId,
+          displayName: candidates.displayName,
+          photoUrl: candidates.photoUrl,
+          memberPhotoUrl: members.photoUrl,
+          isEligible: candidates.isEligible,
+        })
         .from(candidates)
+        .leftJoin(members, eq(candidates.memberId, members.id))
         .where(and(eq(candidates.roomId, roomId), eq(candidates.isEligible, true)))
         .orderBy(asc(candidates.displayName));
       return rows.map(toStoredCandidate);
@@ -459,8 +483,16 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
 
     async listAllCandidates(roomId) {
       const rows = await db
-        .select()
+        .select({
+          id: candidates.id,
+          roomId: candidates.roomId,
+          displayName: candidates.displayName,
+          photoUrl: candidates.photoUrl,
+          memberPhotoUrl: members.photoUrl,
+          isEligible: candidates.isEligible,
+        })
         .from(candidates)
+        .leftJoin(members, eq(candidates.memberId, members.id))
         .where(eq(candidates.roomId, roomId))
         .orderBy(asc(candidates.displayName));
       return rows.map(toStoredCandidate);
@@ -472,8 +504,16 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       }
 
       const rows = await db
-        .select()
+        .select({
+          id: candidates.id,
+          roomId: candidates.roomId,
+          displayName: candidates.displayName,
+          photoUrl: candidates.photoUrl,
+          memberPhotoUrl: members.photoUrl,
+          isEligible: candidates.isEligible,
+        })
         .from(candidates)
+        .leftJoin(members, eq(candidates.memberId, members.id))
         .where(and(inArray(candidates.roomId, roomIds), eq(candidates.isEligible, true)))
         .orderBy(asc(candidates.displayName));
       return rows.map(toStoredCandidate);
@@ -898,6 +938,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
                 isCommunicant: row.isCommunicant,
                 isMale: row.isMale,
                 birthDate,
+                photoUrl: row.photoUrl,
                 societyFlags: row.societyFlags,
               })
               .where(eq(members.id, existing.id))
@@ -915,6 +956,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
                 isCommunicant: row.isCommunicant,
                 isMale: row.isMale,
                 birthDate,
+                photoUrl: row.photoUrl,
                 societyFlags: row.societyFlags,
               })
               .returning();
@@ -940,10 +982,43 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             isCommunicant: input.isCommunicant,
             isMale: input.isMale,
             birthDate: input.birthDate ? new Date(`${input.birthDate}T00:00:00.000Z`) : null,
-            societyFlags: {},
+            photoUrl: input.photoUrl ?? null,
+            societyFlags: input.societyFlags ?? {},
           })
           .returning();
         return toStoredMember(inserted[0]!);
+      });
+    },
+
+    async updateMember(memberId, input) {
+      return db.transaction(async (tx) => {
+        const church = await findChurchByName(tx, churchName);
+        if (!church) {
+          return null;
+        }
+        const updated = await tx
+          .update(members)
+          .set({
+            fullName: input.fullName,
+            isCommunicant: input.isCommunicant,
+            isMale: input.isMale,
+            birthDate: input.birthDate ? new Date(`${input.birthDate}T00:00:00.000Z`) : null,
+            photoUrl: input.photoUrl ?? null,
+            societyFlags: input.societyFlags ?? {},
+            updatedAt: new Date(),
+          })
+          .where(and(eq(members.id, memberId), eq(members.churchId, church.id)))
+          .returning();
+        if (updated[0]) {
+          await tx
+            .update(candidates)
+            .set({
+              displayName: input.fullName,
+              photoUrl: input.photoUrl ?? null,
+            })
+            .where(eq(candidates.memberId, memberId));
+        }
+        return updated[0] ? toStoredMember(updated[0]) : null;
       });
     },
 
@@ -993,12 +1068,15 @@ function toStoredCandidate(row: {
   id: string;
   roomId: string;
   displayName: string;
+  photoUrl?: string | null;
+  memberPhotoUrl?: string | null;
   isEligible: boolean;
 }): StoredCandidate {
   return {
     id: row.id,
     roomId: row.roomId,
     displayName: row.displayName,
+    photoUrl: row.memberPhotoUrl ?? row.photoUrl ?? null,
     isEligible: row.isEligible,
   };
 }
@@ -1009,6 +1087,7 @@ function toStoredMember(row: {
   isCommunicant: boolean;
   isMale: boolean | null;
   birthDate: Date | null;
+  photoUrl?: string | null;
   societyFlags: Record<string, unknown> | null;
   createdAt: Date;
 }): StoredMember {
@@ -1030,6 +1109,7 @@ function toStoredMember(row: {
     isCommunicant: row.isCommunicant,
     isMale: row.isMale,
     birthDate: row.birthDate ? row.birthDate.toISOString().slice(0, 10) : null,
+    photoUrl: row.photoUrl ?? null,
     societyFlags,
     createdAt: row.createdAt,
   };

@@ -10,24 +10,23 @@ export function TabBar() {
 
   return (
     <nav className="tabbar" aria-label="Navegação principal">
-      <TabLink href="/" label="Início" current={path === "/"}>
-        <HomeIcon />
-      </TabLink>
-      <TabLink
-        href="/admin/salas"
-        label="Salas"
-        current={path === "/admin/salas" || path.startsWith("/admin/salas/")}
-      >
-        <RoomsIcon />
-      </TabLink>
       {auth.status === "authenticated" && auth.user.role === "admin" ? (
-        <TabLink
-          href="/admin"
-          label="Admin"
-          current={path === "/admin" || path === "/admin/codigos" || path === "/admin/membros"}
-        >
-          <MembersIcon />
-        </TabLink>
+        <>
+          <TabLink
+            href="/admin/salas"
+            label="Salas"
+            current={path === "/admin/salas" || path.startsWith("/admin/salas/")}
+          >
+            <RoomsIcon />
+          </TabLink>
+          <TabLink
+            href="/admin"
+            label="Admin"
+            current={path === "/admin" || path === "/admin/codigos" || path === "/admin/membros"}
+          >
+            <MembersIcon />
+          </TabLink>
+        </>
       ) : null}
       <TabLink href={accountHref} label={accountLabel} current={path === accountHref}>
         <PersonIcon />
@@ -52,14 +51,6 @@ function TabLink({
       {children}
       <span>{label}</span>
     </a>
-  );
-}
-
-function HomeIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z" />
-    </svg>
   );
 }
 

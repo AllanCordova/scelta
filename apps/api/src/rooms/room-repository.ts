@@ -38,6 +38,7 @@ export type StoredCandidate = {
   id: string;
   roomId: string;
   displayName: string;
+  photoUrl?: string | null;
   isEligible: boolean;
 };
 
@@ -78,6 +79,7 @@ export type StoredMember = {
   isCommunicant: boolean;
   isMale: boolean | null;
   birthDate: string | null;
+  photoUrl: string | null;
   societyFlags: MemberSocietyFlags;
   createdAt: Date;
 };
@@ -163,7 +165,20 @@ export type RoomRepository = {
     isCommunicant: boolean;
     isMale: boolean | null;
     birthDate: string | null;
+    photoUrl?: string | null;
+    societyFlags?: MemberSocietyFlags;
   }): Promise<StoredMember>;
+  updateMember(
+    memberId: string,
+    input: {
+      fullName: string;
+      isCommunicant: boolean;
+      isMale: boolean | null;
+      birthDate: string | null;
+      photoUrl?: string | null;
+      societyFlags?: MemberSocietyFlags;
+    },
+  ): Promise<StoredMember | null>;
   deleteMember(memberId: string): Promise<boolean>;
   listMembers(): Promise<StoredMember[]>;
 };

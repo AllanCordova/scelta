@@ -19,6 +19,7 @@ describe("parseMemberImportCsv", () => {
         isCommunicant: true,
         isMale: true,
         birthDate: "1980-05-14",
+        photoUrl: null,
         societyFlags: { upaActive: false },
       },
       {
@@ -27,6 +28,7 @@ describe("parseMemberImportCsv", () => {
         isCommunicant: true,
         isMale: false,
         birthDate: "1992-11-03",
+        photoUrl: null,
         societyFlags: { upaActive: true, upaEnrolledAt: "2024-01-15" },
       },
       {
@@ -35,6 +37,7 @@ describe("parseMemberImportCsv", () => {
         isCommunicant: true,
         isMale: null,
         birthDate: null,
+        photoUrl: null,
         societyFlags: { upaActive: true, upaEnrolledAt: "2025-06-01" },
       },
     ]);
@@ -52,6 +55,7 @@ describe("parseMemberImportCsv", () => {
         isCommunicant: false,
         isMale: true,
         birthDate: "1975-03-20",
+        photoUrl: null,
         societyFlags: { upaActive: true, upaEnrolledAt: "2023-08-10" },
       },
     ]);
@@ -75,12 +79,12 @@ describe("parseMemberImportCsv", () => {
     expect(result.validRows[0]?.fullName).toBe("Barnabé Consolador");
     expect(result.rejectedRows).toEqual([
       { line: 2, reason: "missing_name" },
-      { line: 3, reason: "name_too_long" },
-      { line: 4, reason: "invalid_communicant" },
-      { line: 5, reason: "invalid_gender" },
-      { line: 6, reason: "invalid_birth_date" },
-      { line: 7, reason: "invalid_society_flag" },
-      { line: 8, reason: "invalid_society_date" },
+      { line: 3, name: "A".repeat(121), reason: "name_too_long" },
+      { line: 4, name: "João", reason: "invalid_communicant" },
+      { line: 5, name: "Maria", reason: "invalid_gender" },
+      { line: 6, name: "Pedro", reason: "invalid_birth_date" },
+      { line: 7, name: "Marta", reason: "invalid_society_flag" },
+      { line: 8, name: "Sara", reason: "invalid_society_date" },
     ]);
   });
 
@@ -89,5 +93,31 @@ describe("parseMemberImportCsv", () => {
     expect(parseIsoDate("2025-02-29")).toBeNull();
     expect(parseIsoDate("1899-12-31")).toBeNull();
     expect(parseIsoDate("2026/01/01")).toBeNull();
+  });
+
+  it("parses photo URLs and rejects simultaneous active UPA and UMP membership", () => {
+    const csv = [
+      "nome,comungante,sexo,data_nascimento,upa_ativo,upa_ingresso,ump_ativo,ump_ingresso,foto",
+      "Paulo Apóstolo,sim,M,1990-01-01,sim,2023-01-01,nao,,https://example.com/paulo.jpg",
+      "Conflito Silva,sim,M,2005-01-01,sim,2023-01-01,sim,2024-01-01,",
+      "Url Invalida,sim,F,1995-05-05,nao,,sim,2023-01-01,ftp://bad.example/photo.png",
+    ].join("\n");
+
+    const result = parseMemberImportCsv(csv);
+    expect(result.validRows).toEqual([
+      {
+        line: 2,
+        fullName: "Paulo Apóstolo",
+        isCommunicant: true,
+        isMale: true,
+        birthDate: "1990-01-01",
+        photoUrl: "https://example.com/paulo.jpg",
+        societyFlags: { upaActive: true, upaEnrolledAt: "2023-01-01", umpActive: false },
+      },
+    ]);
+    expect(result.rejectedRows).toEqual([
+      { line: 3, name: "Conflito Silva", reason: "conflicting_societies" },
+      { line: 4, name: "Url Invalida", reason: "invalid_photo_url" },
+    ]);
   });
 });

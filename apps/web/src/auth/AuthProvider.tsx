@@ -8,6 +8,7 @@ type AuthState =
   | { status: "authenticated"; user: SessionUser };
 
 const AuthContext = createContext<AuthState | null>(null);
+const AuthActionsContext = createContext<{ updateSessionUser: (user: SessionUser) => void } | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ status: "loading", user: null });
@@ -31,7 +32,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>;
+  function updateSessionUser(user: SessionUser) {
+    setState({ status: "authenticated", user });
+  }
+
+  return (
+    <AuthActionsContext.Provider value={{ updateSessionUser }}>
+      <AuthContext.Provider value={state}>{children}</AuthContext.Provider>
+    </AuthActionsContext.Provider>
+  );
 }
 
 export function useAuth(): AuthState {
@@ -40,4 +49,12 @@ export function useAuth(): AuthState {
     throw new Error("AuthProvider is missing");
   }
   return state;
+}
+
+export function useAuthActions(): { updateSessionUser: (user: SessionUser) => void } {
+  const actions = useContext(AuthActionsContext);
+  if (!actions) {
+    throw new Error("AuthProvider is missing");
+  }
+  return actions;
 }

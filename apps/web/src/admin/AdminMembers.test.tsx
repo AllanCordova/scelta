@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminMembers } from "./AdminMembers";
 
@@ -71,6 +71,68 @@ describe("AdminMembers", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Selecione ou solte um arquivo CSV antes de importar.",
     );
+  });
+
+  it("enforces mutual exclusion between UPA and UMP and confirms before removing a member", async () => {
+    const deleteCalls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/v1/admin/members/") && init?.method === "DELETE") {
+          deleteCalls.push(url);
+          return json({ deleted: true });
+        }
+        return json({
+          members: [
+            {
+              id: "member-1",
+              fullName: "Ana Clara",
+              isCommunicant: true,
+              isMale: false,
+              birthDate: "2000-01-10",
+              photoUrl: null,
+              societyFlags: { upaActive: true },
+            },
+          ],
+          total: 1,
+          page: 1,
+          pageSize: 10,
+          totalPages: 1,
+        });
+      }),
+    );
+
+    render(<AdminMembers />);
+    await screen.findByText("Ana Clara");
+
+    const upaCheckbox = screen.getByLabelText("Ativo na UPA") as HTMLInputElement;
+    const umpCheckbox = screen.getByLabelText("Ativo na UMP") as HTMLInputElement;
+
+    fireEvent.click(upaCheckbox);
+    expect(upaCheckbox.checked).toBe(true);
+    expect(umpCheckbox.checked).toBe(false);
+
+    fireEvent.click(umpCheckbox);
+    expect(umpCheckbox.checked).toBe(true);
+    expect(upaCheckbox.checked).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remover" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent('Tem certeza que deseja remover "Ana Clara"');
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(deleteCalls).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Remover" }));
+    const confirmDialog = await screen.findByRole("dialog");
+    const confirmButtons = confirmDialog.querySelectorAll("button");
+    fireEvent.click(confirmButtons[1]!);
+
+    await waitFor(() => {
+      expect(deleteCalls).toHaveLength(1);
+    });
   });
 });
 

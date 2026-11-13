@@ -144,6 +144,8 @@ describe("JoinRoom", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Comprovante: seu voto foi registrado com sigilo neste escrutínio.",
     );
+    expect(screen.getByText("Sua escolha")).toBeInTheDocument();
+    expect(screen.getByText("Paulo")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirmar voto" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Paulo" })).not.toBeInTheDocument();
   });

@@ -51,6 +51,7 @@ export const users = pgTable(
     name: text("name").notNull(),
     email: text("email").notNull(),
     passwordHash: text("password_hash").notNull(),
+    photoUrl: text("photo_url"),
     role: userRoleEnum("role").notNull().default("member"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -80,6 +81,7 @@ export const members = pgTable("members", {
   isCommunicant: boolean("is_communicant").notNull().default(true),
   isMale: boolean("is_male"),
   birthDate: timestamp("birth_date", { mode: "date" }),
+  photoUrl: text("photo_url"),
   societyFlags: jsonb("society_flags").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -169,6 +171,7 @@ export const candidates = pgTable("candidates", {
     .references(() => rooms.id),
   memberId: uuid("member_id").references(() => members.id),
   displayName: text("display_name").notNull(),
+  photoUrl: text("photo_url"),
   isEligible: boolean("is_eligible").notNull().default(true),
 });
 

@@ -14,7 +14,7 @@ export function AdminAccessCodes() {
   const [isLoading, setIsLoading] = useState(true);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printCards, setPrintCards] = useState<
-    Array<{ id: string; displayName: string; code: string; qrUrl: string }> | null
+    Array<{ id: string; displayName: string; code: string; qrUrl: string; loginUrl: string }> | null
   >(null);
 
   useEffect(() => {
@@ -72,6 +72,7 @@ export function AdminAccessCodes() {
             displayName: item.displayName,
             code: item.code,
             qrUrl,
+            loginUrl: urlWithCode,
           };
         }),
       );
@@ -133,6 +134,7 @@ export function AdminAccessCodes() {
           {selectedRoomId ? (
             <AccessCodesPanel
               roomId={selectedRoomId}
+              inviteUrl={fullInviteUrl}
               onPrintCards={(active) => void handlePreparePrintCards(active)}
             />
           ) : null}
@@ -179,6 +181,7 @@ export function AdminAccessCodes() {
                   <strong className="print-card-name">{card.displayName}</strong>
                   <span className="print-card-code-label">Código de acesso:</span>
                   <code className="print-card-code">{card.code}</code>
+                  <span className="print-card-url">{card.loginUrl}</span>
                 </div>
               </article>
             ))}
