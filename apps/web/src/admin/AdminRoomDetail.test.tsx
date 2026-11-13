@@ -381,6 +381,7 @@ describe("AdminRoomDetail", () => {
           roundCount: 1,
           winnerCandidateId: "cand-1",
           winnerName: "Paulo",
+          winnerPhotoUrl: "https://example.com/paulo.jpg",
         },
         {
           officeLabel: "Vice-Presidente",
@@ -450,7 +451,14 @@ describe("AdminRoomDetail", () => {
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
 
     expect(await screen.findByText("Cargos da Diretoria (Ordem IPB)")).toBeInTheDocument();
-    expect(screen.getByText("Eleito: Paulo")).toBeInTheDocument();
+    const presidentCard = screen.getByText("1. Presidente").closest("li")!;
+    expect(presidentCard).toHaveTextContent("Paulo");
+    expect(presidentCard).toHaveTextContent("Eleito");
+    expect(presidentCard.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://example.com/paulo.jpg",
+    );
+    expect(screen.queryByRole("button", { name: "Compartilhar resultado" })).not.toBeInTheDocument();
 
     const select = screen.getByLabelText("Cargo para votação") as HTMLSelectElement;
     expect(select.value).toBe("Vice-Presidente");
@@ -501,6 +509,132 @@ describe("AdminRoomDetail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Próxima" }));
     expect(screen.getByText("Página 2 de 2")).toBeInTheDocument();
     expect(screen.getAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(2);
+  });
+
+  it("shows the share board paper when all offices are elected with photos, initials, ministry, and Bible verse", async () => {
+    const completedBoardRoom: RoomDetail = {
+      ...sampleRoom,
+      roomType: "upa_board",
+      rulesPreset: "ipb_society_board",
+      title: "Assembleia UPA 2026",
+      offices: [
+        {
+          officeLabel: "Presidente",
+          order: 1,
+          status: "elected",
+          roundCount: 1,
+          winnerCandidateId: "cand-1",
+          winnerName: "Paulo Silva",
+          winnerPhotoUrl: "https://example.com/paulo.jpg",
+        },
+        {
+          officeLabel: "Vice-Presidente",
+          order: 2,
+          status: "elected",
+          roundCount: 1,
+          winnerCandidateId: "cand-2",
+          winnerName: "Helena Costa",
+          winnerPhotoUrl: null,
+        },
+      ],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: completedBoardRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    const shareButton = await screen.findByRole("button", { name: "Compartilhar resultado" });
+    fireEvent.click(shareButton);
+
+    const dialog = screen.getByRole("dialog", {
+      name: "Documento de compartilhamento — Assembleia UPA 2026",
+    });
+    expect(dialog).toHaveTextContent("Diretoria UPA");
+    expect(dialog).toHaveTextContent("Assembleia UPA 2026");
+    expect(dialog).toHaveTextContent("Presidente");
+    expect(dialog).toHaveTextContent("Paulo Silva");
+    expect(dialog).toHaveTextContent("Vice-Presidente");
+    expect(dialog).toHaveTextContent("Helena Costa");
+    expect(dialog).toHaveTextContent("HC");
+    expect(dialog).toHaveTextContent("1 Pedro 4:10");
+    expect(dialog.querySelector("img")).toHaveAttribute("src", "https://example.com/paulo.jpg");
+
+    fireEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    expect(
+      screen.queryByRole("dialog", { name: "Documento de compartilhamento — Assembleia UPA 2026" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the share board paper for a single-office room once a winner is elected", async () => {
+    const singleOfficeElectedRoom: RoomDetail = {
+      ...sampleRoom,
+      roomType: "elder",
+      title: "Eleição de Presbítero",
+      candidates: [
+        { id: "cand-1", displayName: "Paulo", photoUrl: "https://example.com/paulo-elder.jpg" },
+        { id: "cand-2", displayName: "Marcos", photoUrl: null },
+      ],
+      round: {
+        id: "round-1",
+        number: 1,
+        status: "closed",
+        outcome: "elected",
+        tally: {
+          totalVotes: 10,
+          threshold: 6,
+          outcome: "elected",
+          winnerId: "cand-1",
+          winnerName: "Paulo",
+          standings: [
+            { candidateId: "cand-1", displayName: "Paulo", votes: 7 },
+            { candidateId: "cand-2", displayName: "Marcos", votes: 3 },
+          ],
+        },
+      },
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: singleOfficeElectedRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Compartilhar resultado" }));
+
+    const dialog = screen.getByRole("dialog", {
+      name: "Documento de compartilhamento — Eleição de Presbítero",
+    });
+    expect(dialog).toHaveTextContent("Presbítero");
+    expect(dialog).toHaveTextContent("Paulo");
+    expect(dialog).toHaveTextContent("1 Pedro 4:10");
+    expect(dialog.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://example.com/paulo-elder.jpg",
+    );
   });
 });
 

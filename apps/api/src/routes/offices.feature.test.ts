@@ -302,7 +302,9 @@ describe("multi-office IPB board elections", () => {
       url: `/v1/join/${room.inviteToken}/ballot`,
     });
     expect(ballotRes.statusCode).toBe(200);
+    expect(ballotRes.json().roomType).toBe("ump_board");
     expect(ballotRes.json().offices).toHaveLength(5);
+    expect(ballotRes.json().offices[0]).toHaveProperty("winnerPhotoUrl");
     expect(ballotRes.json().offices.every((o: { status: string }) => o.status === "elected")).toBe(
       true,
     );

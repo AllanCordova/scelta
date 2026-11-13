@@ -1719,14 +1719,26 @@ li {
   body:has(.print-cards-overlay) .detail-back-link,
   body:has(.print-cards-overlay) .page-intro,
   body:has(.print-cards-overlay) .admin-page > .panel,
-  body:has(.print-cards-overlay) .admin-page > .access-codes-panel {
+  body:has(.print-cards-overlay) .admin-page > .access-codes-panel,
+  body:has(.share-paper-overlay) .topbar,
+  body:has(.share-paper-overlay) .tabbar,
+  body:has(.share-paper-overlay) .no-print,
+  body:has(.share-paper-overlay) .detail-back-link,
+  body:has(.share-paper-overlay) .detail-breadcrumb-bar,
+  body:has(.share-paper-overlay) .room-detail-page > .panel,
+  body:has(.share-paper-overlay) .room-detail-page > .detail-kpi-grid,
+  body:has(.share-paper-overlay) .room-detail-page > .detail-main-grid {
     display: none !important;
   }
 
   body:has(.print-cards-overlay) .app-frame,
   body:has(.print-cards-overlay) .shell,
   body:has(.print-cards-overlay) .content,
-  body:has(.print-cards-overlay) .admin-page {
+  body:has(.print-cards-overlay) .admin-page,
+  body:has(.share-paper-overlay) .app-frame,
+  body:has(.share-paper-overlay) .shell,
+  body:has(.share-paper-overlay) .content,
+  body:has(.share-paper-overlay) .admin-page {
     display: block !important;
     margin: 0 !important;
     padding: 0 !important;
@@ -1735,13 +1747,22 @@ li {
     min-height: 0 !important;
   }
 
-  .print-cards-overlay {
+  .print-cards-overlay,
+  .share-paper-overlay {
     position: static !important;
     inset: auto !important;
     padding: 0 !important;
     margin: 0 !important;
     background: #ffffff !important;
     overflow: visible !important;
+  }
+
+  .share-paper-sheet {
+    box-shadow: none !important;
+    border: 1px solid #d4d4d8 !important;
+    margin: 0 auto !important;
+    max-width: none !important;
+    width: 100% !important;
   }
 
   .print-cards-grid {
@@ -2731,4 +2752,345 @@ button.danger-button:hover:not(:disabled) {
   border-radius: 0.75rem;
   border: 1px solid var(--line);
   background: var(--surface);
+}
+
+.ballot-wisdom-box {
+  margin-top: 0.9rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.85rem;
+  border: 1px solid var(--line);
+  background: var(--surface-subtle, rgba(0, 113, 227, 0.04));
+}
+
+.ballot-wisdom-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ballot-wisdom-verse {
+  margin: 0;
+  flex: 1 1 260px;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--ink-muted, var(--muted));
+  font-style: italic;
+}
+
+.ballot-wisdom-ref {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ballot-guidance-toggle {
+  flex: 0 0 auto;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.75rem;
+}
+
+.ballot-guidance-body {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 0.6rem;
+}
+
+.ballot-guidance-how {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.ballot-guidance-title {
+  margin: 0.25rem 0 0;
+  font-size: 0.95rem;
+}
+
+.ballot-guidance-list {
+  margin: 0;
+  padding-left: 1.15rem;
+  display: grid;
+  gap: 0.45rem;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.ballot-guidance-item.current {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.office-progress-grid {
+  list-style: none;
+  margin: 0.85rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 0.9rem;
+}
+
+.office-progress-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.75rem;
+  padding: 1rem 0.9rem;
+  border-radius: 1rem;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.office-progress-card.elected {
+  border-color: rgba(22, 163, 74, 0.38);
+  background: linear-gradient(180deg, rgba(22, 163, 74, 0.06), transparent);
+}
+
+.office-progress-card.open {
+  border-color: rgba(0, 113, 227, 0.45);
+  background: linear-gradient(180deg, rgba(0, 113, 227, 0.06), transparent);
+}
+
+.office-card-top {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.office-card-title {
+  font-size: 0.92rem;
+  line-height: 1.25;
+}
+
+.office-card-status {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.16rem 0.55rem;
+  border-radius: 999px;
+  background: var(--surface-subtle, rgba(148, 163, 184, 0.16));
+  color: var(--ink-muted, var(--muted));
+}
+
+.office-card-status.elected {
+  background: rgba(22, 163, 74, 0.14);
+  color: #15803d;
+}
+
+.office-card-status.open {
+  background: rgba(0, 113, 227, 0.14);
+  color: var(--accent, #0071e3);
+}
+
+.office-card-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  font-weight: 700;
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+  background: rgba(0, 113, 227, 0.12);
+  color: var(--accent, #0071e3);
+  border: 2px solid var(--line);
+}
+
+.office-progress-card.elected .office-card-avatar {
+  border-color: rgba(22, 163, 74, 0.45);
+}
+
+.office-card-placeholder {
+  font-size: 1.25rem;
+  color: var(--muted);
+}
+
+.office-card-bottom {
+  width: 100%;
+  min-height: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.office-card-winner {
+  font-size: 0.92rem;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+.office-card-pending {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* Share Board Paper */
+.section-header-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.section-header-row h2 {
+  margin: 0;
+}
+
+.candidate-results-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.share-paper-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+  overflow-y: auto;
+  padding: 1.5rem 1rem 2.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.share-paper-overlay .print-cards-toolbar {
+  width: 100%;
+  max-width: 780px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  padding: 1rem 1.25rem;
+}
+
+.share-paper-sheet {
+  width: 100%;
+  max-width: 780px;
+  background: #ffffff;
+  color: #18181b;
+  border: 1px solid #e4e4e7;
+  border-radius: 0.75rem;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.24);
+  padding: 2.5rem 2.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.share-paper-header {
+  text-align: center;
+  border-bottom: 2px solid #e4e4e7;
+  padding-bottom: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.share-paper-ministry {
+  display: inline-block;
+  padding: 0.28rem 0.85rem;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.share-paper-title {
+  margin: 0.2rem 0 0;
+  font-size: 1.65rem;
+  line-height: 1.2;
+  color: #09090b;
+}
+
+.share-paper-subtitle {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #52525b;
+}
+
+.share-paper-members {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1.15rem;
+}
+
+.share-paper-member {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.7rem;
+  padding: 1.15rem 0.9rem;
+  border-radius: 0.85rem;
+  border: 1px solid #e4e4e7;
+  background: #fafafa;
+  break-inside: avoid;
+}
+
+.share-paper-office {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #15803d;
+}
+
+.share-paper-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 2px solid #cbd5e1;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.share-paper-name {
+  font-size: 1rem;
+  line-height: 1.3;
+  color: #09090b;
+}
+
+.share-paper-footer {
+  border-top: 2px solid #e4e4e7;
+  padding-top: 1.35rem;
+  text-align: center;
+}
+
+.share-paper-verse {
+  margin: 0;
+  font-size: 0.96rem;
+  line-height: 1.55;
+  color: #3f3f46;
+  font-style: italic;
+}
+
+.share-paper-verse-ref {
+  font-style: normal;
+  font-weight: 700;
+  color: #18181b;
 }

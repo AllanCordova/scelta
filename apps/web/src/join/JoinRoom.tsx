@@ -4,6 +4,8 @@ import { z } from "zod";
 import { apiUrl } from "../api-url";
 import { validateWithZod, type FieldErrors } from "../forms/validation";
 import { startTwoSidedConfettiLoop } from "../shell/confetti";
+import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
+import { BALLOT_WISDOM_VERSE, officeGuidanceForBallot } from "./ballot-guidance";
 import {
   ballotErrorMessage,
   joinBlockedMessage,
@@ -290,6 +292,7 @@ function JoinedRoomView({
   const [candidateSearch, setCandidateSearch] = useState<string>("");
   const [voteError, setVoteError] = useState<string | null>(null);
   const [isVoting, setIsVoting] = useState(false);
+  const [isGuidanceExpanded, setIsGuidanceExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -424,6 +427,10 @@ function JoinedRoomView({
     winnerStanding && totalTallyVotes > 0
       ? Math.round((winnerStanding.votes / totalTallyVotes) * 1000) / 10
       : 0;
+  const ballotGuidance =
+    round?.status === "open"
+      ? officeGuidanceForBallot(ballotState?.roomType, round.officeLabel)
+      : null;
 
   return (
     <div className="join-page voter-flow">
@@ -476,6 +483,28 @@ function JoinedRoomView({
             <p className="round-notice" aria-live="polite">
               {voterRoundStateNotice(round.status, round.restartCount)}
             </p>
+            <div className="ballot-wisdom-box">
+              <div className="ballot-wisdom-header">
+                <blockquote className="ballot-wisdom-verse">
+                  “{BALLOT_WISDOM_VERSE.text}”{" "}
+                  <cite className="ballot-wisdom-ref">— {BALLOT_WISDOM_VERSE.reference}</cite>
+                </blockquote>
+                <button
+                  type="button"
+                  className="ghost ballot-guidance-toggle"
+                  aria-expanded={isGuidanceExpanded}
+                  onClick={() => setIsGuidanceExpanded((current) => !current)}
+                >
+                  {isGuidanceExpanded ? "Ler menos" : "Ler mais"}
+                </button>
+              </div>
+              {isGuidanceExpanded && ballotGuidance ? (
+                <div className="ballot-guidance-body">
+                  <h3 className="ballot-guidance-title">{ballotGuidance.title}</h3>
+                  <p className="ballot-guidance-how">{ballotGuidance.description}</p>
+                </div>
+              ) : null}
+            </div>
           </div>
 
           {hasVotedInCurrentRound ? (
@@ -773,24 +802,7 @@ function JoinedRoomView({
       {ballotState?.offices && ballotState.offices.length > 0 ? (
         <section className="panel" aria-label="Cargos da diretoria">
           <h2>Cargos da Diretoria</h2>
-          <ol className="office-progress-list">
-            {ballotState.offices.map((office) => (
-              <li key={office.officeLabel} className={`office-progress-item ${office.status}`}>
-                <strong>
-                  {office.order}. {office.officeLabel}
-                </strong>
-                <span>
-                  {office.status === "elected"
-                    ? `Eleito: ${office.winnerName ?? "Confirmado"}`
-                    : office.status === "open"
-                      ? "Em votação"
-                      : office.status === "in_progress"
-                        ? "Em andamento"
-                        : "Aguardando"}
-                </span>
-              </li>
-            ))}
-          </ol>
+          <OfficeProgressGrid offices={ballotState.offices} />
         </section>
       ) : null}
     </div>

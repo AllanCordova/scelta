@@ -8,6 +8,8 @@ import { submitBallot, submitJoin } from "../join/join-api";
 import { createJoinKey } from "../join/join-identity";
 import { startTwoSidedConfettiLoop } from "../shell/confetti";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
+import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
+import { ShareBoardPaper, type ShareBoardEntry } from "./ShareBoardPaper";
 import {
   CLOSE_ROUND_LABEL,
   DECLINE_ROUND_LABEL,
@@ -61,6 +63,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   const [selectedOffice, setSelectedOffice] = useState<string>("");
   const [receiptPage, setReceiptPage] = useState(1);
   const [dismissedWinnerRoundId, setDismissedWinnerRoundId] = useState<string | null>(null);
+  const [isSharePaperOpen, setIsSharePaperOpen] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<
     "delete-room" | "remove-participants" | null
   >(null);
@@ -392,6 +395,17 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       ? selectedOffice
       : (room.recommendedOffice ?? unelectedOffices[0]?.officeLabel ?? "");
   const allOfficesElected = offices.length > 0 && unelectedOffices.length === 0;
+  const resolvedOffices = offices.map((office) => {
+    const officeWinnerCandidate = office.winnerCandidateId
+      ? room.candidates?.find((c) => c.id === office.winnerCandidateId)
+      : office.winnerName
+        ? room.candidates?.find((c) => c.displayName === office.winnerName)
+        : undefined;
+    return {
+      ...office,
+      winnerPhotoUrl: office.winnerPhotoUrl ?? officeWinnerCandidate?.photoUrl ?? null,
+    };
+  });
   const roomTypeLabel = ROOM_TYPE_LABELS[room.roomType] ?? "Sessão";
   const roomCode = `SALA-${room.id.slice(0, 6).toUpperCase()}`;
 
@@ -598,25 +612,19 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
 
       {offices.length > 0 ? (
         <section className="panel" aria-label="Cargos da diretoria (Ordem IPB)">
-          <h2>Cargos da Diretoria (Ordem IPB)</h2>
-          <ol className="office-progress-list">
-            {offices.map((office) => (
-              <li key={office.officeLabel} className={`office-progress-item ${office.status}`}>
-                <strong>
-                  {office.order}. {office.officeLabel}
-                </strong>
-                <span>
-                  {office.status === "elected"
-                    ? `Eleito: ${office.winnerName ?? "Confirmado"}`
-                    : office.status === "open"
-                      ? "Em votação"
-                      : office.status === "in_progress"
-                        ? `Em andamento (${office.roundCount}º escrutínio)`
-                        : "Aguardando"}
-                </span>
-              </li>
-            ))}
-          </ol>
+          <div className="section-header-row">
+            <h2>Cargos da Diretoria (Ordem IPB)</h2>
+            {allOfficesElected ? (
+              <button
+                type="button"
+                className="round-action"
+                onClick={() => setIsSharePaperOpen(true)}
+              >
+                Compartilhar resultado
+              </button>
+            ) : null}
+          </div>
+          <OfficeProgressGrid offices={resolvedOffices} />
         </section>
       ) : null}
 
@@ -769,7 +777,18 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                 Escrutínio nominal com apuração de maioria absoluta (50% + 1 dos votos válidos)
               </p>
             </div>
-            <span className="detail-valid-votes-badge">{totalValidVotes} Votos Válidos</span>
+            <div className="candidate-results-header-actions">
+              <span className="detail-valid-votes-badge">{totalValidVotes} Votos Válidos</span>
+              {offices.length === 0 && isElectedWinner ? (
+                <button
+                  type="button"
+                  className="round-action"
+                  onClick={() => setIsSharePaperOpen(true)}
+                >
+                  Compartilhar resultado
+                </button>
+              ) : null}
+            </div>
           </div>
 
           {room.round?.status === "open" && (room.round.restartCount ?? 0) > 0 ? (
@@ -1071,6 +1090,20 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
         </div>
       </div>
 
+      <ShareBoardPaper
+        open={isSharePaperOpen}
+        roomTitle={room.title}
+        ministryLabel={roomTypeLabel}
+        sessionDateLabel={formatSessionDate(room.createdAt)}
+        entries={buildShareBoardEntries(
+          resolvedOffices,
+          roomTypeLabel,
+          isElectedWinner ? (room.round?.tally?.winnerName ?? null) : null,
+          winnerCandidate?.photoUrl ?? null,
+        )}
+        onClose={() => setIsSharePaperOpen(false)}
+      />
+
       <ConfirmDialog
         open={pendingConfirm !== null}
         title={
@@ -1096,6 +1129,37 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       />
     </div>
   );
+}
+
+function buildShareBoardEntries(
+  resolvedOffices: readonly {
+    officeLabel: string;
+    winnerName: string | null;
+    winnerPhotoUrl: string | null;
+  }[],
+  roomTypeLabel: string,
+  singleWinnerName: string | null,
+  singleWinnerPhotoUrl: string | null,
+): ShareBoardEntry[] {
+  if (resolvedOffices.length > 0) {
+    return resolvedOffices
+      .filter((office) => Boolean(office.winnerName))
+      .map((office) => ({
+        officeLabel: office.officeLabel,
+        winnerName: office.winnerName ?? "",
+        winnerPhotoUrl: office.winnerPhotoUrl,
+      }));
+  }
+  if (singleWinnerName) {
+    return [
+      {
+        officeLabel: roomTypeLabel,
+        winnerName: singleWinnerName,
+        winnerPhotoUrl: singleWinnerPhotoUrl,
+      },
+    ];
+  }
+  return [];
 }
 
 function candidateInitials(displayName: string): string {

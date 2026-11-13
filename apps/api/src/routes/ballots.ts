@@ -95,17 +95,26 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
 
         return {
           roomStatus: room.status,
+          roomType: room.roomType,
           candidates: candidates.map((candidate) => ({
             id: candidate.id,
             displayName: candidate.displayName,
             photoUrl: candidate.photoUrl ?? null,
           })),
-          offices: officeState.offices.map(({ officeLabel, order, status, winnerName }) => ({
-            officeLabel,
-            order,
-            status,
-            winnerName,
-          })),
+          offices: officeState.offices.map(
+            ({ officeLabel, order, status, winnerCandidateId, winnerName }) => {
+              const winnerCandidate = winnerCandidateId
+                ? allCandidates.find((candidate) => candidate.id === winnerCandidateId)
+                : undefined;
+              return {
+                officeLabel,
+                order,
+                status,
+                winnerName,
+                winnerPhotoUrl: winnerCandidate?.photoUrl ?? null,
+              };
+            },
+          ),
           round: toRoundSummary(round, tally, officeRoundNumber),
         };
       } catch (error) {
