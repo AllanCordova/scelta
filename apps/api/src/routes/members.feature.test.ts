@@ -213,6 +213,53 @@ describe("member roll import and listing", () => {
 
     await app.close();
   });
+
+  it("creates, searches, paginates, and deletes members manually", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+
+    const createdRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/members",
+      headers: { cookie: adminCookie },
+      payload: {
+        fullName: "Kamila Costa",
+        isCommunicant: true,
+        isMale: false,
+        birthDate: "1996-05-10",
+      },
+    });
+    expect(createdRes.statusCode).toBe(201);
+    const createdMember = createdRes.json().member as { id: string; fullName: string };
+    expect(createdMember.fullName).toBe("Kamila Costa");
+
+    const searchRes = await app.inject({
+      method: "GET",
+      url: "/v1/admin/members?search=Kamila&page=1&pageSize=5",
+      headers: { cookie: adminCookie },
+    });
+    expect(searchRes.statusCode).toBe(200);
+    expect(searchRes.json().members).toHaveLength(1);
+    expect(searchRes.json().total).toBe(1);
+    expect(searchRes.json().page).toBe(1);
+    expect(searchRes.json().totalPages).toBe(1);
+
+    const deleteRes = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/members/${createdMember.id}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(deleteRes.statusCode).toBe(200);
+    expect(deleteRes.json()).toEqual({ deleted: true });
+
+    const missingDeleteRes = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/members/${createdMember.id}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(missingDeleteRes.statusCode).toBe(404);
+
+    await app.close();
+  });
 });
 
 async function loginCookie(

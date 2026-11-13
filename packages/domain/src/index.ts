@@ -28,9 +28,11 @@ export {
   type CandidateValidationError,
 } from "./ballot.js";
 export {
+  canDeclineRound,
   canRestartRound,
   nextRoundPlan,
   resolveNextRoundCandidateIds,
+  type DeclineRoundRejectionReason,
   type RulesPreset,
   type RoundOutcome,
   type NextRoundPlan,

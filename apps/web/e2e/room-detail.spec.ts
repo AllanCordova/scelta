@@ -9,12 +9,16 @@ test("admin clicks a room card to open the room detail view and manages the scru
 }) => {
   const title = `Detalhe da sala ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   await loginAsAdmin(page);
+  await page.request.post("http://127.0.0.1:3334/v1/admin/members/import", {
+    data: {
+      csv: "nome,comungante,sexo,data_nascimento\nPaulo Apóstolo,sim,M,1985-04-12\nSilas,sim,M,1990-01-10",
+    },
+  });
 
   await page.getByLabel("Título").fill(title);
   await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("1");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByLabel("Aptos").fill("2");
-  await page.getByLabel("Candidatos").fill("Paulo Apóstolo, Silas");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
@@ -32,10 +36,34 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await expect(page.getByText("Regimento da Eleição")).toBeVisible();
   await expect(page.getByText("Fluxo de Presença")).toBeVisible();
   await expect(page.getByText("Paulo Apóstolo")).toBeVisible();
-  await expect(page.getByText("Silas")).toBeVisible();
+  await expect(page.getByText("Silas", { exact: true })).toBeVisible();
 
   const inviteUrlValue = await page.getByLabel("Token Direto para Votantes").inputValue();
   expect(inviteUrlValue).toMatch(/\/join\//);
+
+  const roomDetailUrl = page.url();
+
+  // Access codes are managed under /admin/codigos, not on room detail
+  await expect(page.getByRole("button", { name: "Gerar códigos do rol" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Admin" }).first().click();
+  await expect(page).toHaveURL(/\/admin$/);
+  await page.getByRole("link", { name: /Códigos de Acesso/i }).click();
+  await expect(page).toHaveURL(/\/admin\/codigos$/);
+
+  const roomOption = page.getByLabel("Sala").locator("option", { hasText: title });
+  const roomOptionValue = await roomOption.getAttribute("value");
+  await page.getByLabel("Sala").selectOption(roomOptionValue!);
+
+  await page.getByRole("button", { name: "Gerar códigos do rol" }).click();
+  await expect(page.getByText(/códigos ativos prontos para credenciamento/)).toBeVisible();
+  const firstPin = await page.locator(".access-code-pin").first().textContent();
+  expect(firstPin).toBeTruthy();
+
+  await page.getByRole("button", { name: "Imprimir cartões A4" }).click();
+  await expect(page.getByRole("dialog", { name: "Cartões de acesso para impressão" })).toBeVisible();
+  await page.getByRole("button", { name: "Fechar" }).click();
+
+  await page.goto(roomDetailUrl);
 
   // Simulator: clicking Simular votos before opening a round shows clear feedback
   await page.getByRole("button", { name: "Simular votos" }).click();
@@ -49,12 +77,6 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await page.getByLabel("Participantes").fill("1");
   await page.getByRole("button", { name: "Remover participantes" }).click();
   await expect(page.getByText("1 participantes removidos da presença.")).toBeVisible();
-
-  // Generate access codes from the admin detail view and join as a voter
-  await page.getByRole("button", { name: "Gerar códigos do rol" }).click();
-  await expect(page.getByText(/códigos ativos prontos para credenciamento/)).toBeVisible();
-  const firstPin = await page.locator(".access-code-pin").first().textContent();
-  expect(firstPin).toBeTruthy();
 
   const voterPage = await context.newPage();
   await voterPage.goto(inviteUrlValue);
@@ -82,11 +104,12 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await expect(page.getByText("Cédula recebida e assinada digitalmente")).toHaveCount(3);
 
   await page.getByRole("button", { name: "Encerrar escrutínio" }).click();
-  await expect(page.getByText(/Eleito por maioria absoluta: (Paulo Apóstolo|Silas)/i)).toBeVisible();
-  await expect(page.getByText("Eleito", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/Eleito por maioria absoluta:|Sem maioria absoluta neste escrutínio\./i),
+  ).toBeVisible();
 
   await page.getByRole("link", { name: /Voltar para Painel de Salas/i }).click();
-  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page).toHaveURL(/\/admin\/salas$/);
 
   // Failure path: visiting a non-existent room UUID shows a not-found alert
   await page.goto("/admin/salas/00000000-0000-4000-8000-000000000000");
@@ -98,7 +121,7 @@ async function loginAsAdmin(page: Page) {
   await page.getByLabel("E-mail").fill(adminEmail);
   await page.getByLabel("Senha").fill(adminPassword);
   await page.locator("form").getByRole("button", { name: "Entrar" }).click();
-  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page).toHaveURL(/\/admin\/salas$/);
   await expect(page.getByRole("button", { name: "Criar sala" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("34");
 }

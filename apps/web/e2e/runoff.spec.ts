@@ -8,24 +8,21 @@ test("society board election runs 2 inconclusive rounds then narrows 3rd round t
 }) => {
   const title = `Diretoria UPA ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   await loginAsAdmin(page);
-  await page.getByLabel("Título").fill(title);
-  await page.getByRole("group", { name: "Tipo" }).getByRole("button", { name: "Diretoria UPA" }).click();
-  await page
-    .getByRole("group", { name: "Regras" })
-    .getByRole("button", { name: "Diretoria de sociedade" })
-    .click();
-  await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("2");
-  await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
-  await page.getByLabel("Candidatos").fill("Ana, Bia, Caio");
-  await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
-  await page.getByRole("button", { name: "Criar sala" }).click();
-
-  const invite = page.getByRole("link", { name: /\/join\// });
-  await expect(invite).toBeVisible();
-  const href = await invite.getAttribute("href");
-  if (!href) {
-    throw new Error("Missing invite link");
-  }
+  const createRes = await page.request.post("http://127.0.0.1:3334/v1/admin/rooms", {
+    data: {
+      title,
+      roomType: "upa_board",
+      rulesPreset: "ipb_society_board",
+      quorumValue: 2,
+      quorumUnit: "absolute",
+      status: "open",
+      candidates: ["Ana", "Bia", "Caio"],
+    },
+  });
+  expect(createRes.status()).toBe(201);
+  const created = (await createRes.json()) as { room: { invitePath: string } };
+  await page.reload();
+  const href = created.room.invitePath;
 
   const codes = await createSimulatedCodes(page, title, 2);
 
@@ -50,7 +47,7 @@ test("society board election runs 2 inconclusive rounds then narrows 3rd round t
 
     // Round 1: all 3 candidates present; votes split Ana 1, Bia 1, Caio 0 -> no majority
     await item.getByRole("button", { name: "Abrir escrutínio" }).click();
-    await expect(item.getByText("1º escrutínio — Candidatos: Ana, Bia, Caio")).toBeVisible();
+    await expect(item.getByText("1º escrutínio", { exact: true })).toBeVisible();
 
     await expect(voterOne.getByRole("heading", { name: "1º escrutínio" })).toBeVisible({
       timeout: 10_000,
@@ -73,7 +70,7 @@ test("society board election runs 2 inconclusive rounds then narrows 3rd round t
 
     // Round 2: all 3 candidates remain; one-vote-per-person resets; votes split Ana 1, Bia 1, Caio 0 -> no majority
     await item.getByRole("button", { name: "Abrir escrutínio" }).click();
-    await expect(item.getByText("2º escrutínio — Candidatos: Ana, Bia, Caio")).toBeVisible();
+    await expect(item.getByText("2º escrutínio", { exact: true })).toBeVisible();
 
     await expect(voterOne.getByRole("heading", { name: "2º escrutínio" })).toBeVisible({
       timeout: 10_000,
@@ -95,7 +92,7 @@ test("society board election runs 2 inconclusive rounds then narrows 3rd round t
 
     // Round 3: runoff of top 2 (Ana and Bia); Caio is eliminated
     await item.getByRole("button", { name: "Abrir escrutínio" }).click();
-    await expect(item.getByText("3º escrutínio — Candidatos: Ana, Bia")).toBeVisible();
+    await expect(item.getByText("3º escrutínio", { exact: true })).toBeVisible();
 
     await expect(voterOne.getByRole("heading", { name: "3º escrutínio" })).toBeVisible({
       timeout: 10_000,
@@ -150,7 +147,7 @@ async function loginAsAdmin(page: Page) {
   await page.getByLabel("E-mail").fill(adminEmail);
   await page.getByLabel("Senha").fill(adminPassword);
   await page.locator("form").getByRole("button", { name: "Entrar" }).click();
-  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page).toHaveURL(/\/admin\/salas$/);
   await expect(page.getByRole("button", { name: "Criar sala" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("34");
 }

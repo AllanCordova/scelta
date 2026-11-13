@@ -13,7 +13,6 @@ import {
   ROOM_TYPE_OPTIONS,
   ROUND_RESTARTED_MESSAGE,
   STATUS_LABELS,
-  activeCandidatesLabel,
   describePreset,
   quorumLabel,
   quorumStateLabel,
@@ -29,7 +28,6 @@ import {
   closeRound,
   createRoom,
   deleteRoom,
-  fetchCandidateSuggestions,
   fetchPresets,
   listRooms,
   openRound,
@@ -43,7 +41,6 @@ import type {
   RoomSummary,
   RoomType,
   RulesPreset,
-  SuggestedCandidate,
 } from "./types";
 import { useRoomPresence } from "./use-room-presence";
 
@@ -60,10 +57,9 @@ export function AdminRooms() {
     quorumUnit: QuorumUnit;
   } | null>(null);
   const [eligibleCount, setEligibleCount] = useState("");
-  const [candidatesInput, setCandidatesInput] = useState("");
   const [status, setStatus] = useState<CreatableRoomStatus>("draft");
   const [fieldErrors, setFieldErrors] = useState<
-    FieldErrors<"title" | "quorumValue" | "eligibleCount" | "candidates">
+    FieldErrors<"title" | "quorumValue" | "eligibleCount">
   >({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [roundError, setRoundError] = useState<{ roomId: string; message: string } | null>(null);
@@ -73,7 +69,6 @@ export function AdminRooms() {
   const [qr, setQr] = useState<{ link: string; dataUrl: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [listVersion, setListVersion] = useState(0);
-  const [suggestions, setSuggestions] = useState<SuggestedCandidate[]>([]);
   const presence = useRoomPresence(rooms);
 
   useEffect(() => {
@@ -115,25 +110,6 @@ export function AdminRooms() {
       cancelled = true;
     };
   }, [listVersion]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetchCandidateSuggestions(apiBase, roomType)
-      .then((nextSuggestions) => {
-        if (!cancelled) {
-          setSuggestions(nextSuggestions);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSuggestions([]);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [roomType]);
 
   useEffect(() => {
     if (!inviteLink) {
@@ -184,7 +160,6 @@ export function AdminRooms() {
       quorumValue,
       quorumUnit,
       eligibleCount,
-      candidates: candidatesInput,
     });
     if (!validation.ok) {
       setFieldErrors(validation.fieldErrors);
@@ -194,8 +169,7 @@ export function AdminRooms() {
 
     setFieldErrors({});
     const eligible = eligiblePayload(eligibleCount);
-    const candidates = candidatesPayload(candidatesInput);
-    if ("error" in eligible || "error" in candidates) {
+    if ("error" in eligible) {
       return;
     }
 
@@ -208,7 +182,6 @@ export function AdminRooms() {
       status,
       ...quorumPayload(quorumValue, quorumUnit),
       ...eligible,
-      ...candidates,
     };
 
     try {
@@ -216,19 +189,16 @@ export function AdminRooms() {
       const link = inviteUrl(window.location.origin, room.invitePath);
       setInviteLink(link);
       setTitle("");
-      setCandidatesInput("");
       setListVersion((current) => current + 1);
     } catch (error) {
       setInviteLink(null);
       if (error instanceof RoomRequestError && error.details.length > 0) {
-        const nextFieldErrors: FieldErrors<"title" | "quorumValue" | "eligibleCount" | "candidates"> =
-          {};
+        const nextFieldErrors: FieldErrors<"title" | "quorumValue" | "eligibleCount"> = {};
         for (const detail of error.details) {
           if (
             detail.field === "title" ||
             detail.field === "quorumValue" ||
-            detail.field === "eligibleCount" ||
-            detail.field === "candidates"
+            detail.field === "eligibleCount"
           ) {
             nextFieldErrors[detail.field] = roomErrorMessage(error.errorCode, detail.field);
           }
@@ -305,20 +275,6 @@ export function AdminRooms() {
     const link = inviteUrl(window.location.origin, path);
     setInviteLink(link);
   }
-
-  function handleToggleSuggestedCandidate(fullName: string) {
-    const names = parseCandidateInputNames(candidatesInput);
-    const key = fullName.toLocaleLowerCase();
-    const exists = names.some((name) => name.toLocaleLowerCase() === key);
-    const nextNames = exists
-      ? names.filter((name) => name.toLocaleLowerCase() !== key)
-      : [...names, fullName];
-    setCandidatesInput(nextNames.join(", "));
-  }
-
-  const selectedCandidateKeys = new Set(
-    parseCandidateInputNames(candidatesInput).map((name) => name.toLocaleLowerCase()),
-  );
 
   return (
     <div className="admin-page">
@@ -463,47 +419,10 @@ export function AdminRooms() {
             ) : null}
           </div>
 
-          <div className="field">
-            <label>
-              Candidatos
-              <input
-                value={candidatesInput}
-                placeholder="Ex.: Paulo, Silas"
-                aria-invalid={Boolean(fieldErrors.candidates)}
-                onChange={(event) => {
-                  setCandidatesInput(event.target.value);
-                  setFieldErrors((current) => ({ ...current, candidates: undefined }));
-                }}
-              />
-            </label>
-            {fieldErrors.candidates ? (
-              <span className="field-error">{fieldErrors.candidates}</span>
-            ) : null}
-          </div>
-
-          {suggestions.length > 0 ? (
-            <fieldset className="choice-field">
-              <legend>Sugestões de candidatos</legend>
-              <div className="choice-row">
-                {suggestions.map((suggestion) => {
-                  const isIncluded = selectedCandidateKeys.has(
-                    suggestion.fullName.toLocaleLowerCase(),
-                  );
-                  return (
-                    <button
-                      key={suggestion.memberId}
-                      type="button"
-                      className={isIncluded ? "choice selected" : "choice"}
-                      aria-pressed={isIncluded}
-                      onClick={() => handleToggleSuggestedCandidate(suggestion.fullName)}
-                    >
-                      {suggestion.fullName}
-                    </button>
-                  );
-                })}
-              </div>
-            </fieldset>
-          ) : null}
+          <p className="field-hint">
+            Candidatos: todos os membros comungantes cadastrados na plataforma serão incluídos
+            automaticamente.
+          </p>
 
           <fieldset className="choice-field">
             <legend>Situação</legend>
@@ -714,27 +633,20 @@ function RoomRow({
               <p className="draft-room-description">
                 Aguardando abertura formal de assembleia. Parâmetros regimentais configurados.
               </p>
-              <div className="draft-room-meta">
-                <span>Candidatos: {room.candidates?.length ?? 0}</span>
-                {room.quorumValue !== undefined ? (
-                  <>
-                    <span>•</span>
-                    <span>
-                      Quórum: {room.quorumValue}
-                      {room.quorumUnit === "percent" ? "%" : ""}
-                    </span>
-                  </>
-                ) : null}
-              </div>
+              {room.quorumValue !== undefined ? (
+                <div className="draft-room-meta">
+                  <span>
+                    Quórum: {room.quorumValue}
+                    {room.quorumUnit === "percent" ? "%" : ""}
+                  </span>
+                </div>
+              ) : null}
             </div>
           )}
 
-          {room.round?.status === "open" && room.candidates && room.candidates.length > 0 ? (
+          {room.round?.status === "open" ? (
             <p className="round-candidates">
-              {activeCandidatesLabel(
-                room.round.number,
-                room.candidates.map((item) => item.displayName),
-              )}
+              {room.round.officeRoundNumber ?? room.round.number}º escrutínio
             </p>
           ) : null}
 
@@ -827,7 +739,6 @@ const createRoomFormSchema = z
     quorumValue: z.string().trim(),
     quorumUnit: z.enum(["absolute", "percent"]),
     eligibleCount: z.string().trim(),
-    candidates: z.string(),
   })
   .superRefine((data, ctx) => {
     if (
@@ -848,14 +759,6 @@ const createRoomFormSchema = z
         code: z.ZodIssueCode.custom,
         path: ["eligibleCount"],
         message: roomErrorMessage("invalid_room", "eligibleCount"),
-      });
-    }
-
-    if ("error" in candidatesPayload(data.candidates)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["candidates"],
-        message: roomErrorMessage("invalid_room", "candidates"),
       });
     }
   });
@@ -889,44 +792,6 @@ function eligiblePayload(
   }
 
   return { eligibleCount: count };
-}
-
-function parseCandidateInputNames(value: string): string[] {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return [];
-  }
-  return trimmed
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-}
-
-function candidatesPayload(
-  value: string,
-): { candidates: string[] } | { error: true } {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return { error: true };
-  }
-
-  const names = trimmed.split(",").map((part) => part.trim());
-  if (names.length > 50) {
-    return { error: true };
-  }
-  const seen = new Set<string>();
-  for (const name of names) {
-    if (name.length === 0 || name.length > 120) {
-      return { error: true };
-    }
-    const key = name.toLocaleLowerCase();
-    if (seen.has(key)) {
-      return { error: true };
-    }
-    seen.add(key);
-  }
-
-  return { candidates: names };
 }
 
 function messageFromError(error: unknown): string {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JoinRoom } from "./JoinRoom";
 import { writeJoinIdentity } from "./join-identity";
@@ -235,6 +235,91 @@ describe("JoinRoom", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Paulo" })).toBeInTheDocument();
+  });
+
+  it("filters candidates by name and renders the elected result hero card", async () => {
+    window.localStorage.setItem(
+      "scelta.join.invite-token",
+      JSON.stringify({ joinKey: "join-key-filter-1", displayName: "Ana", accessCode: "A7K9M2" }),
+    );
+    let closed = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/ballot")) {
+          if (closed) {
+            return json({
+              round: {
+                id: "round-1",
+                number: 1,
+                officeLabel: "Presidente",
+                officeRoundNumber: 1,
+                status: "closed",
+                outcome: "elected",
+                tally: {
+                  outcome: "elected",
+                  winnerName: "Paulo",
+                  standings: [
+                    { candidateId: "cand-1", displayName: "Paulo", votes: 3 },
+                    { candidateId: "cand-2", displayName: "Silas", votes: 1 },
+                  ],
+                },
+              },
+              candidates: [],
+            });
+          }
+          return json({
+            round: {
+              id: "round-1",
+              number: 1,
+              officeLabel: "Presidente",
+              officeRoundNumber: 1,
+              status: "open",
+              outcome: null,
+            },
+            candidates: [
+              { id: "cand-1", displayName: "Paulo" },
+              { id: "cand-2", displayName: "Silas" },
+            ],
+          });
+        }
+        if (url.includes("/receipt")) {
+          return json({ roundId: "round-1", hasVoted: false });
+        }
+        if (init?.method === "POST") {
+          return json({
+            title: "Diretoria UPA",
+            status: "open",
+            displayName: "Ana",
+            presentCount: 1,
+            alreadyJoined: true,
+          });
+        }
+        return json({ title: "Diretoria UPA", status: "open", canJoin: true });
+      }),
+    );
+
+    const { rerender } = render(<JoinRoom token="invite-token" />);
+
+    const searchInput = await screen.findByLabelText("Buscar candidato por nome");
+    expect(screen.getByText("Mostrando 2 de 2 candidatos")).toBeInTheDocument();
+
+    fireEvent.change(searchInput, { target: { value: "Sil" } });
+    expect(screen.getByText("Mostrando 1 de 2 candidatos")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Paulo" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Silas" })).toBeInTheDocument();
+
+    closed = true;
+    rerender(<JoinRoom token="invite-token" />);
+    await waitFor(
+      () => {
+        expect(screen.getByText("Presidente Eleito")).toBeInTheDocument();
+        expect(screen.getAllByText("75%").length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByText("Paulo: 3 votos")).toBeInTheDocument();
+      },
+      { timeout: 2500 },
+    );
   });
 });
 

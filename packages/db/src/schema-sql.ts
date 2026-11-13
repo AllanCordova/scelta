@@ -139,19 +139,22 @@ CREATE TABLE IF NOT EXISTS rounds (
   office_label text,
   status round_status NOT NULL DEFAULT 'pending',
   outcome text,
+  declined_candidate_id uuid,
   opened_at timestamptz,
   closed_at timestamptz
 );
 
 ALTER TABLE rounds ADD COLUMN IF NOT EXISTS outcome text;
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS declined_candidate_id uuid;
 
 -- At most one open round per room, and round numbers do not collide.
 CREATE UNIQUE INDEX IF NOT EXISTS rounds_room_number_uidx ON rounds (room_id, number);
 CREATE UNIQUE INDEX IF NOT EXISTS rounds_one_open_uidx ON rounds (room_id) WHERE status = 'open';
 
 DO $$ BEGIN
+  ALTER TABLE rounds DROP CONSTRAINT IF EXISTS rounds_outcome_check;
   ALTER TABLE rounds ADD CONSTRAINT rounds_outcome_check
-    CHECK (outcome IS NULL OR outcome IN ('failed_quorum', 'no_majority', 'elected'));
+    CHECK (outcome IS NULL OR outcome IN ('failed_quorum', 'no_majority', 'elected', 'declined'));
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;

@@ -6,8 +6,12 @@ const adminPassword = "e2e-admin-password";
 test("a visitor joins an open room and the admin sees one presence", async ({ page }) => {
   const title = `Sala aberta ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   await loginAsAdmin(page);
+  await page.request.post("http://127.0.0.1:3334/v1/admin/members/import", {
+    data: {
+      csv: "nome,comungante,sexo,data_nascimento\nPaulo,sim,M,1985-04-12\nSilas,sim,M,1990-01-10",
+    },
+  });
   await page.getByLabel("Título").fill(title);
-  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.locator("fieldset", { hasText: "Situação" }).getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
@@ -42,8 +46,12 @@ test("an unknown invite is rejected", async ({ page }) => {
 test("a draft room invite explains that the room is not open", async ({ page }) => {
   const title = `Sala rascunho ${Date.now().toString(36)}`;
   await loginAsAdmin(page);
+  await page.request.post("http://127.0.0.1:3334/v1/admin/members/import", {
+    data: {
+      csv: "nome,comungante,sexo,data_nascimento\nPaulo,sim,M,1985-04-12\nSilas,sim,M,1990-01-10",
+    },
+  });
   await page.getByLabel("Título").fill(title);
-  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.getByRole("button", { name: "Criar sala" }).click();
 
   const href = await page.getByRole("link", { name: /\/join\// }).getAttribute("href");
@@ -77,5 +85,5 @@ async function loginAsAdmin(page: Page) {
   await page.getByLabel("E-mail").fill(adminEmail);
   await page.getByLabel("Senha").fill(adminPassword);
   await page.locator("form").getByRole("button", { name: "Entrar" }).click();
-  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page).toHaveURL(/\/admin\/salas$/);
 }

@@ -50,6 +50,14 @@ export type StoredMemberItem = {
   };
 };
 
+export type PaginatedMembersResult = {
+  members: StoredMemberItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 export type MemberAccessCodeItem = {
   id: string;
   memberId: string | null;
@@ -119,7 +127,7 @@ export type RoomDetail = RoomSummary & {
 
 export type FieldErrorCode = "required" | "invalid" | "out_of_range" | "incomplete";
 
-export type RoundResult = "failed_quorum" | "no_majority" | "elected";
+export type RoundResult = "failed_quorum" | "no_majority" | "elected" | "declined";
 export type RoundStatus = "pending" | "open" | "closed" | "restarted";
 
 export type RoomRound = {

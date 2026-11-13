@@ -1,4 +1,5 @@
 import {
+  canDeclineRound,
   canOpenRound,
   canPublishWinner,
   canRestartRound,
@@ -97,8 +98,23 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         const latestClosedForOffice = [...officeRounds]
           .filter((round) => round.status === "closed")
           .sort((a, b) => b.number - a.number)[0] ?? null;
-        const isFirstRoundOfOffice = officeRounds.length === 0;
+        const isFirstRoundOfOffice =
+          officeRounds.length === 0 || latestClosedForOffice?.outcome === "declined";
         let candidatePool = isFirstRoundOfOffice ? allRoomCandidates : eligibleRoomCandidates;
+
+        const declinedForOfficeIds = new Set(
+          officeRounds
+            .filter(
+              (round) => round.outcome === "declined" && round.declinedCandidateId != null,
+            )
+            .map((round) => round.declinedCandidateId as string),
+        );
+        if (declinedForOfficeIds.size > 0) {
+          candidatePool = candidatePool.filter(
+            (candidate) => !declinedForOfficeIds.has(candidate.id),
+          );
+        }
+
         if (isFirstRoundOfOffice && isMultiOfficeRoomType(room.roomType) && allRounds.length > 0) {
           const officeState = await loadRoomOfficeState(
             repository,
@@ -114,6 +130,10 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           if (electedIds.size > 0) {
             candidatePool = candidatePool.filter((candidate) => !electedIds.has(candidate.id));
           }
+        }
+
+        if (candidatePool.length === 0) {
+          return reply.code(409).send({ error: "no_eligible_candidates" });
         }
 
         let previousTallies: TallyEntry[] = [];
@@ -132,9 +152,10 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           }));
         }
 
-        const previousOfficeRoundNumber = latestClosedForOffice
-          ? countOfficeRoundNumber(allRounds, latestClosedForOffice)
-          : null;
+        const previousOfficeRoundNumber =
+          latestClosedForOffice && latestClosedForOffice.outcome !== "declined"
+            ? countOfficeRoundNumber(allRounds, latestClosedForOffice)
+            : null;
 
         const resolved = resolveNextRoundCandidateIds({
           preset: room.rulesPreset,
@@ -159,7 +180,10 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: opened.reason });
         }
 
-        const officeRoundNumber = officeRounds.length + 1;
+        const officeRoundNumber = countOfficeRoundNumber(
+          [...allRounds, opened.round],
+          opened.round,
+        );
 
         options.presencePublisher?.publishRoundState?.(room.id, {
           roundId: opened.round.id,
@@ -316,6 +340,70 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         return { round: toRoundSummary(restarted, null, officeRoundNumber) };
       } catch (error) {
         request.log.error({ err: error, roomId, roundId }, "Failed to restart round");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/rounds/:roundId/decline",
+    { schema: { params: Type.Object({ roomId: Uuid, roundId: Uuid }) } },
+    async (request, reply) => {
+      const repository = await adminRepository(request, reply, options);
+      if (!repository) {
+        return;
+      }
+
+      const { roomId, roundId } = request.params as { roomId: string; roundId: string };
+      try {
+        const room = await repository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const round = await repository.findRound(roomId, roundId);
+        if (!round) {
+          return reply.code(404).send({ error: "round_not_found" });
+        }
+
+        const check = canDeclineRound(room.status, round.status, round.outcome);
+        if (!check.ok) {
+          return reply.code(409).send({ error: check.reason });
+        }
+
+        const [allCandidates, ballotCandidateIds] = await Promise.all([
+          repository.listAllCandidates(roomId),
+          repository.listRoundBallotCandidateIds(roundId),
+        ]);
+        const tally = tallyRoundVotes(allCandidates, ballotCandidateIds);
+        if (!tally.winnerId) {
+          return reply.code(409).send({ error: "winner_not_elected" });
+        }
+
+        const declined = await repository.declineRound(roomId, roundId, tally.winnerId);
+        if (!declined) {
+          return reply.code(409).send({ error: "winner_not_elected" });
+        }
+
+        const allRounds = await repository.listRounds(room.id);
+        const officeRoundNumber = countOfficeRoundNumber(allRounds, declined);
+
+        options.presencePublisher?.publishRoundState?.(room.id, {
+          roundId: declined.id,
+          roundNumber: declined.number,
+          ...(declined.officeLabel !== null
+            ? { officeLabel: declined.officeLabel, officeRoundNumber }
+            : {}),
+          state: "declined",
+        });
+
+        return {
+          round: toRoundSummary(declined, null, officeRoundNumber),
+          declinedCandidateId: tally.winnerId,
+          declinedCandidateName: tally.winnerName,
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId, roundId }, "Failed to decline elected office");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },

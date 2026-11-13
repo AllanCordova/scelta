@@ -6,8 +6,12 @@ const adminPassword = "e2e-admin-password";
 test("admin sees presence against quorum and cannot open round until quorum is met", async ({ page, browser }) => {
   const title = `Assembleia abaixo ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   await loginAsAdmin(page);
+  await page.request.post("http://127.0.0.1:3334/v1/admin/members/import", {
+    data: {
+      csv: "nome,comungante,sexo,data_nascimento\nPaulo,sim,M,1985-04-12\nSilas,sim,M,1990-01-10",
+    },
+  });
   await page.getByLabel("Título").fill(title);
-  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("2");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
@@ -46,8 +50,12 @@ test("admin sees quorum met when required presence joins and closes without fail
 }) => {
   const title = `Assembleia quórum ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   await loginAsAdmin(page);
+  await page.request.post("http://127.0.0.1:3334/v1/admin/members/import", {
+    data: {
+      csv: "nome,comungante,sexo,data_nascimento\nPaulo,sim,M,1985-04-12\nSilas,sim,M,1990-01-10",
+    },
+  });
   await page.getByLabel("Título").fill(title);
-  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("1");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
@@ -103,7 +111,7 @@ async function loginAsAdmin(page: Page) {
   await page.getByLabel("E-mail").fill(adminEmail);
   await page.getByLabel("Senha").fill(adminPassword);
   await page.locator("form").getByRole("button", { name: "Entrar" }).click();
-  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page).toHaveURL(/\/admin\/salas$/);
   await expect(page.getByRole("button", { name: "Criar sala" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("34");
 }

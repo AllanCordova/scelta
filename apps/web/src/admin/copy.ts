@@ -71,8 +71,11 @@ export function quorumStateLabel(quorumMet: boolean): string {
 export const OPEN_ROUND_LABEL = "Abrir escrutínio";
 export const CLOSE_ROUND_LABEL = "Encerrar escrutínio";
 export const RESTART_ROUND_LABEL = "Reiniciar escrutínio";
+export const DECLINE_ROUND_LABEL = "Negado";
 export const ROUND_RESTARTED_MESSAGE =
   "Escrutínio reiniciado — os votos anteriores foram limpos.";
+export const ROUND_DECLINED_MESSAGE =
+  "Cargo recusado pelo candidato eleito. Abra o escrutínio para reiniciar sem esse candidato.";
 export const FAILED_QUORUM_MESSAGE =
   "Quórum não atingido. O escrutínio foi encerrado sem eleger ninguém.";
 
@@ -107,7 +110,7 @@ const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   quorumUnit: "Informe a unidade do quórum.",
   eligibleCount: "Número de aptos inválido.",
   status: "Situação inválida.",
-  candidates: "Informe ao menos um candidato.",
+  candidates: "Cadastre ou importe ao menos um membro comungante antes de criar a sala.",
 };
 
 export function roomErrorMessage(errorCode: string, field?: FieldError["field"]): string {
@@ -138,6 +141,10 @@ export function roundErrorMessage(errorCode: string): string {
       return "Esta área é só para administradores.";
     case "persistence_unavailable":
       return "A API está sem banco de dados.";
+    case "no_eligible_candidates":
+      return "Não há mais candidatos elegíveis para este cargo.";
+    case "round_not_closed":
+      return "Encerre o escrutínio antes de registrar recusa.";
     case "room_not_found":
     case "round_not_found":
       return "Não encontrei essa sala ou escrutínio.";

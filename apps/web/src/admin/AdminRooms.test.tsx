@@ -71,9 +71,6 @@ describe("AdminRooms", () => {
     fireEvent.change(screen.getByLabelText("Título"), {
       target: { value: "Eleição de presbíteros" },
     });
-    fireEvent.change(screen.getByLabelText("Candidatos"), {
-      target: { value: "Paulo, Silas" },
-    });
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
 
     const link = await screen.findByRole("link");
@@ -100,9 +97,6 @@ describe("AdminRooms", () => {
     fireEvent.change(screen.getByLabelText("Título"), {
       target: { value: "Assembleia" },
     });
-    fireEvent.change(screen.getByLabelText("Candidatos"), {
-      target: { value: "Paulo, Silas" },
-    });
     fireEvent.click(within(rulesGroup()).getByRole("button", { name: "Personalizado" }));
     await waitFor(() => {
       expect(screen.getByLabelText("Quórum")).toHaveValue("");
@@ -125,9 +119,6 @@ describe("AdminRooms", () => {
     fireEvent.change(screen.getByLabelText("Título"), {
       target: { value: "Assembleia" },
     });
-    fireEvent.change(screen.getByLabelText("Candidatos"), {
-      target: { value: "Paulo, Silas" },
-    });
     fireEvent.change(screen.getByLabelText("Quórum"), {
       target: { value: "" },
     });
@@ -139,22 +130,15 @@ describe("AdminRooms", () => {
     expect(posted).toBe(false);
   });
 
-  it("rejects creating a room without candidates", async () => {
+  it("shows auto-candidate notice and hides manual candidate input and suggestions", async () => {
     render(<AdminRooms />);
     await screen.findByDisplayValue("34");
 
-    fireEvent.change(screen.getByLabelText("Título"), {
-      target: { value: "Assembleia" },
-    });
-    fireEvent.change(screen.getByLabelText("Candidatos"), {
-      target: { value: "   " },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("Informe ao menos um candidato.");
-    const fetchMock = vi.mocked(fetch);
-    const posted = fetchMock.mock.calls.some(([, init]) => init?.method === "POST");
-    expect(posted).toBe(false);
+    expect(screen.queryByLabelText("Candidatos")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Sugestões de candidatos" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/todos os membros comungantes cadastrados na plataforma serão incluídos/i),
+    ).toBeInTheDocument();
   });
 
   it("shows presence against the required quorum for an open room", async () => {
@@ -410,7 +394,6 @@ describe("AdminRooms", () => {
     render(<AdminRooms />);
     await screen.findByDisplayValue("34");
     fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Assembleia" } });
-    fireEvent.change(screen.getByLabelText("Candidatos"), { target: { value: "Paulo, Silas" } });
     fireEvent.change(screen.getByLabelText("Aptos"), { target: { value: "40" } });
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
     await screen.findByRole("link");
@@ -421,7 +404,6 @@ describe("AdminRooms", () => {
     expect(body.eligibleCount).toBe(40);
 
     fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Outra" } });
-    fireEvent.change(screen.getByLabelText("Candidatos"), { target: { value: "Paulo, Silas" } });
     fireEvent.change(screen.getByLabelText("Aptos"), { target: { value: "nope" } });
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Número de aptos inválido.");
@@ -447,26 +429,19 @@ describe("AdminRooms", () => {
     expect(screen.queryByRole("list", { name: "Salas" })).not.toBeInTheDocument();
   });
 
-  it("loads candidate suggestions by room type and allows toggling names before creating a room", async () => {
+  it("shows server error when no communicant members exist in the platform", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        if (url.endsWith("/v1/rules/presets")) {
-          return json({ presets });
-        }
-        if (url.includes("/v1/admin/members/suggestions?roomType=elder")) {
-          return json({
-            suggestions: [
-              { memberId: "m-1", fullName: "Paulo Apóstolo" },
-              { memberId: "m-2", fullName: "Silas Companheiro" },
-            ],
-          });
-        }
-        if (url.includes("/v1/admin/members/suggestions?roomType=upa_board")) {
-          return json({
-            suggestions: [{ memberId: "m-3", fullName: "Lídia de Tiatira" }],
-          });
+        if (url.endsWith("/v1/admin/rooms") && init?.method === "POST") {
+          return json(
+            {
+              error: "invalid_room",
+              details: [{ field: "candidates", code: "required" }],
+            },
+            400,
+          );
         }
         return handleFetch(input, init);
       }),
@@ -475,26 +450,12 @@ describe("AdminRooms", () => {
     render(<AdminRooms />);
     await screen.findByDisplayValue("34");
 
-    const suggestionsGroup = await screen.findByRole("group", {
-      name: "Sugestões de candidatos",
-    });
-    const pauloButton = within(suggestionsGroup).getByRole("button", { name: "Paulo Apóstolo" });
-    const silasButton = within(suggestionsGroup).getByRole("button", { name: "Silas Companheiro" });
+    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Assembleia" } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
 
-    fireEvent.click(pauloButton);
-    fireEvent.click(silasButton);
-    expect(screen.getByLabelText("Candidatos")).toHaveValue("Paulo Apóstolo, Silas Companheiro");
-
-    // Exclude Paulo before creating the room
-    fireEvent.click(pauloButton);
-    expect(screen.getByLabelText("Candidatos")).toHaveValue("Silas Companheiro");
-
-    // Switch room type to Diretoria UPA and verify UPA suggestions load
-    const typeGroup = screen.getByRole("group", { name: "Tipo" });
-    fireEvent.click(within(typeGroup).getByRole("button", { name: "Diretoria UPA" }));
-    expect(
-      await within(suggestionsGroup).findByRole("button", { name: "Lídia de Tiatira" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Cadastre ou importe ao menos um membro comungante antes de criar a sala.",
+    );
   });
 
   it("opens the QR code, copies the link, and deletes an existing room from the list", async () => {

@@ -14,7 +14,7 @@ export type QuorumStatus = {
   quorumMet: boolean;
 };
 
-export const ROUND_RESULTS = ["failed_quorum", "no_majority", "elected"] as const;
+export const ROUND_RESULTS = ["failed_quorum", "no_majority", "elected", "declined"] as const;
 export type RoundResult = (typeof ROUND_RESULTS)[number];
 
 export function resolveQuorumRequired(input: {

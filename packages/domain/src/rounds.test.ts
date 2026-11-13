@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { canRestartRound, nextRoundPlan, resolveNextRoundCandidateIds } from "./rounds.js";
+import {
+  canDeclineRound,
+  canRestartRound,
+  nextRoundPlan,
+  resolveNextRoundCandidateIds,
+} from "./rounds.js";
 
 const tallies = [
   { candidateId: "a", votes: 4 },
@@ -214,6 +219,28 @@ describe("canRestartRound", () => {
     expect(canRestartRound("open", "closed", "elected")).toEqual({
       ok: false,
       reason: "winner_already_elected",
+    });
+  });
+});
+
+describe("canDeclineRound", () => {
+  it("allows declining only a closed round with an elected winner in an open room", () => {
+    expect(canDeclineRound("open", "closed", "elected")).toEqual({ ok: true });
+    expect(canDeclineRound("voting", "closed", "elected")).toEqual({ ok: true });
+  });
+
+  it("rejects declining when room is not open, round is not closed, or no winner was elected", () => {
+    expect(canDeclineRound("draft", "closed", "elected")).toEqual({
+      ok: false,
+      reason: "room_not_open",
+    });
+    expect(canDeclineRound("open", "open", null)).toEqual({
+      ok: false,
+      reason: "round_not_closed",
+    });
+    expect(canDeclineRound("open", "closed", "no_majority")).toEqual({
+      ok: false,
+      reason: "winner_not_elected",
     });
   });
 });

@@ -57,6 +57,7 @@ export type StoredRound = {
   officeLabel: string | null;
   status: StoredRoundStatus;
   outcome: RoundResult | null;
+  declinedCandidateId?: string | null;
   openedAt: Date | null;
   closedAt: Date | null;
   restartCount?: number;
@@ -136,6 +137,11 @@ export type RoomRepository = {
     outcome: RoundResult | null,
   ): Promise<StoredRound | null>;
   restartRound(roomId: string, roundId: string): Promise<StoredRound | null>;
+  declineRound(
+    roomId: string,
+    roundId: string,
+    declinedCandidateId: string,
+  ): Promise<StoredRound | null>;
   findRound(roomId: string, roundId: string): Promise<StoredRound | null>;
   latestRounds(roomIds: string[]): Promise<StoredRound[]>;
   latestClosedRound(roomId: string): Promise<StoredRound | null>;
@@ -152,5 +158,12 @@ export type RoomRepository = {
   importMembers(
     rows: readonly ValidMemberImportRow[],
   ): Promise<{ createdCount: number; updatedCount: number }>;
+  createMember(input: {
+    fullName: string;
+    isCommunicant: boolean;
+    isMale: boolean | null;
+    birthDate: string | null;
+  }): Promise<StoredMember>;
+  deleteMember(memberId: string): Promise<boolean>;
   listMembers(): Promise<StoredMember[]>;
 };

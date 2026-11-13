@@ -23,18 +23,26 @@ export function Header() {
         </a>
         <a
           className="nav-link"
-          href="/admin"
-          aria-current={path === "/admin" || path.startsWith("/admin/salas/") ? "page" : undefined}
+          href="/admin/salas"
+          aria-current={
+            path === "/admin/salas" || path.startsWith("/admin/salas/") ? "page" : undefined
+          }
         >
           Salas
         </a>
-        <a
-          className="nav-link"
-          href="/admin/membros"
-          aria-current={path === "/admin/membros" ? "page" : undefined}
-        >
-          Membros
-        </a>
+        {auth.status === "authenticated" && auth.user.role === "admin" ? (
+          <a
+            className="nav-link"
+            href="/admin"
+            aria-current={
+              path === "/admin" || path === "/admin/codigos" || path === "/admin/membros"
+                ? "page"
+                : undefined
+            }
+          >
+            Admin
+          </a>
+        ) : null}
       </nav>
       <div className="account">
         <ThemeToggle />

@@ -86,7 +86,7 @@ describe("multi-office IPB board elections", () => {
         quorumValue: 3,
         quorumUnit: "absolute",
         status: "open",
-        candidates: ["Ana", "Bia", "Caio"],
+        candidates: ["Ana", "Bia", "Caio", "Davi"],
       },
     });
     expect(created.statusCode).toBe(201);
@@ -160,17 +160,32 @@ describe("multi-office IPB board elections", () => {
     expect(r4.json().round.officeLabel).toBe("Vice-Presidente");
     expect(r4.json().round.officeRoundNumber).toBe(1);
     const viceCandidates = r4.json().candidates as { id: string }[];
-    expect(viceCandidates).toHaveLength(2);
+    expect(viceCandidates).toHaveLength(3);
     expect(viceCandidates.some((c) => c.id === winnerCandidateId)).toBe(false);
 
-    // Restarting Vice-Presidente does not wipe Presidente's elected round
+    // Close Vice-Presidente round 1 with no majority, open round 2, then restart -> resets to round 1 of Vice-Presidente without wiping Presidente
+    await castAll(app, room.inviteToken, [
+      [keys[0]!, viceCandidates[0]!.id],
+      [keys[1]!, viceCandidates[1]!.id],
+      [keys[2]!, viceCandidates[2]!.id],
+    ]);
+    const closeR4 = await closeRound(app, room.id, r4.json().round.id, adminCookie);
+    expect(closeR4.statusCode).toBe(200);
+    expect(closeR4.json().round.outcome).toBe("no_majority");
+
+    const r5 = await openRound(app, room.id, adminCookie);
+    expect(r5.statusCode).toBe(201);
+    expect(r5.json().round.officeLabel).toBe("Vice-Presidente");
+    expect(r5.json().round.officeRoundNumber).toBe(2);
+
     const restart = await app.inject({
       method: "POST",
-      url: `/v1/admin/rooms/${room.id}/rounds/${r4.json().round.id}/restart`,
+      url: `/v1/admin/rooms/${room.id}/rounds/${r5.json().round.id}/restart`,
       headers: { cookie: adminCookie },
     });
     expect(restart.statusCode).toBe(200);
     expect(restart.json().round.officeLabel).toBe("Vice-Presidente");
+    expect(restart.json().round.officeRoundNumber).toBe(1);
 
     const detail = await app.inject({
       method: "GET",
@@ -296,6 +311,74 @@ describe("multi-office IPB board elections", () => {
     const extra = await openRound(app, room.id, adminCookie);
     expect(extra.statusCode).toBe(409);
     expect(extra.json()).toEqual({ error: "all_offices_elected" });
+
+    await app.close();
+  });
+
+  it("restarts the current office from 0 without the declining winner while keeping them eligible for other offices", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Diretoria UPA — Recusa",
+        roomType: "upa_board",
+        rulesPreset: "ipb_society_board",
+        quorumValue: 1,
+        quorumUnit: "absolute",
+        status: "open",
+        candidates: ["Kamila", "Ana", "Bia"],
+      },
+    });
+    expect(createRes.statusCode).toBe(201);
+    const room = createRes.json().room as {
+      id: string;
+      inviteToken: string;
+      candidates: { id: string; displayName: string }[];
+    };
+    const kamila = room.candidates.find((c) => c.displayName === "Kamila")!;
+    const ana = room.candidates.find((c) => c.displayName === "Ana")!;
+
+    await joinSimulated(app, room.id, room.inviteToken, adminCookie, 1);
+
+    // 1. Presidente -> Kamila wins, then declines
+    const rPres1 = await openRound(app, room.id, adminCookie);
+    expect(rPres1.statusCode).toBe(201);
+    expect(rPres1.json().round.officeLabel).toBe("Presidente");
+    await castAll(app, room.inviteToken, [["join-key-office-0001", kamila.id]]);
+    await closeRound(app, room.id, rPres1.json().round.id, adminCookie);
+
+    const declineRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/rounds/${rPres1.json().round.id}/decline`,
+      headers: { cookie: adminCookie },
+    });
+    expect(declineRes.statusCode).toBe(200);
+    expect(declineRes.json().round.outcome).toBe("declined");
+    expect(declineRes.json().declinedCandidateId).toBe(kamila.id);
+
+    // 2. Presidente restarts from 0 (officeRoundNumber === 1) without Kamila
+    const rPres2 = await openRound(app, room.id, adminCookie);
+    expect(rPres2.statusCode).toBe(201);
+    expect(rPres2.json().round.officeLabel).toBe("Presidente");
+    expect(rPres2.json().round.officeRoundNumber).toBe(1);
+    const rPres2Ids = (rPres2.json().candidates as { id: string }[]).map((c) => c.id);
+    expect(rPres2Ids).not.toContain(kamila.id);
+    expect(rPres2Ids).toContain(ana.id);
+
+    // Ana wins Presidente
+    await castAll(app, room.inviteToken, [["join-key-office-0001", ana.id]]);
+    await closeRound(app, room.id, rPres2.json().round.id, adminCookie);
+
+    // 3. Vice-Presidente includes Kamila again, excludes Ana
+    const rVp = await openRound(app, room.id, adminCookie);
+    expect(rVp.statusCode).toBe(201);
+    expect(rVp.json().round.officeLabel).toBe("Vice-Presidente");
+    const rVpIds = (rVp.json().candidates as { id: string }[]).map((c) => c.id);
+    expect(rVpIds).toContain(kamila.id);
+    expect(rVpIds).not.toContain(ana.id);
 
     await app.close();
   });
