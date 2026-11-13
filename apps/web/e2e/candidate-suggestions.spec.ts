@@ -73,6 +73,20 @@ test("admin imports members via CSV file on /admin/membros, sees room-type candi
 
   const item = page.getByRole("listitem").filter({ hasText: title });
   await expect(item).toBeVisible();
+
+  const href = await page.getByRole("link", { name: /\/join\// }).getAttribute("href");
+  if (!href) {
+    throw new Error("Missing invite link");
+  }
+  const visitor = await page.context().newPage();
+  await visitor.goto(href);
+  await visitor.getByLabel("Seu nome").fill("Ana");
+  await visitor.getByRole("button", { name: "Entrar na sala" }).click();
+  await expect(visitor.getByRole("heading", { name: "Você entrou" })).toBeVisible();
+  await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeEnabled({
+    timeout: 10_000,
+  });
+
   await item.getByRole("button", { name: "Abrir escrutínio" }).click();
   await expect(
     item.getByText("1º escrutínio — Candidatos: Paulo Apóstolo, Silas Companheiro"),

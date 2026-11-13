@@ -20,7 +20,7 @@ import {
   type RoundResult,
   type RulesPreset,
 } from "@scelta/domain";
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, ne } from "drizzle-orm";
 import { findChurchByName, getOrCreateChurch, isUniqueViolation } from "../churches/church-store.js";
 import { createBallotToken } from "./ballot-token.js";
 import { createInviteToken } from "./invite-token.js";
@@ -343,12 +343,22 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           return null;
         }
 
-        await tx.delete(ballots).where(eq(ballots.roundId, roundId));
-        await tx.delete(voteReceipts).where(eq(voteReceipts.roundId, roundId));
+        const roomRoundRows = await tx
+          .select({ id: rounds.id })
+          .from(rounds)
+          .where(eq(rounds.roomId, roomId));
+        const roomRoundIds = roomRoundRows.map((item) => item.id);
+        if (roomRoundIds.length > 0) {
+          await tx.delete(ballots).where(inArray(ballots.roundId, roomRoundIds));
+          await tx.delete(voteReceipts).where(inArray(voteReceipts.roundId, roomRoundIds));
+        }
+        await tx.delete(rounds).where(and(eq(rounds.roomId, roomId), ne(rounds.id, roundId)));
+        await tx.update(candidates).set({ isEligible: true }).where(eq(candidates.roomId, roomId));
 
         const updated = await tx
           .update(rounds)
           .set({
+            number: 1,
             status: "open",
             outcome: null,
             closedAt: null,

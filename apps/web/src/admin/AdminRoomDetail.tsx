@@ -409,7 +409,12 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                 ) : null}
                 <button
                   type="button"
-                  disabled={isBusy}
+                  disabled={isBusy || (!openRoundId && !room.presence.quorumMet)}
+                  title={
+                    !openRoundId && !room.presence.quorumMet
+                      ? "Quórum mínimo não atingido para abrir o escrutínio."
+                      : undefined
+                  }
                   onClick={() =>
                     openRoundId ? void handleCloseRound(openRoundId) : void handleOpenRound()
                   }

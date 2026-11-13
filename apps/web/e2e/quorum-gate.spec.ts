@@ -3,25 +3,40 @@ import { expect, type Page, test } from "@playwright/test";
 const adminEmail = "e2e-admin@scelta.test";
 const adminPassword = "e2e-admin-password";
 
-test("admin sees presence against quorum and a failed close", async ({ page }) => {
+test("admin sees presence against quorum and cannot open round until quorum is met", async ({ page, browser }) => {
   const title = `Assembleia abaixo ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   await loginAsAdmin(page);
   await page.getByLabel("Título").fill(title);
   await page.getByLabel("Candidatos").fill("Paulo, Silas");
-  await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("3");
+  await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("2");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
   const item = page.getByRole("listitem").filter({ hasText: title });
   await expect(item).toBeVisible();
-  await expect(item.getByText("0 / 3", { exact: true })).toBeVisible();
+  await expect(item.getByText("0 / 2", { exact: true })).toBeVisible();
   await expect(item.getByText("Abaixo do quórum", { exact: true })).toBeVisible();
+  await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeDisabled();
 
-  await item.getByRole("button", { name: "Abrir escrutínio" }).click();
-  await item.getByRole("button", { name: "Encerrar escrutínio" }).click();
-  await expect(item.getByRole("status")).toContainText("Quórum não atingido");
-  await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeVisible();
+  const href = await page.getByRole("link", { name: /\/join\// }).getAttribute("href");
+  if (!href) {
+    throw new Error("Missing invite link");
+  }
+
+  for (const name of ["Ana", "Bia"]) {
+    const context = await browser.newContext();
+    const visitor = await context.newPage();
+    await visitor.goto(href);
+    await visitor.getByLabel("Seu nome").fill(name);
+    await visitor.getByRole("button", { name: "Entrar na sala" }).click();
+    await expect(visitor.getByRole("heading", { name: "Você entrou" })).toBeVisible();
+    await context.close();
+  }
+
+  await expect(item.getByText("2 / 2", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(item.getByText("Quórum atingido", { exact: true })).toBeVisible();
+  await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeEnabled();
 });
 
 test("admin sees quorum met when required presence joins and closes without failure", async ({

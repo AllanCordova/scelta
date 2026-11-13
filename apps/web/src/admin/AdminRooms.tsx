@@ -731,7 +731,12 @@ function RoomRow({
             <button
               type="button"
               className="ghost round-action"
-              disabled={isBusy}
+              disabled={isBusy || (!openRoundId && !presence?.quorumMet)}
+              title={
+                !openRoundId && !presence?.quorumMet
+                  ? "Quórum mínimo não atingido para abrir o escrutínio."
+                  : undefined
+              }
               onClick={() => (openRoundId ? onClose(openRoundId) : onOpen())}
             >
               {openRoundId ? CLOSE_ROUND_LABEL : OPEN_ROUND_LABEL}

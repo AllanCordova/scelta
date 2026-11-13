@@ -139,6 +139,8 @@ export function roundErrorMessage(errorCode: string): string {
       return "Não encontrei essa sala ou escrutínio.";
     case "room_not_open":
       return "Abra a sala antes do escrutínio.";
+    case "quorum_not_met":
+      return "Quórum mínimo não atingido para abrir o escrutínio.";
     case "round_already_open":
       return "Já existe um escrutínio aberto.";
     case "round_not_open":
