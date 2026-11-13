@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 import { apiUrl } from "../api-url";
 import { showsPresence } from "./copy";
-import { readPresenceEvent } from "./presence-event";
+import { readPresenceEvent, type QuorumPresence } from "./presence-event";
 import { connectPresenceSocket } from "./presence-socket";
 import { fetchPresence } from "./rooms-api";
 import type { RoomStatus } from "./types";
 
 const PRESENCE_POLL_MS = 2000;
 
-export function useRoomPresence(rooms: { id: string; status: RoomStatus }[]): Record<string, number> {
-  const [counts, setCounts] = useState<Record<string, number>>({});
+export function useRoomPresence(
+  rooms: { id: string; status: RoomStatus }[],
+): Record<string, QuorumPresence> {
+  const [counts, setCounts] = useState<Record<string, QuorumPresence>>({});
   const openRoomKey = rooms
     .filter((room) => showsPresence(room.status))
     .map((room) => room.id)
@@ -50,7 +52,8 @@ export function useRoomPresence(rooms: { id: string; status: RoomStatus }[]): Re
         return;
       }
       epoch += 1;
-      setCounts((current) => ({ ...current, [update.roomId]: update.presentCount }));
+      const { roomId, ...presence } = update;
+      setCounts((current) => ({ ...current, [roomId]: presence }));
     });
 
     return () => {
@@ -64,7 +67,7 @@ export function useRoomPresence(rooms: { id: string; status: RoomStatus }[]): Re
   return counts;
 }
 
-async function loadPresence(roomIds: string[]): Promise<Record<string, number>> {
+async function loadPresence(roomIds: string[]): Promise<Record<string, QuorumPresence>> {
   const entries = await Promise.all(
     roomIds.map(async (roomId) => {
       try {
@@ -75,7 +78,7 @@ async function loadPresence(roomIds: string[]): Promise<Record<string, number>> 
     }),
   );
 
-  const counts: Record<string, number> = {};
+  const counts: Record<string, QuorumPresence> = {};
   for (const entry of entries) {
     if (entry) {
       counts[entry[0]] = entry[1];

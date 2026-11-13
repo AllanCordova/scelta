@@ -19,7 +19,9 @@ export type RoomSummary = {
   rulesPreset: RulesPreset;
   quorumValue: number;
   quorumUnit: QuorumUnit;
+  eligibleCount: number;
   status: RoomStatus;
+  round: RoomRound | null;
   inviteToken: string;
   invitePath: string;
   majorityRule: string;
@@ -29,7 +31,24 @@ export type RoomSummary = {
 
 export type FieldErrorCode = "required" | "invalid" | "out_of_range" | "incomplete";
 
+export type RoundResult = "failed_quorum" | "no_majority" | "elected";
+export type RoundStatus = "pending" | "open" | "closed" | "restarted";
+
+export type RoomRound = {
+  id: string;
+  number: number;
+  status: RoundStatus;
+  outcome: RoundResult | null;
+};
+
 export type FieldError = {
-  field: "title" | "roomType" | "rulesPreset" | "quorumValue" | "quorumUnit" | "status";
+  field:
+    | "title"
+    | "roomType"
+    | "rulesPreset"
+    | "quorumValue"
+    | "quorumUnit"
+    | "eligibleCount"
+    | "status";
   code: FieldErrorCode;
 };

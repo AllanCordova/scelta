@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findPreset, validateCreateRoom } from "./room.js";
+import { canOpenRound, findPreset, validateCreateRoom } from "./room.js";
 
 describe("validateCreateRoom", () => {
   it("pre-fills quorum, majority, and round behavior from the local officers preset", () => {
@@ -17,6 +17,7 @@ describe("validateCreateRoom", () => {
         rulesPreset: "ipb_local_officers",
         quorumValue: 34,
         quorumUnit: "percent",
+        eligibleCount: 0,
         status: "draft",
         majorityRule: "absolute_majority",
         roundBehavior: findPreset("ipb_local_officers").roundBehavior,
@@ -145,6 +146,74 @@ describe("validateCreateRoom", () => {
       rulesPreset: "ipb_local_officers",
     });
     expect(longTitle.ok).toBe(false);
+  });
+
+  it("stores an eligible count only when the admin sends one", () => {
+    const omitted = validateCreateRoom({
+      title: "Assembleia",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+    });
+    expect(omitted.ok && omitted.value.eligibleCount).toBe(0);
+
+    const set = validateCreateRoom({
+      title: "Assembleia",
+      roomType: "elder",
+      rulesPreset: "ipb_society_board",
+      eligibleCount: 80,
+    });
+    expect(set.ok && set.value.eligibleCount).toBe(80);
+    if (set.ok) {
+      expect(set.value.quorumUnit).toBe("percent");
+    }
+  });
+
+  it("rejects an eligible count outside 0–100000", () => {
+    const negative = validateCreateRoom({
+      title: "Assembleia",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      eligibleCount: -1,
+    });
+    expect(negative.ok).toBe(false);
+    if (!negative.ok) {
+      expect(negative.errors).toEqual([{ field: "eligibleCount", code: "out_of_range" }]);
+    }
+
+    const fractional = validateCreateRoom({
+      title: "Assembleia",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      eligibleCount: 1.5,
+    });
+    expect(fractional.ok).toBe(false);
+
+    const maxAllowed = validateCreateRoom({
+      title: "Assembleia",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      eligibleCount: 100_000,
+    });
+    expect(maxAllowed.ok && maxAllowed.value.eligibleCount).toBe(100_000);
+
+    const aboveMax = validateCreateRoom({
+      title: "Assembleia",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      eligibleCount: 100_001,
+    });
+    expect(aboveMax).toEqual({
+      ok: false,
+      errors: [{ field: "eligibleCount", code: "out_of_range" }],
+    });
+  });
+
+  it("allows a round only in an open or voting room", () => {
+    expect(canOpenRound("open")).toBe(true);
+    expect(canOpenRound("voting")).toBe(true);
+    expect(canOpenRound("draft")).toBe(false);
+    expect(canOpenRound("closed")).toBe(false);
+    expect(canOpenRound("cancelled")).toBe(false);
   });
 
   it("rejects a blank title", () => {

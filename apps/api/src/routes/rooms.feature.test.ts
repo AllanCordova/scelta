@@ -77,6 +77,7 @@ describe("admin rooms", () => {
       rulesPreset: "ipb_local_officers",
       quorumValue: 34,
       quorumUnit: "percent",
+      eligibleCount: 0,
       status: "draft",
       majorityRule: "absolute_majority",
     });
@@ -98,6 +99,8 @@ describe("admin rooms", () => {
         status: "draft",
         quorumValue: 34,
         quorumUnit: "percent",
+        eligibleCount: 0,
+        round: null,
       }),
     ]);
     expect(listed.json().rooms[0]).not.toHaveProperty("inviteToken");
@@ -119,6 +122,7 @@ describe("admin rooms", () => {
         rulesPreset: "ipb_society_board",
         quorumValue: 40,
         quorumUnit: "absolute",
+        eligibleCount: 12,
         status: "open",
       },
     });
@@ -127,6 +131,7 @@ describe("admin rooms", () => {
     expect(created.json().room).toMatchObject({
       quorumValue: 40,
       quorumUnit: "absolute",
+      eligibleCount: 12,
       status: "open",
       rulesPreset: "ipb_society_board",
     });
@@ -267,6 +272,21 @@ describe("admin rooms", () => {
         },
         async countPresent() {
           return 0;
+        },
+        async openRound() {
+          throw new Error("not implemented");
+        },
+        async closeRound() {
+          return null;
+        },
+        async findRound() {
+          return null;
+        },
+        async latestRounds() {
+          return [];
+        },
+        async latestClosedRound() {
+          return null;
         },
       },
     });

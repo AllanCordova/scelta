@@ -1,16 +1,18 @@
 import type { Server as HttpServer } from "node:http";
+import type { QuorumStatus } from "@scelta/domain";
 import { Server } from "socket.io";
 
 const ROOM_CHANNEL_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export type PresenceSnapshot = QuorumStatus;
+
 export type PresencePublisher = {
-  publishPresence(roomId: string, presentCount: number): void;
+  publishPresence(roomId: string, presence: PresenceSnapshot): void;
 };
 
-export type PresenceUpdate = {
+export type PresenceUpdate = PresenceSnapshot & {
   roomId: string;
-  presentCount: number;
 };
 
 export function isRoomChannelId(value: string): boolean {
@@ -19,8 +21,8 @@ export function isRoomChannelId(value: string): boolean {
 
 export function createSocketPresencePublisher(io: Server): PresencePublisher {
   return {
-    publishPresence(roomId, presentCount) {
-      const update: PresenceUpdate = { roomId, presentCount };
+    publishPresence(roomId, presence) {
+      const update: PresenceUpdate = { roomId, ...presence };
       io.to(`room:${roomId}`).emit("presence", update);
     },
   };

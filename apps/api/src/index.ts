@@ -29,8 +29,8 @@ async function main() {
 
   const presenceSink: { current?: PresencePublisher } = {};
   const presencePublisher: PresencePublisher = {
-    publishPresence(roomId, presentCount) {
-      presenceSink.current?.publishPresence(roomId, presentCount);
+    publishPresence(roomId, presence) {
+      presenceSink.current?.publishPresence(roomId, presence);
     },
   };
   const app = await buildApp({ roomRepository, userRepository, presencePublisher });

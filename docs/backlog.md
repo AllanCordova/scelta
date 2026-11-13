@@ -76,16 +76,16 @@
 
 ### B1.3 — Quorum gate
 
-**Status:** `todo`  
-**Description:** Voting results (and optionally opening the ballot) respect the configured minimum presence.
+**Status:** `done`  
+**Description:** Voting results respect the configured minimum presence. Opening a round does not require quorum. Closing below the required presence sets outcome `failed_quorum` and does not elect a winner. Publishing is rejected until a later closed round has outcome `elected` (or the room is reconfigured and a new round meets quorum). Percent quorum with `eligible_count` 0 cannot be met. Absolute quorum uses `quorum_value` only.
 
 **Acceptance criteria:**
 
-- [ ] System shows current presence vs required quorum
-- [ ] Closing a round below quorum marks outcome as `failed_quorum` (or blocks close — policy documented)
-- [ ] Admin cannot publish a “winner” when quorum was not met
-- [ ] Unit tests for quorum math (absolute and percent)
-- [ ] Feature tests for below/above quorum outcomes
+- [x] System shows current presence vs required quorum
+- [x] Closing a round below quorum marks outcome as `failed_quorum` (or blocks close — policy documented)
+- [x] Admin cannot publish a “winner” when quorum was not met
+- [x] Unit tests for quorum math (absolute and percent)
+- [x] Feature tests for below/above quorum outcomes
 
 ### B1.4 — Anonymous single ballot + automatic tally
 

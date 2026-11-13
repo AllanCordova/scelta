@@ -12,15 +12,26 @@ describe("isRoomChannelId", () => {
 });
 
 describe("createSocketPresencePublisher", () => {
-  it("emits the present count to that room channel", () => {
+  it("emits presence against the required quorum on that room channel", () => {
     const emit = vi.fn();
     const to = vi.fn(() => ({ emit }));
     const publisher = createSocketPresencePublisher({ to } as unknown as Server);
     const roomId = "11111111-1111-4111-8111-111111111111";
 
-    publisher.publishPresence(roomId, 2);
+    publisher.publishPresence(roomId, {
+      presentCount: 2,
+      eligibleCount: 10,
+      requiredCount: 4,
+      quorumMet: false,
+    });
 
     expect(to).toHaveBeenCalledWith(`room:${roomId}`);
-    expect(emit).toHaveBeenCalledWith("presence", { roomId, presentCount: 2 });
+    expect(emit).toHaveBeenCalledWith("presence", {
+      roomId,
+      presentCount: 2,
+      eligibleCount: 10,
+      requiredCount: 4,
+      quorumMet: false,
+    });
   });
 });

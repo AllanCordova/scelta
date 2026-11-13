@@ -48,9 +48,18 @@ export function showsPresence(status: RoomStatus): boolean {
   return status === "open" || status === "voting";
 }
 
-export function presenceLabel(count: number): string {
-  return count === 1 ? "1 presente" : `${count} presentes`;
+export function quorumLabel(presentCount: number, requiredCount: number): string {
+  return `${presentCount} / ${requiredCount}`;
 }
+
+export function quorumStateLabel(quorumMet: boolean): string {
+  return quorumMet ? "Quórum atingido" : "Abaixo do quórum";
+}
+
+export const OPEN_ROUND_LABEL = "Abrir escrutínio";
+export const CLOSE_ROUND_LABEL = "Encerrar escrutínio";
+export const FAILED_QUORUM_MESSAGE =
+  "Quórum não atingido. O escrutínio foi encerrado sem eleger ninguém.";
 
 const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   title: "Informe um título.",
@@ -58,6 +67,7 @@ const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   rulesPreset: "Escolha o conjunto de regras.",
   quorumValue: "Quórum inválido.",
   quorumUnit: "Informe a unidade do quórum.",
+  eligibleCount: "Número de aptos inválido.",
   status: "Situação inválida.",
 };
 
@@ -79,4 +89,26 @@ export function roomErrorMessage(errorCode: string, field?: FieldError["field"])
   }
 
   return "Não foi possível criar a sala.";
+}
+
+export function roundErrorMessage(errorCode: string): string {
+  switch (errorCode) {
+    case "unauthorized":
+      return "Sua sessão expirou. Entre de novo.";
+    case "forbidden":
+      return "Esta área é só para administradores.";
+    case "persistence_unavailable":
+      return "A API está sem banco de dados.";
+    case "room_not_found":
+    case "round_not_found":
+      return "Não encontrei essa sala ou escrutínio.";
+    case "room_not_open":
+      return "Abra a sala antes do escrutínio.";
+    case "round_already_open":
+      return "Já existe um escrutínio aberto.";
+    case "round_not_open":
+      return "Esse escrutínio não está aberto.";
+    default:
+      return "Não foi possível atualizar o escrutínio.";
+  }
 }

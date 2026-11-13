@@ -1,8 +1,14 @@
 export {
+  canPublishWinner,
+  closeRoundOutcome,
+  evaluateQuorum,
   hasReachedQuorum,
   resolveQuorumRequired,
+  ROUND_RESULTS,
   type QuorumInput,
+  type QuorumStatus,
   type QuorumUnit,
+  type RoundResult,
 } from "./quorum.js";
 export {
   hasAbsoluteMajority,
@@ -17,6 +23,7 @@ export {
   type NextRoundPlan,
 } from "./rounds.js";
 export {
+  canOpenRound,
   CREATE_ROOM_STATUSES,
   PRESET_DEFINITIONS,
   ROOM_STATUSES,

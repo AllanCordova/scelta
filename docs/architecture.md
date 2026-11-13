@@ -123,6 +123,7 @@ sequenceDiagram
 | 2026-11-12 | Admin routes use a server-side bearer token (`ADMIN_TOKEN`) until an auth provider is chosen | Fail closed on room create/list; voters do not receive this token | Superseded |
 | 2026-11-12 | Admin access is a user role (`admin` or `member`) with an httpOnly session cookie. Invite and ballot routes stay anonymous | A shared bearer token cannot tell admins from members, and a login must not be required to cast an anonymous vote. Passwords are scrypt hashes. OIDC can replace the password check later without changing the role model | Accepted |
 | 2026-11-13 | QR join identity is a display name plus a client join key. The server stores the SHA-256 only. Draft, closed, and cancelled rooms reject the invite; open and voting accept it. Presence is pushed on Socket.io and polled by the admin | Member import does not exist yet, and the same browser must not count twice toward quorum | Accepted |
+| 2026-11-13 | Closing a round below the required presence records `failed_quorum` and does not elect a winner. Publish is rejected until a closed round outcome is `elected`. Percent quorum with `eligible_count` 0 cannot be met. Absolute quorum uses `quorum_value` only | A silent winner below quorum would mis-state the assembly. An empty eligible list must not look like a met percent | Accepted |
 
 ## Open questions
 

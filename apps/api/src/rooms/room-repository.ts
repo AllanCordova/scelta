@@ -3,6 +3,7 @@ import type {
   QuorumUnit,
   RoomStatus,
   RoomType,
+  RoundResult,
   RulesPreset,
 } from "@scelta/domain";
 
@@ -13,6 +14,7 @@ export type StoredRoom = {
   rulesPreset: RulesPreset;
   quorumValue: number;
   quorumUnit: QuorumUnit;
+  eligibleCount: number;
   inviteToken: string;
   status: RoomStatus;
   createdAt: Date;
@@ -24,8 +26,25 @@ export type NewRoom = {
   rulesPreset: RulesPreset;
   quorumValue: number;
   quorumUnit: QuorumUnit;
+  eligibleCount: number;
   status: CreateRoomStatus;
 };
+
+export type StoredRoundStatus = "pending" | "open" | "closed" | "restarted";
+
+export type StoredRound = {
+  id: string;
+  roomId: string;
+  number: number;
+  status: StoredRoundStatus;
+  outcome: RoundResult | null;
+  openedAt: Date | null;
+  closedAt: Date | null;
+};
+
+export type OpenRoundResult =
+  | { ok: true; round: StoredRound }
+  | { ok: false; reason: "round_already_open" };
 
 export type JoinedParticipant = {
   id: string;
@@ -41,4 +60,13 @@ export type RoomRepository = {
   findRoomById(roomId: string): Promise<StoredRoom | null>;
   joinRoom(roomId: string, displayName: string, joinKeyHash: string): Promise<JoinedParticipant>;
   countPresent(roomId: string): Promise<number>;
+  openRound(roomId: string): Promise<OpenRoundResult>;
+  closeRound(
+    roomId: string,
+    roundId: string,
+    outcome: RoundResult | null,
+  ): Promise<StoredRound | null>;
+  findRound(roomId: string, roundId: string): Promise<StoredRound | null>;
+  latestRounds(roomIds: string[]): Promise<StoredRound[]>;
+  latestClosedRound(roomId: string): Promise<StoredRound | null>;
 };
