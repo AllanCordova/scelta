@@ -58,6 +58,7 @@ erDiagram
         string rules_preset
         int quorum_value
         string quorum_unit
+        int eligible_count
         string invite_token
         string status
     }
@@ -76,6 +77,7 @@ erDiagram
         int number
         string office_label
         string status
+        string outcome
         datetime opened_at
         datetime closed_at
     }
@@ -153,7 +155,8 @@ A single election session created by an admin (QR join target).
 | --- | --- |
 | `room_type` | `pastor`, `elder`, `deacon`, `upa_board`, or `custom` |
 | `rules_preset` | `ipb_local_officers`, `ipb_society_board`, or `custom`. Majority and round behavior are derived from the preset, not stored as separate columns |
-| `quorum_value` + `quorum_unit` | Absolute count or percent of eligible list |
+| `quorum_value` + `quorum_unit` | Absolute count, or percent of `eligible_count` |
+| `eligible_count` | Denominator for a percent quorum. Stays 0 until the admin sets it. Absolute quorum ignores it. A percent quorum with 0 cannot be met |
 | `invite_token` | Unguessable, unique capability behind the QR / short link (`/join/{token}`) |
 | `status` | `draft` · `open` · `voting` · `closed` · `cancelled` |
 
@@ -174,6 +177,8 @@ Invites do not expire by time yet. An unknown token is rejected. Draft, closed, 
 ### Round
 
 One ballot open period (1st, 2nd, 3rd/runoff). Society elections may also be **office-by-office** (`office_label`).
+
+`outcome` is null while the round is open, and null after a close that met quorum but has not been tallied yet. Otherwise it is `failed_quorum`, `no_majority`, or `elected`. Closing below the required presence writes `failed_quorum`. At most one round per room is `open`.
 
 ### Candidate
 
@@ -199,7 +204,7 @@ Admin actions: create room, change quorum, start/restart round, force close, etc
 
 1. **Unlinkability:** no foreign key from `Ballot` → `Participant` (or equivalent cryptographic unlinkability).
 2. **Uniqueness:** at most one `VoteReceipt` per `(participant, round)`.
-3. **Quorum gate:** published results require presence count ≥ configured quorum at the agreed checkpoint.
+3. **Quorum gate:** closing a round compares current presence with the required quorum. Below quorum, `rounds.outcome` is `failed_quorum` and no winner is stored. Publishing a winner requires the latest closed round outcome to be `elected`. A percent quorum with `eligible_count = 0` is never met.
 4. **Eligibility:** only eligible participants may receive a receipt; only eligible candidates appear on the ballot for that room type.
 5. **Restart:** clearing ballots/receipts for a round must write an `AuditEvent`.
 6. **Presence identity:** at most one participant per `(room, join_key_hash)`. The raw join key is never stored.

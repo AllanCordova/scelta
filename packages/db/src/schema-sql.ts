@@ -82,12 +82,15 @@ CREATE TABLE IF NOT EXISTS rooms (
   rules_preset rules_preset NOT NULL DEFAULT 'custom',
   quorum_value integer NOT NULL,
   quorum_unit quorum_unit NOT NULL DEFAULT 'absolute',
+  eligible_count integer NOT NULL DEFAULT 0,
   invite_token text NOT NULL,
   status room_status NOT NULL DEFAULT 'draft',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS rooms_invite_token_uidx ON rooms (invite_token);
+
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS eligible_count integer NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS participants (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -113,9 +116,23 @@ CREATE TABLE IF NOT EXISTS rounds (
   number integer NOT NULL,
   office_label text,
   status round_status NOT NULL DEFAULT 'pending',
+  outcome text,
   opened_at timestamptz,
   closed_at timestamptz
 );
+
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS outcome text;
+
+-- At most one open round per room, and round numbers do not collide.
+CREATE UNIQUE INDEX IF NOT EXISTS rounds_room_number_uidx ON rounds (room_id, number);
+CREATE UNIQUE INDEX IF NOT EXISTS rounds_one_open_uidx ON rounds (room_id) WHERE status = 'open';
+
+DO $$ BEGIN
+  ALTER TABLE rounds ADD CONSTRAINT rounds_outcome_check
+    CHECK (outcome IS NULL OR outcome IN ('failed_quorum', 'no_majority', 'elected'));
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS candidates (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -61,13 +61,19 @@ describe("join room", () => {
   });
 
   it("joins an open room, dedups the same key, and publishes the present count", async () => {
-    const events: { roomId: string; presentCount: number }[] = [];
+    const events: {
+      roomId: string;
+      presentCount: number;
+      eligibleCount: number;
+      requiredCount: number;
+      quorumMet: boolean;
+    }[] = [];
     const app = await buildApp({
       roomRepository: repository,
       userRepository,
       presencePublisher: {
-        publishPresence(roomId, presentCount) {
-          events.push({ roomId, presentCount });
+        publishPresence(roomId, presence) {
+          events.push({ roomId, ...presence });
         },
       },
     });
@@ -111,7 +117,12 @@ describe("join room", () => {
       headers: { cookie: adminCookie },
     });
     expect(presence.statusCode).toBe(200);
-    expect(presence.json()).toEqual({ presentCount: 2 });
+    expect(presence.json()).toEqual({
+      presentCount: 2,
+      eligibleCount: 0,
+      requiredCount: 0,
+      quorumMet: false,
+    });
 
     const stored = await db.select().from(participants);
     expect(stored).toHaveLength(2);
@@ -119,11 +130,14 @@ describe("join room", () => {
       [hashJoinKey(anaKey), hashJoinKey(biaKey)].sort(),
     );
     expect(stored.every((row) => row.isPresent)).toBe(true);
-    expect(events).toEqual([
-      { roomId: room.id, presentCount: 1 },
-      { roomId: room.id, presentCount: 1 },
-      { roomId: room.id, presentCount: 2 },
-    ]);
+    const unmet = (presentCount: number) => ({
+      roomId: room.id,
+      presentCount,
+      eligibleCount: 0,
+      requiredCount: 0,
+      quorumMet: false,
+    });
+    expect(events).toEqual([unmet(1), unmet(1), unmet(2)]);
 
     await app.close();
   });
@@ -143,7 +157,12 @@ describe("join room", () => {
       url: `/v1/admin/rooms/${room.id}/presence`,
       headers: { cookie: adminCookie },
     });
-    expect(absent.json()).toEqual({ presentCount: 0 });
+    expect(absent.json()).toEqual({
+      presentCount: 0,
+      eligibleCount: 0,
+      requiredCount: 0,
+      quorumMet: false,
+    });
 
     const restored = await join(app, room.inviteToken, "Ana", anaKey);
     expect(restored.statusCode).toBe(200);
@@ -227,6 +246,21 @@ describe("join room", () => {
         },
         async countPresent() {
           return 0;
+        },
+        async openRound() {
+          throw new Error("not implemented");
+        },
+        async closeRound() {
+          return null;
+        },
+        async findRound() {
+          return null;
+        },
+        async latestRounds() {
+          return [];
+        },
+        async latestClosedRound() {
+          return null;
         },
       },
     });

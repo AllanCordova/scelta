@@ -1,8 +1,9 @@
 import { canJoinRoom, validateJoinIdentity } from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
-import type { PresencePublisher } from "../realtime.js";
+import type { PresencePublisher, PresenceSnapshot } from "../realtime.js";
 import { hashJoinKey } from "../rooms/join-key.js";
+import { quorumStatus } from "../rooms/quorum-status.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
 
 const TokenParams = Type.Object({
@@ -88,7 +89,12 @@ export const joinRoutes: FastifyPluginAsync<JoinRouteOptions> = async (app, opti
           hashJoinKey(validated.value.joinKey),
         );
         const presentCount = await repository.countPresent(room.id);
-        publishPresence(options.presencePublisher, request, room.id, presentCount);
+        publishPresence(
+          options.presencePublisher,
+          request,
+          room.id,
+          quorumStatus(room, presentCount),
+        );
 
         return {
           title: room.title,
@@ -109,14 +115,14 @@ function publishPresence(
   publisher: PresencePublisher | undefined,
   request: FastifyRequest,
   roomId: string,
-  presentCount: number,
+  presence: PresenceSnapshot,
 ) {
   if (!publisher) {
     return;
   }
 
   try {
-    publisher.publishPresence(roomId, presentCount);
+    publisher.publishPresence(roomId, presence);
   } catch (error) {
     request.log.error({ err: error, roomId }, "Failed to publish presence");
   }

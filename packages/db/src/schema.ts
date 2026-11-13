@@ -96,6 +96,8 @@ export const rooms = pgTable(
     rulesPreset: rulesPresetEnum("rules_preset").notNull().default("custom"),
     quorumValue: integer("quorum_value").notNull(),
     quorumUnit: quorumUnitEnum("quorum_unit").notNull().default("absolute"),
+    /** Denominator for percent quorum. Zero cannot meet a percent rule. */
+    eligibleCount: integer("eligible_count").notNull().default(0),
     inviteToken: text("invite_token").notNull(),
     status: roomStatusEnum("status").notNull().default("draft"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -123,17 +125,23 @@ export const participants = pgTable(
   ],
 );
 
-export const rounds = pgTable("rounds", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  roomId: uuid("room_id")
-    .notNull()
-    .references(() => rooms.id),
-  number: integer("number").notNull(),
-  officeLabel: text("office_label"),
-  status: roundStatusEnum("status").notNull().default("pending"),
-  openedAt: timestamp("opened_at", { withTimezone: true }),
-  closedAt: timestamp("closed_at", { withTimezone: true }),
-});
+export const rounds = pgTable(
+  "rounds",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id),
+    number: integer("number").notNull(),
+    officeLabel: text("office_label"),
+    status: roundStatusEnum("status").notNull().default("pending"),
+    /** null while open or waiting for the tally; otherwise a round result. */
+    outcome: text("outcome"),
+    openedAt: timestamp("opened_at", { withTimezone: true }),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+  },
+  (table) => [uniqueIndex("rounds_room_number_uidx").on(table.roomId, table.number)],
+);
 
 export const candidates = pgTable("candidates", {
   id: uuid("id").defaultRandom().primaryKey(),

@@ -2,7 +2,9 @@ import { findPreset, validateCreateRoom, type ValidRoomConfig } from "@scelta/do
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
 import { requireAdmin } from "../auth/require-admin.js";
+import { quorumStatus } from "../rooms/quorum-status.js";
 import type { RoomRepository, StoredRoom } from "../rooms/room-repository.js";
+import { toRoundSummary } from "../rooms/round-summary.js";
 import type { UserRepository } from "../users/user-repository.js";
 
 const CreateRoomBody = Type.Object(
@@ -22,6 +24,7 @@ const CreateRoomBody = Type.Object(
     ]),
     quorumValue: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
     quorumUnit: Type.Optional(Type.Union([Type.Literal("absolute"), Type.Literal("percent")])),
+    eligibleCount: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
     status: Type.Optional(Type.Union([Type.Literal("draft"), Type.Literal("open")])),
   },
   { additionalProperties: false },
@@ -33,6 +36,7 @@ type CreateRoomBodyType = {
   rulesPreset: string;
   quorumValue?: number;
   quorumUnit?: string;
+  eligibleCount?: number;
   status?: string;
 };
 
@@ -75,11 +79,15 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           rulesPreset: validated.value.rulesPreset,
           quorumValue: validated.value.quorumValue,
           quorumUnit: validated.value.quorumUnit,
+          eligibleCount: validated.value.eligibleCount,
           status: validated.value.status,
         });
 
         return reply.code(201).send({
-          room: toRoomResponse(stored, { includeInvite: true, config: validated.value }),
+          room: {
+            ...toRoomResponse(stored, { includeInvite: true, config: validated.value }),
+            round: null,
+          },
         });
       } catch (error) {
         request.log.error({ err: error }, "Failed to persist room");
@@ -98,8 +106,15 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
     }
 
     try {
-      const rooms = await options.roomRepository.listRooms();
-      return { rooms: rooms.map((room) => toRoomResponse(room, { includeInvite: false })) };
+      const stored = await options.roomRepository.listRooms();
+      const latest = await options.roomRepository.latestRounds(stored.map((room) => room.id));
+      const roundByRoom = new Map(latest.map((round) => [round.roomId, round]));
+      return {
+        rooms: stored.map((room) => ({
+          ...toRoomResponse(room, { includeInvite: false }),
+          round: toRoundSummary(roundByRoom.get(room.id) ?? null),
+        })),
+      };
     } catch (error) {
       request.log.error({ err: error }, "Failed to list rooms");
       return reply.code(500).send({ error: "persistence_failed" });
@@ -137,7 +152,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         }
 
         const presentCount = await options.roomRepository.countPresent(roomId);
-        return { presentCount };
+        return quorumStatus(room, presentCount);
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to read presence");
         return reply.code(500).send({ error: "persistence_failed" });
@@ -159,6 +174,7 @@ function toRoomResponse(
     rulesPreset: room.rulesPreset,
     quorumValue: room.quorumValue,
     quorumUnit: room.quorumUnit,
+    eligibleCount: room.eligibleCount,
     status: room.status,
     ...(options.includeInvite
       ? {

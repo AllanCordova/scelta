@@ -2,16 +2,29 @@ import { useEffect, useState, type FormEvent } from "react";
 import QRCode from "qrcode";
 import { apiUrl } from "../api-url";
 import {
+  CLOSE_ROUND_LABEL,
+  FAILED_QUORUM_MESSAGE,
+  OPEN_ROUND_LABEL,
   PRESET_OPTIONS,
   ROOM_TYPE_OPTIONS,
   STATUS_LABELS,
   describePreset,
-  presenceLabel,
+  quorumLabel,
+  quorumStateLabel,
   roomErrorMessage,
+  roundErrorMessage,
   showsPresence,
 } from "./copy";
 import { inviteUrl, quorumDraftFromPreset } from "./room-draft";
-import { RoomRequestError, createRoom, fetchPresets, listRooms } from "./rooms-api";
+import {
+  RoomRequestError,
+  closeRound,
+  createRoom,
+  fetchPresets,
+  listRooms,
+  openRound,
+} from "./rooms-api";
+import type { QuorumPresence } from "./presence-event";
 import type {
   CreatableRoomStatus,
   PresetDefinition,
@@ -34,8 +47,11 @@ export function AdminRooms() {
     quorumValue: string;
     quorumUnit: QuorumUnit;
   } | null>(null);
+  const [eligibleCount, setEligibleCount] = useState("");
   const [status, setStatus] = useState<CreatableRoomStatus>("draft");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [roundError, setRoundError] = useState<{ roomId: string; message: string } | null>(null);
+  const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [qr, setQr] = useState<{ link: string; dataUrl: string } | null>(null);
@@ -124,6 +140,12 @@ export function AdminRooms() {
       return;
     }
 
+    const eligible = eligiblePayload(eligibleCount);
+    if ("error" in eligible) {
+      setErrorMessage(roomErrorMessage("invalid_room", "eligibleCount"));
+      return;
+    }
+
     setIsSubmitting(true);
 
     const payload = {
@@ -132,6 +154,7 @@ export function AdminRooms() {
       rulesPreset,
       status,
       ...quorumPayload(quorumValue, quorumUnit),
+      ...eligible,
     };
 
     try {
@@ -145,6 +168,34 @@ export function AdminRooms() {
       setErrorMessage(messageFromError(error));
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleOpenRound(roomId: string) {
+    setRoundError(null);
+    setBusyRoomId(roomId);
+    try {
+      const round = await openRound(apiBase, roomId);
+      setRooms((current) => current.map((item) => (item.id === roomId ? { ...item, round } : item)));
+      setListVersion((current) => current + 1);
+    } catch (error) {
+      setRoundError({ roomId, message: messageFromRoundError(error) });
+    } finally {
+      setBusyRoomId(null);
+    }
+  }
+
+  async function handleCloseRound(roomId: string, roundId: string) {
+    setRoundError(null);
+    setBusyRoomId(roomId);
+    try {
+      const round = await closeRound(apiBase, roomId, roundId);
+      setRooms((current) => current.map((item) => (item.id === roomId ? { ...item, round } : item)));
+      setListVersion((current) => current + 1);
+    } catch (error) {
+      setRoundError({ roomId, message: messageFromRoundError(error) });
+    } finally {
+      setBusyRoomId(null);
     }
   }
 
@@ -239,6 +290,16 @@ export function AdminRooms() {
             </label>
           </div>
 
+          <label>
+            Aptos
+            <input
+              inputMode="numeric"
+              value={eligibleCount}
+              placeholder="Opcional"
+              onChange={(event) => setEligibleCount(event.target.value)}
+            />
+          </label>
+
           <fieldset className="choice-field">
             <legend>Situação</legend>
             <div className="choice-row compact">
@@ -291,26 +352,84 @@ export function AdminRooms() {
           <p className="empty">Nenhuma sala ainda.</p>
         ) : (
           <ul aria-label="Salas">
-            {rooms.map((room) => {
-              const presentCount = presence[room.id];
-              return (
-                <li key={room.id}>
-                  <span className="room-title">{room.title}</span>
-                  <span className="room-meta">
-                    {showsPresence(room.status) ? (
-                      <span className="presence" aria-live="polite">
-                        {presentCount === undefined ? "…" : presenceLabel(presentCount)}
-                      </span>
-                    ) : null}
-                    <span className="status">{STATUS_LABELS[room.status]}</span>
-                  </span>
-                </li>
-              );
-            })}
+            {rooms.map((room) => (
+              <RoomRow
+                key={room.id}
+                room={room}
+                presence={presence[room.id]}
+                isBusy={busyRoomId === room.id}
+                error={roundError?.roomId === room.id ? roundError.message : null}
+                onOpen={() => void handleOpenRound(room.id)}
+                onClose={(roundId) => void handleCloseRound(room.id, roundId)}
+              />
+            ))}
           </ul>
         )}
       </section>
     </div>
+  );
+}
+
+function RoomRow({
+  room,
+  presence,
+  isBusy,
+  error,
+  onOpen,
+  onClose,
+}: {
+  room: RoomSummary;
+  presence: QuorumPresence | undefined;
+  isBusy: boolean;
+  error: string | null;
+  onOpen: () => void;
+  onClose: (roundId: string) => void;
+}) {
+  const openRoundId = room.round?.status === "open" ? room.round.id : null;
+
+  return (
+    <li>
+      <div className="room-main">
+        <span className="room-title">{room.title}</span>
+        {room.round?.outcome === "failed_quorum" ? (
+          <p className="quorum-failed" role="status">
+            {FAILED_QUORUM_MESSAGE}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </div>
+      <div className="room-meta">
+        {showsPresence(room.status) ? (
+          <>
+            <span className="presence" aria-live="polite">
+              {presence === undefined ? (
+                "…"
+              ) : (
+                <>
+                  <span className="presence-count">
+                    {quorumLabel(presence.presentCount, presence.requiredCount)}
+                  </span>
+                  <span className="quorum-state">{quorumStateLabel(presence.quorumMet)}</span>
+                </>
+              )}
+            </span>
+            <button
+              type="button"
+              className="ghost round-action"
+              disabled={isBusy}
+              onClick={() => (openRoundId ? onClose(openRoundId) : onOpen())}
+            >
+              {openRoundId ? CLOSE_ROUND_LABEL : OPEN_ROUND_LABEL}
+            </button>
+          </>
+        ) : null}
+        <span className="status">{STATUS_LABELS[room.status]}</span>
+      </div>
+    </li>
   );
 }
 
@@ -326,6 +445,25 @@ function quorumPayload(quorumValue: string, quorumUnit: QuorumUnit) {
   };
 }
 
+function eligiblePayload(
+  value: string,
+): { eligibleCount: number } | { error: true } | Record<string, never> {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return {};
+  }
+  if (!/^\d+$/.test(trimmed)) {
+    return { error: true };
+  }
+
+  const count = Number(trimmed);
+  if (count > 100_000) {
+    return { error: true };
+  }
+
+  return { eligibleCount: count };
+}
+
 function messageFromError(error: unknown): string {
   if (error instanceof RoomRequestError) {
     const field = error.details[0]?.field;
@@ -333,4 +471,12 @@ function messageFromError(error: unknown): string {
   }
 
   return roomErrorMessage("unknown");
+}
+
+function messageFromRoundError(error: unknown): string {
+  if (error instanceof RoomRequestError) {
+    return roundErrorMessage(error.errorCode);
+  }
+
+  return roundErrorMessage("unknown");
 }

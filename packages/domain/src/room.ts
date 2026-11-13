@@ -55,6 +55,7 @@ const RULES_PRESETS: readonly RulesPreset[] = [
 ];
 
 const ABSOLUTE_QUORUM_MAX = 100_000;
+const ELIGIBLE_COUNT_MAX = 100_000;
 const TITLE_MAX_LENGTH = 200;
 
 export type CreateRoomDraft = {
@@ -63,6 +64,7 @@ export type CreateRoomDraft = {
   rulesPreset: string;
   quorumValue?: number;
   quorumUnit?: string;
+  eligibleCount?: number;
   status?: string;
 };
 
@@ -72,13 +74,21 @@ export type ValidRoomConfig = {
   rulesPreset: RulesPreset;
   quorumValue: number;
   quorumUnit: QuorumUnit;
+  eligibleCount: number;
   status: CreateRoomStatus;
   majorityRule: MajorityRule;
   roundBehavior: string;
 };
 
 export type RoomFieldError = {
-  field: "title" | "roomType" | "rulesPreset" | "quorumValue" | "quorumUnit" | "status";
+  field:
+    | "title"
+    | "roomType"
+    | "rulesPreset"
+    | "quorumValue"
+    | "quorumUnit"
+    | "eligibleCount"
+    | "status";
   code:
     | "required"
     | "invalid"
@@ -125,7 +135,17 @@ export function validateCreateRoom(
   const quorum = resolveQuorum(draft);
   errors.push(...quorum.errors);
 
-  if (errors.length > 0 || !roomType || !rulesPreset || !status || !quorum.value) {
+  const eligible = resolveEligibleCount(draft);
+  errors.push(...eligible.errors);
+
+  if (
+    errors.length > 0 ||
+    !roomType ||
+    !rulesPreset ||
+    !status ||
+    !quorum.value ||
+    eligible.value === undefined
+  ) {
     return { ok: false, errors };
   }
 
@@ -139,11 +159,35 @@ export function validateCreateRoom(
       rulesPreset,
       quorumValue: quorum.value.quorumValue,
       quorumUnit: quorum.value.quorumUnit,
+      eligibleCount: eligible.value,
       status,
       majorityRule: preset.majorityRule,
       roundBehavior: preset.roundBehavior,
     },
   };
+}
+
+export function canOpenRound(status: RoomStatus): boolean {
+  return status === "open" || status === "voting";
+}
+
+function resolveEligibleCount(draft: CreateRoomDraft): {
+  value?: number;
+  errors: RoomFieldError[];
+} {
+  if (draft.eligibleCount === undefined) {
+    return { value: 0, errors: [] };
+  }
+
+  if (!isValidEligibleCount(draft.eligibleCount)) {
+    return { errors: [{ field: "eligibleCount", code: "out_of_range" }] };
+  }
+
+  return { value: draft.eligibleCount, errors: [] };
+}
+
+function isValidEligibleCount(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= ELIGIBLE_COUNT_MAX;
 }
 
 function resolveQuorum(draft: CreateRoomDraft): {

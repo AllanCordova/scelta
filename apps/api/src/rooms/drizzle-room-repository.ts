@@ -1,9 +1,22 @@
-import { participants, rooms, type Db } from "@scelta/db";
-import type { QuorumUnit, RoomStatus, RoomType, RulesPreset } from "@scelta/domain";
-import { and, count, desc, eq } from "drizzle-orm";
+import { participants, rooms, rounds, type Db } from "@scelta/db";
+import {
+  ROUND_RESULTS,
+  type QuorumUnit,
+  type RoomStatus,
+  type RoomType,
+  type RoundResult,
+  type RulesPreset,
+} from "@scelta/domain";
+import { and, count, desc, eq, inArray } from "drizzle-orm";
 import { findChurchByName, getOrCreateChurch, isUniqueViolation } from "../churches/church-store.js";
 import { createInviteToken } from "./invite-token.js";
-import type { JoinedParticipant, RoomRepository, StoredRoom } from "./room-repository.js";
+import type {
+  JoinedParticipant,
+  RoomRepository,
+  StoredRound,
+  StoredRoundStatus,
+  StoredRoom,
+} from "./room-repository.js";
 
 const INVITE_TOKEN_ATTEMPTS = 3;
 
@@ -24,6 +37,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
               rulesPreset: room.rulesPreset,
               quorumValue: room.quorumValue,
               quorumUnit: room.quorumUnit,
+              eligibleCount: room.eligibleCount,
               inviteToken,
               status: room.status,
             })
@@ -135,6 +149,96 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       }
       return presentCount;
     },
+
+    async openRound(roomId) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const existing = await db.select().from(rounds).where(eq(rounds.roomId, roomId));
+        if (existing.some((row) => row.status === "open")) {
+          return { ok: false, reason: "round_already_open" };
+        }
+
+        const number = existing.reduce((max, row) => Math.max(max, row.number), 0) + 1;
+        try {
+          const inserted = await db
+            .insert(rounds)
+            .values({
+              roomId,
+              number,
+              status: "open",
+              openedAt: new Date(),
+            })
+            .returning();
+          const row = inserted[0];
+          if (!row) {
+            throw new Error("Round insert returned no row");
+          }
+          return { ok: true, round: toStoredRound(row) };
+        } catch (error) {
+          if (!isUniqueViolation(error)) {
+            throw error;
+          }
+        }
+      }
+
+      return { ok: false, reason: "round_already_open" };
+    },
+
+    async closeRound(roomId, roundId, outcome) {
+      const updated = await db
+        .update(rounds)
+        .set({
+          status: "closed",
+          outcome,
+          closedAt: new Date(),
+        })
+        .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId), eq(rounds.status, "open")))
+        .returning();
+      const row = updated[0];
+      return row ? toStoredRound(row) : null;
+    },
+
+    async findRound(roomId, roundId) {
+      const rows = await db
+        .select()
+        .from(rounds)
+        .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId)))
+        .limit(1);
+      const row = rows[0];
+      return row ? toStoredRound(row) : null;
+    },
+
+    async latestRounds(roomIds) {
+      if (roomIds.length === 0) {
+        return [];
+      }
+
+      const rows = await db
+        .select()
+        .from(rounds)
+        .where(inArray(rounds.roomId, roomIds))
+        .orderBy(desc(rounds.number));
+      const seen = new Set<string>();
+      const latest: StoredRound[] = [];
+      for (const row of rows) {
+        if (seen.has(row.roomId)) {
+          continue;
+        }
+        seen.add(row.roomId);
+        latest.push(toStoredRound(row));
+      }
+      return latest;
+    },
+
+    async latestClosedRound(roomId) {
+      const rows = await db
+        .select()
+        .from(rounds)
+        .where(and(eq(rounds.roomId, roomId), eq(rounds.status, "closed")))
+        .orderBy(desc(rounds.number))
+        .limit(1);
+      const row = rows[0];
+      return row ? toStoredRound(row) : null;
+    },
   };
 }
 
@@ -170,6 +274,7 @@ function toStoredRoom(row: {
   rulesPreset: RulesPreset;
   quorumValue: number;
   quorumUnit: QuorumUnit;
+  eligibleCount: number;
   inviteToken: string;
   status: string;
   createdAt: Date;
@@ -181,8 +286,39 @@ function toStoredRoom(row: {
     rulesPreset: row.rulesPreset,
     quorumValue: row.quorumValue,
     quorumUnit: row.quorumUnit,
+    eligibleCount: row.eligibleCount,
     inviteToken: row.inviteToken,
     status: row.status as RoomStatus,
     createdAt: row.createdAt,
   };
+}
+
+function toStoredRound(row: {
+  id: string;
+  roomId: string;
+  number: number;
+  status: StoredRoundStatus;
+  outcome: string | null;
+  openedAt: Date | null;
+  closedAt: Date | null;
+}): StoredRound {
+  return {
+    id: row.id,
+    roomId: row.roomId,
+    number: row.number,
+    status: row.status,
+    outcome: toRoundResult(row.outcome),
+    openedAt: row.openedAt,
+    closedAt: row.closedAt,
+  };
+}
+
+function toRoundResult(value: string | null): RoundResult | null {
+  if (value === null) {
+    return null;
+  }
+  if ((ROUND_RESULTS as readonly string[]).includes(value)) {
+    return value as RoundResult;
+  }
+  throw new Error("Round outcome is not recognized");
 }

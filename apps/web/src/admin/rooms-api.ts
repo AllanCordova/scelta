@@ -1,8 +1,10 @@
+import { readQuorumPresence, type QuorumPresence } from "./presence-event";
 import type {
   CreatableRoomStatus,
   FieldError,
   PresetDefinition,
   QuorumUnit,
+  RoomRound,
   RoomSummary,
   RoomType,
   RulesPreset,
@@ -28,6 +30,7 @@ export type CreateRoomPayload = {
   status: CreatableRoomStatus;
   quorumValue?: number;
   quorumUnit?: QuorumUnit;
+  eligibleCount?: number;
 };
 
 export async function fetchPresets(apiUrl: string): Promise<PresetDefinition[]> {
@@ -76,7 +79,7 @@ export async function createRoom(apiUrl: string, payload: CreateRoomPayload): Pr
   return body.room;
 }
 
-export async function fetchPresence(apiBase: string, roomId: string): Promise<number> {
+export async function fetchPresence(apiBase: string, roomId: string): Promise<QuorumPresence> {
   const response = await fetch(`${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/presence`, {
     credentials: "include",
   });
@@ -85,10 +88,29 @@ export async function fetchPresence(apiBase: string, roomId: string): Promise<nu
     throw new RoomRequestError(response.status, body.error ?? "unknown");
   }
 
-  const body = (await response.json()) as { presentCount?: unknown };
-  if (typeof body.presentCount !== "number" || !Number.isInteger(body.presentCount) || body.presentCount < 0) {
+  const presence = readQuorumPresence(await response.json());
+  if (!presence) {
     throw new RoomRequestError(response.status, "invalid_presence");
   }
 
-  return body.presentCount;
+  return presence;
+}
+
+export async function openRound(apiBase: string, roomId: string): Promise<RoomRound> {
+  return postRound(`${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds`);
+}
+
+export async function closeRound(apiBase: string, roomId: string, roundId: string): Promise<RoomRound> {
+  return postRound(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds/${encodeURIComponent(roundId)}/close`,
+  );
+}
+
+async function postRound(url: string): Promise<RoomRound> {
+  const response = await fetch(url, { method: "POST", credentials: "include" });
+  const body = (await response.json().catch(() => ({}))) as { round?: RoomRound; error?: string };
+  if (!response.ok || !body.round) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.round;
 }

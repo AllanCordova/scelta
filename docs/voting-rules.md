@@ -91,13 +91,26 @@ Convocation must be at least **7 days** in advance.
 Independent of preset, every voting room should support:
 
 1. **Admin-defined quorum** (absolute count or percentage of an eligible list).
-2. **Voting blocked** until quorum is met (and re-checked if people leave — policy TBD).
+2. **Quorum gate** before a result can be published (see section D). Opening a round does not require quorum; closing one does.
 3. **Anonymous ballots** (system knows *that* a person voted, not *for whom*).
 4. **One vote per person per round** (and per office when electing office-by-office).
 5. **Start / pause / restart** controlled by admin (restart only with audit trail).
 6. **Automatic tally** and clear winner / runoff / failed-quorum outcomes.
 7. **Join via QR code** (or short link) into the room.
 8. Optional **controlled reactions** (emojis) that must not leak ballot intent.
+
+## D. Quorum gate
+
+The checkpoint is the moment an admin closes a round. Presence is the number of participants with `is_present`. The required count is:
+
+- **Absolute:** `quorum_value`. `eligible_count` does not change the threshold.
+- **Percent:** `ceil(eligible_count * quorum_value / 100)`. If `eligible_count` is 0, the required count is 0 and quorum is **not** met. An empty eligible list must not look like a full room.
+
+Closing while presence is below that count sets `rounds.outcome` to `failed_quorum` and closes the round. The product does not elect a winner and does not treat the people who showed up as a sufficient assembly.
+
+Closing at or above quorum sets `outcome` to null. A later tally may set `elected` or `no_majority`. Closing does not choose a winner.
+
+Publishing a winner is rejected until the latest **closed** round has outcome `elected`. `failed_quorum`, `no_majority`, a null outcome, or no closed round all fail closed. A later round may be opened while the room is `open` or `voting`. That does not clear a previous `failed_quorum`: publish stays rejected until a closed round is actually `elected`, or the room is reconfigured and a new round meets quorum.
 
 ## Open legal / product questions
 
