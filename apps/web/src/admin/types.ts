@@ -1,7 +1,8 @@
 export type RulesPreset = "ipb_local_officers" | "ipb_society_board" | "custom";
 export type QuorumUnit = "absolute" | "percent";
 export type RoomType = "pastor" | "elder" | "deacon" | "upa_board" | "custom";
-export type RoomStatus = "draft" | "open";
+export type CreatableRoomStatus = "draft" | "open";
+export type RoomStatus = CreatableRoomStatus | "voting" | "closed" | "cancelled";
 
 export type PresetDefinition = {
   preset: RulesPreset;

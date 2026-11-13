@@ -10,6 +10,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
+      "/socket.io": {
+        target: proxyTarget,
+        ws: true,
+      },
       "/v1": proxyTarget,
       "/health": proxyTarget,
     },

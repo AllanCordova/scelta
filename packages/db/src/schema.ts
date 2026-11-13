@@ -112,11 +112,14 @@ export const participants = pgTable(
       .references(() => rooms.id),
     memberId: uuid("member_id").references(() => members.id),
     displayName: text("display_name").notNull(),
+    /** SHA-256 of the client join key. One presence row per room and key. */
+    joinKeyHash: text("join_key_hash").notNull(),
     isPresent: boolean("is_present").notNull().default(true),
     joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     uniqueIndex("participants_room_member_uidx").on(table.roomId, table.memberId),
+    uniqueIndex("participants_room_join_key_uidx").on(table.roomId, table.joinKeyHash),
   ],
 );
 

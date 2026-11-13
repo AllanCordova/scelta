@@ -1,10 +1,26 @@
 import { useEffect, useState, type FormEvent } from "react";
 import QRCode from "qrcode";
 import { apiUrl } from "../api-url";
-import { PRESET_OPTIONS, ROOM_TYPE_OPTIONS, STATUS_LABELS, describePreset, roomErrorMessage } from "./copy";
+import {
+  PRESET_OPTIONS,
+  ROOM_TYPE_OPTIONS,
+  STATUS_LABELS,
+  describePreset,
+  presenceLabel,
+  roomErrorMessage,
+  showsPresence,
+} from "./copy";
 import { inviteUrl, quorumDraftFromPreset } from "./room-draft";
 import { RoomRequestError, createRoom, fetchPresets, listRooms } from "./rooms-api";
-import type { PresetDefinition, QuorumUnit, RoomStatus, RoomSummary, RoomType, RulesPreset } from "./types";
+import type {
+  CreatableRoomStatus,
+  PresetDefinition,
+  QuorumUnit,
+  RoomSummary,
+  RoomType,
+  RulesPreset,
+} from "./types";
+import { useRoomPresence } from "./use-room-presence";
 
 const apiBase = apiUrl("");
 
@@ -18,13 +34,14 @@ export function AdminRooms() {
     quorumValue: string;
     quorumUnit: QuorumUnit;
   } | null>(null);
-  const [status, setStatus] = useState<RoomStatus>("draft");
+  const [status, setStatus] = useState<CreatableRoomStatus>("draft");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [qr, setQr] = useState<{ link: string; dataUrl: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [listVersion, setListVersion] = useState(0);
+  const presence = useRoomPresence(rooms);
 
   useEffect(() => {
     let cancelled = false;
@@ -274,12 +291,22 @@ export function AdminRooms() {
           <p className="empty">Nenhuma sala ainda.</p>
         ) : (
           <ul aria-label="Salas">
-            {rooms.map((room) => (
-              <li key={room.id}>
-                <span>{room.title}</span>
-                <span className="status">{STATUS_LABELS[room.status]}</span>
-              </li>
-            ))}
+            {rooms.map((room) => {
+              const presentCount = presence[room.id];
+              return (
+                <li key={room.id}>
+                  <span className="room-title">{room.title}</span>
+                  <span className="room-meta">
+                    {showsPresence(room.status) ? (
+                      <span className="presence" aria-live="polite">
+                        {presentCount === undefined ? "…" : presenceLabel(presentCount)}
+                      </span>
+                    ) : null}
+                    <span className="status">{STATUS_LABELS[room.status]}</span>
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

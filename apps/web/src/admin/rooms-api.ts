@@ -1,8 +1,8 @@
 import type {
+  CreatableRoomStatus,
   FieldError,
   PresetDefinition,
   QuorumUnit,
-  RoomStatus,
   RoomSummary,
   RoomType,
   RulesPreset,
@@ -25,7 +25,7 @@ export type CreateRoomPayload = {
   title: string;
   roomType: RoomType;
   rulesPreset: RulesPreset;
-  status: RoomStatus;
+  status: CreatableRoomStatus;
   quorumValue?: number;
   quorumUnit?: QuorumUnit;
 };
@@ -74,4 +74,21 @@ export async function createRoom(apiUrl: string, payload: CreateRoomPayload): Pr
   }
 
   return body.room;
+}
+
+export async function fetchPresence(apiBase: string, roomId: string): Promise<number> {
+  const response = await fetch(`${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/presence`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+
+  const body = (await response.json()) as { presentCount?: unknown };
+  if (typeof body.presentCount !== "number" || !Number.isInteger(body.presentCount) || body.presentCount < 0) {
+    throw new RoomRequestError(response.status, "invalid_presence");
+  }
+
+  return body.presentCount;
 }

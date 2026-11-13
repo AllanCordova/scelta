@@ -2,7 +2,7 @@ import { createPgliteDatabase, createPostgresDatabase } from "@scelta/db";
 import { assertAdminAccountConfig } from "./auth/admin-account.js";
 import { env } from "./env.js";
 import { buildApp } from "./app.js";
-import { attachRealtime } from "./realtime.js";
+import { attachRealtime, createSocketPresencePublisher, type PresencePublisher } from "./realtime.js";
 import { createDrizzleRoomRepository } from "./rooms/drizzle-room-repository.js";
 import type { RoomRepository } from "./rooms/room-repository.js";
 import { ensureBootstrapAdmin } from "./users/bootstrap-admin.js";
@@ -27,15 +27,20 @@ async function main() {
     });
   }
 
-  const app = await buildApp({ roomRepository, userRepository });
+  const presenceSink: { current?: PresencePublisher } = {};
+  const presencePublisher: PresencePublisher = {
+    publishPresence(roomId, presentCount) {
+      presenceSink.current?.publishPresence(roomId, presentCount);
+    },
+  };
+  const app = await buildApp({ roomRepository, userRepository, presencePublisher });
+  await app.ready();
+  presenceSink.current = createSocketPresencePublisher(attachRealtime(app.server, env.corsOrigin));
 
   await app.listen({
     host: env.host,
     port: env.port,
   });
-
-  const rawServer = app.server;
-  attachRealtime(rawServer, env.corsOrigin);
 
   app.log.info(`Scelta API listening on ${env.host}:${env.port}`);
 }

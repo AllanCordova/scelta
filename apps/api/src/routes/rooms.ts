@@ -105,6 +105,45 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
       return reply.code(500).send({ error: "persistence_failed" });
     }
   });
+
+  app.get(
+    "/v1/admin/rooms/:roomId/presence",
+    {
+      schema: {
+        params: Type.Object({
+          roomId: Type.String({
+            minLength: 36,
+            maxLength: 36,
+            pattern:
+              "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+          }),
+        }),
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const presentCount = await options.roomRepository.countPresent(roomId);
+        return { presentCount };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to read presence");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
 };
 
 function toRoomResponse(
