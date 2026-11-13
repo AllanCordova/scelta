@@ -134,15 +134,15 @@
 
 ### B2.1 — Import communicant / society members
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Load the member roll used for eligibility and candidate suggestions.
 
 **Acceptance criteria:**
 
-- [ ] Admin can import members (format TBD: CSV at minimum)
-- [ ] Communicant flag and basic attributes needed for filters are stored
-- [ ] Import report shows created / updated / rejected rows
-- [ ] Feature tests for valid and invalid import rows
+- [x] Admin can import members (format TBD: CSV at minimum)
+- [x] Communicant flag and basic attributes needed for filters are stored
+- [x] Import report shows created / updated / rejected rows
+- [x] Feature tests for valid and invalid import rows
 
 ### B2.2 — Candidate suggestions by room type
 

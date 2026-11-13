@@ -1,11 +1,13 @@
 import type {
   BallotRejectionReason,
   CreateRoomStatus,
+  MemberSocietyFlags,
   QuorumUnit,
   RoomStatus,
   RoomType,
   RoundResult,
   RulesPreset,
+  ValidMemberImportRow,
 } from "@scelta/domain";
 
 export type StoredRoom = {
@@ -68,6 +70,16 @@ export type StoredAuditEvent = {
   createdAt: Date;
 };
 
+export type StoredMember = {
+  id: string;
+  fullName: string;
+  isCommunicant: boolean;
+  isMale: boolean | null;
+  birthDate: string | null;
+  societyFlags: MemberSocietyFlags;
+  createdAt: Date;
+};
+
 export type OpenRoundResult =
   | { ok: true; round: StoredRound }
   | { ok: false; reason: "round_already_open" };
@@ -107,4 +119,8 @@ export type RoomRepository = {
   }): Promise<CastBallotResult>;
   hasVotedInRound(roomId: string, roundId: string, joinKeyHash: string): Promise<boolean>;
   listRoundBallotCandidateIds(roundId: string): Promise<string[]>;
+  importMembers(
+    rows: readonly ValidMemberImportRow[],
+  ): Promise<{ createdCount: number; updatedCount: number }>;
+  listMembers(): Promise<StoredMember[]>;
 };
