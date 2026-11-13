@@ -1,4 +1,10 @@
-import { canOpenRound, canPublishWinner, closeRoundOutcome } from "@scelta/domain";
+import {
+  canOpenRound,
+  canPublishWinner,
+  closeRoundOutcome,
+  tallyRoundVotes,
+  type RoundTally,
+} from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
 import { requireAdmin } from "../auth/require-admin.js";
@@ -81,12 +87,24 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
 
         const presentCount = await repository.countPresent(roomId);
         const quorum = quorumStatus(room, presentCount);
-        const closed = await repository.closeRound(roomId, roundId, closeRoundOutcome(quorum.quorumMet));
+        let tally: RoundTally | null = null;
+        let outcome = closeRoundOutcome(quorum.quorumMet);
+
+        if (quorum.quorumMet) {
+          const candidates = await repository.listCandidates(roomId);
+          if (candidates.length > 0) {
+            const ballotCandidateIds = await repository.listRoundBallotCandidateIds(roundId);
+            tally = tallyRoundVotes(candidates, ballotCandidateIds);
+            outcome = tally.outcome;
+          }
+        }
+
+        const closed = await repository.closeRound(roomId, roundId, outcome);
         if (!closed) {
           return reply.code(409).send({ error: "round_not_open" });
         }
 
-        return { round: toRoundSummary(closed), quorum };
+        return { round: toRoundSummary(closed, tally), quorum };
       } catch (error) {
         request.log.error({ err: error, roomId, roundId }, "Failed to close round");
         return reply.code(500).send({ error: "persistence_failed" });

@@ -27,6 +27,36 @@ export function joinErrorMessage(error: unknown): string {
   return "Não foi possível entrar na sala. Tente de novo.";
 }
 
+export function ballotErrorMessage(error: unknown): string {
+  if (isJoinError(error)) {
+    switch (error.errorCode) {
+      case "already_voted":
+        return "Você já votou neste escrutínio.";
+      case "round_not_open":
+        return "Este escrutínio não está aberto.";
+      case "participant_not_present":
+        return "Confirme sua presença antes de votar.";
+      case "invalid_candidate":
+        return "Escolha um candidato válido.";
+      default:
+        break;
+    }
+  }
+
+  return "Não foi possível registrar seu voto.";
+}
+
+export function voterTallyOutcome(outcome: "elected" | "no_majority", winnerName: string | null): string {
+  if (outcome === "elected" && winnerName) {
+    return `Eleito por maioria absoluta: ${winnerName}`;
+  }
+  return "Sem maioria absoluta neste escrutínio.";
+}
+
+export function voterStandingLabel(displayName: string, votes: number): string {
+  return `${displayName}: ${votes === 1 ? "1 voto" : `${votes} votos`}`;
+}
+
 function isJoinError(
   error: unknown,
 ): error is { status: number; errorCode: string; roomStatus?: string } {

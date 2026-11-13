@@ -249,6 +249,79 @@ describe("AdminRooms", () => {
     );
   });
 
+  it("displays the automatic tally and candidate standings when a round closes with votes", async () => {
+    const room = {
+      id: "room-1",
+      title: "Eleição de diáconos",
+      status: "open",
+      round: {
+        id: "round-1",
+        number: 1,
+        status: "open",
+        outcome: null as string | null,
+        tally: undefined as
+          | undefined
+          | {
+              totalVotes: number;
+              threshold: number;
+              outcome: "elected" | "no_majority";
+              winnerId: string | null;
+              winnerName: string | null;
+              standings: { candidateId: string; displayName: string; votes: number }[];
+            },
+      },
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/rules/presets")) {
+          return json({ presets });
+        }
+        if (url.endsWith("/presence")) {
+          return json({
+            presentCount: 2,
+            eligibleCount: 2,
+            requiredCount: 2,
+            quorumMet: true,
+          });
+        }
+        if (url.endsWith("/close") && init?.method === "POST") {
+          room.round = {
+            id: "round-1",
+            number: 1,
+            status: "closed",
+            outcome: "elected",
+            tally: {
+              totalVotes: 2,
+              threshold: 2,
+              outcome: "elected",
+              winnerId: "cand-1",
+              winnerName: "Paulo",
+              standings: [
+                { candidateId: "cand-1", displayName: "Paulo", votes: 2 },
+                { candidateId: "cand-2", displayName: "Silas", votes: 0 },
+              ],
+            },
+          };
+          return json({ round: room.round });
+        }
+        return json({ rooms: [{ ...room }] });
+      }),
+    );
+
+    render(<AdminRooms />);
+    const item = await screen.findByRole("listitem");
+    fireEvent.click(await within(item).findByRole("button", { name: "Encerrar escrutínio" }));
+
+    expect(await within(item).findByRole("status")).toHaveTextContent(
+      "Eleito por maioria absoluta: Paulo",
+    );
+    expect(within(item).getByText("Paulo: 2 votos")).toBeInTheDocument();
+    expect(within(item).getByText("Silas: 0 votos")).toBeInTheDocument();
+  });
+
   it("sends the eligible count when the admin sets it and rejects a bad one", async () => {
     render(<AdminRooms />);
     await screen.findByDisplayValue("34");

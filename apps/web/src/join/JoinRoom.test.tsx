@@ -86,6 +86,106 @@ describe("JoinRoom", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Esta sala foi encerrada.");
     expect(screen.queryByLabelText("Seu nome")).not.toBeInTheDocument();
   });
+
+  it("lets a joined voter cast one anonymous vote and hides the chosen candidate on the receipt", async () => {
+    let voted = false;
+    writeJoinIdentity(window.localStorage, "invite-token", {
+      joinKey: "a".repeat(32),
+      displayName: "Ana",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/ballot/receipt")) {
+          return json({ roundId: "round-1", hasVoted: voted });
+        }
+        if (url.endsWith("/ballot") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as { joinKey: string; candidateId: string };
+          expect(body).toEqual({ joinKey: "a".repeat(32), candidateId: "cand-1" });
+          voted = true;
+          return json({ receipt: { roundId: "round-1", roundNumber: 1, voted: true } }, 201);
+        }
+        if (url.endsWith("/ballot")) {
+          return json({
+            roomStatus: "open",
+            candidates: [
+              { id: "cand-1", displayName: "Paulo" },
+              { id: "cand-2", displayName: "Silas" },
+            ],
+            round: { id: "round-1", number: 1, status: "open", outcome: null },
+          });
+        }
+        if (init?.method === "POST") {
+          return json({
+            title: "Eleição de presbíteros",
+            status: "open",
+            displayName: "Ana",
+            presentCount: 1,
+            alreadyJoined: true,
+          });
+        }
+        return json({ title: "Eleição de presbíteros", status: "open", canJoin: true });
+      }),
+    );
+
+    render(<JoinRoom token="invite-token" />);
+
+    expect(await screen.findByRole("button", { name: "Paulo" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Paulo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar voto" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Comprovante: seu voto foi registrado com sigilo neste escrutínio.",
+    );
+    expect(screen.queryByRole("button", { name: "Confirmar voto" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Paulo" })).not.toBeInTheDocument();
+  });
+
+  it("shows an error if a second vote attempt is rejected", async () => {
+    writeJoinIdentity(window.localStorage, "invite-token", {
+      joinKey: "a".repeat(32),
+      displayName: "Ana",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/ballot/receipt")) {
+          return json({ roundId: "round-1", hasVoted: false });
+        }
+        if (url.endsWith("/ballot") && init?.method === "POST") {
+          return json({ error: "already_voted" }, 409);
+        }
+        if (url.endsWith("/ballot")) {
+          return json({
+            roomStatus: "open",
+            candidates: [{ id: "cand-1", displayName: "Paulo" }],
+            round: { id: "round-1", number: 1, status: "open", outcome: null },
+          });
+        }
+        if (init?.method === "POST") {
+          return json({
+            title: "Eleição de presbíteros",
+            status: "open",
+            displayName: "Ana",
+            presentCount: 1,
+            alreadyJoined: true,
+          });
+        }
+        return json({ title: "Eleição de presbíteros", status: "open", canJoin: true });
+      }),
+    );
+
+    render(<JoinRoom token="invite-token" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Paulo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar voto" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Você já votou neste escrutínio.");
+  });
 });
 
 function json(body: unknown, status = 200) {

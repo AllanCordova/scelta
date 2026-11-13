@@ -1,5 +1,14 @@
-import { participants, rooms, rounds, type Db } from "@scelta/db";
 import {
+  ballots,
+  candidates,
+  participants,
+  rooms,
+  rounds,
+  voteReceipts,
+  type Db,
+} from "@scelta/db";
+import {
+  canCastBallot,
   ROUND_RESULTS,
   type QuorumUnit,
   type RoomStatus,
@@ -7,12 +16,14 @@ import {
   type RoundResult,
   type RulesPreset,
 } from "@scelta/domain";
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import { findChurchByName, getOrCreateChurch, isUniqueViolation } from "../churches/church-store.js";
+import { createBallotToken } from "./ballot-token.js";
 import { createInviteToken } from "./invite-token.js";
 import type {
   JoinedParticipant,
   RoomRepository,
+  StoredCandidate,
   StoredRound,
   StoredRoundStatus,
   StoredRoom,
@@ -46,6 +57,16 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           const row = inserted[0];
           if (!row) {
             throw new Error("Room insert returned no row");
+          }
+
+          if (room.candidates && room.candidates.length > 0) {
+            await db.insert(candidates).values(
+              room.candidates.map((displayName) => ({
+                roomId: row.id,
+                displayName,
+                isEligible: true,
+              })),
+            );
           }
 
           return toStoredRoom(row);
@@ -150,6 +171,28 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       return presentCount;
     },
 
+    async listCandidates(roomId) {
+      const rows = await db
+        .select()
+        .from(candidates)
+        .where(and(eq(candidates.roomId, roomId), eq(candidates.isEligible, true)))
+        .orderBy(asc(candidates.displayName));
+      return rows.map(toStoredCandidate);
+    },
+
+    async listCandidatesByRooms(roomIds) {
+      if (roomIds.length === 0) {
+        return [];
+      }
+
+      const rows = await db
+        .select()
+        .from(candidates)
+        .where(and(inArray(candidates.roomId, roomIds), eq(candidates.isEligible, true)))
+        .orderBy(asc(candidates.displayName));
+      return rows.map(toStoredCandidate);
+    },
+
     async openRound(roomId) {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const existing = await db.select().from(rounds).where(eq(rounds.roomId, roomId));
@@ -239,10 +282,118 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       const row = rows[0];
       return row ? toStoredRound(row) : null;
     },
+
+    async castBallot(input) {
+      return db.transaction(async (tx) => {
+        const roundRows = await tx
+          .select()
+          .from(rounds)
+          .where(and(eq(rounds.id, input.roundId), eq(rounds.roomId, input.roomId)))
+          .limit(1);
+        const round = roundRows[0];
+        if (!round || round.status !== "open") {
+          return { ok: false as const, reason: "round_not_open" as const };
+        }
+
+        const participant = await findParticipantByJoinKey(tx, input.roomId, input.joinKeyHash);
+        if (!participant || !participant.isPresent) {
+          return { ok: false as const, reason: "participant_not_present" as const };
+        }
+
+        const candidateRows = await tx
+          .select()
+          .from(candidates)
+          .where(
+            and(
+              eq(candidates.id, input.candidateId),
+              eq(candidates.roomId, input.roomId),
+              eq(candidates.isEligible, true),
+            ),
+          )
+          .limit(1);
+
+        const eligibility = canCastBallot({
+          roomStatus: "open",
+          roundStatus: round.status,
+          isParticipantPresent: Boolean(participant?.isPresent),
+          hasAlreadyVoted: false,
+          isCandidateEligible: Boolean(candidateRows[0]),
+        });
+        if (!eligibility.ok) {
+          return { ok: false as const, reason: eligibility.reason };
+        }
+
+        const insertedReceipt = await tx
+          .insert(voteReceipts)
+          .values({
+            roundId: input.roundId,
+            participantId: participant!.id,
+          })
+          .onConflictDoNothing()
+          .returning({ id: voteReceipts.id });
+        if (!insertedReceipt[0]) {
+          return { ok: false as const, reason: "already_voted" as const };
+        }
+
+        await tx.insert(ballots).values({
+          roundId: input.roundId,
+          candidateId: input.candidateId,
+          ballotToken: createBallotToken(),
+        });
+
+        return { ok: true as const, roundId: input.roundId };
+      });
+    },
+
+    async hasVotedInRound(roomId, roundId, joinKeyHash) {
+      const participant = await findParticipantByJoinKey(db, roomId, joinKeyHash);
+      if (!participant) {
+        return false;
+      }
+
+      const rows = await db
+        .select({ id: voteReceipts.id })
+        .from(voteReceipts)
+        .where(
+          and(
+            eq(voteReceipts.roundId, roundId),
+            eq(voteReceipts.participantId, participant.id),
+          ),
+        )
+        .limit(1);
+      return Boolean(rows[0]);
+    },
+
+    async listRoundBallotCandidateIds(roundId) {
+      const rows = await db
+        .select({ candidateId: ballots.candidateId })
+        .from(ballots)
+        .where(eq(ballots.roundId, roundId))
+        .orderBy(asc(ballots.candidateId));
+      return rows.map((row) => row.candidateId);
+    },
   };
 }
 
-async function findParticipantByJoinKey(db: Db, roomId: string, joinKeyHash: string) {
+function toStoredCandidate(row: {
+  id: string;
+  roomId: string;
+  displayName: string;
+  isEligible: boolean;
+}): StoredCandidate {
+  return {
+    id: row.id,
+    roomId: row.roomId,
+    displayName: row.displayName,
+    isEligible: row.isEligible,
+  };
+}
+
+async function findParticipantByJoinKey(
+  db: Pick<Db, "select">,
+  roomId: string,
+  joinKeyHash: string,
+) {
   const rows = await db
     .select()
     .from(participants)

@@ -1,9 +1,21 @@
-import { findPreset, validateCreateRoom, type ValidRoomConfig } from "@scelta/domain";
+import {
+  findPreset,
+  tallyRoundVotes,
+  validateCandidateNames,
+  validateCreateRoom,
+  type RoundTally,
+  type ValidRoomConfig,
+} from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
 import { requireAdmin } from "../auth/require-admin.js";
 import { quorumStatus } from "../rooms/quorum-status.js";
-import type { RoomRepository, StoredRoom } from "../rooms/room-repository.js";
+import type {
+  RoomRepository,
+  StoredCandidate,
+  StoredRound,
+  StoredRoom,
+} from "../rooms/room-repository.js";
 import { toRoundSummary } from "../rooms/round-summary.js";
 import type { UserRepository } from "../users/user-repository.js";
 
@@ -26,6 +38,7 @@ const CreateRoomBody = Type.Object(
     quorumUnit: Type.Optional(Type.Union([Type.Literal("absolute"), Type.Literal("percent")])),
     eligibleCount: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
     status: Type.Optional(Type.Union([Type.Literal("draft"), Type.Literal("open")])),
+    candidates: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { maxItems: 50 })),
   },
   { additionalProperties: false },
 );
@@ -38,6 +51,7 @@ type CreateRoomBodyType = {
   quorumUnit?: string;
   eligibleCount?: number;
   status?: string;
+  candidates?: string[];
 };
 
 export type RoomRouteOptions = {
@@ -72,6 +86,18 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         return reply.code(400).send({ error: "invalid_room", details: validated.errors });
       }
 
+      let candidateNames: string[] = [];
+      if (body.candidates !== undefined) {
+        const validatedCandidates = validateCandidateNames(body.candidates);
+        if (!validatedCandidates.ok) {
+          return reply.code(400).send({
+            error: "invalid_room",
+            details: [{ field: "candidates", code: "invalid" }],
+          });
+        }
+        candidateNames = validatedCandidates.value;
+      }
+
       try {
         const stored = await options.roomRepository.createRoom({
           title: validated.value.title,
@@ -81,11 +107,20 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           quorumUnit: validated.value.quorumUnit,
           eligibleCount: validated.value.eligibleCount,
           status: validated.value.status,
+          ...(candidateNames.length > 0 ? { candidates: candidateNames } : {}),
         });
+        const storedCandidates =
+          candidateNames.length > 0
+            ? await options.roomRepository.listCandidates(stored.id)
+            : [];
 
         return reply.code(201).send({
           room: {
-            ...toRoomResponse(stored, { includeInvite: true, config: validated.value }),
+            ...toRoomResponse(stored, {
+              includeInvite: true,
+              config: validated.value,
+              candidates: storedCandidates,
+            }),
             round: null,
           },
         });
@@ -107,13 +142,26 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
 
     try {
       const stored = await options.roomRepository.listRooms();
-      const latest = await options.roomRepository.latestRounds(stored.map((room) => room.id));
+      const roomIds = stored.map((room) => room.id);
+      const latest = await options.roomRepository.latestRounds(roomIds);
+      const allCandidates = await options.roomRepository.listCandidatesByRooms(roomIds);
+      const candidatesByRoom = groupCandidatesByRoom(allCandidates);
       const roundByRoom = new Map(latest.map((round) => [round.roomId, round]));
+      const tallyByRound = await loadTalliesForClosedRounds(
+        options.roomRepository,
+        latest,
+        candidatesByRoom,
+      );
+
       return {
-        rooms: stored.map((room) => ({
-          ...toRoomResponse(room, { includeInvite: false }),
-          round: toRoundSummary(roundByRoom.get(room.id) ?? null),
-        })),
+        rooms: stored.map((room) => {
+          const round = roundByRoom.get(room.id) ?? null;
+          const roomCandidates = candidatesByRoom.get(room.id) ?? [];
+          return {
+            ...toRoomResponse(room, { includeInvite: false, candidates: roomCandidates }),
+            round: toRoundSummary(round, round ? (tallyByRound.get(round.id) ?? null) : null),
+          };
+        }),
       };
     } catch (error) {
       request.log.error({ err: error }, "Failed to list rooms");
@@ -163,9 +211,14 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
 
 function toRoomResponse(
   room: StoredRoom,
-  options: { includeInvite: boolean; config?: ValidRoomConfig },
+  options: {
+    includeInvite: boolean;
+    config?: ValidRoomConfig;
+    candidates?: StoredCandidate[];
+  },
 ) {
   const preset = options.config ?? findPreset(room.rulesPreset);
+  const candidates = options.candidates ?? [];
 
   return {
     id: room.id,
@@ -176,6 +229,14 @@ function toRoomResponse(
     quorumUnit: room.quorumUnit,
     eligibleCount: room.eligibleCount,
     status: room.status,
+    ...(candidates.length > 0
+      ? {
+          candidates: candidates.map((candidate) => ({
+            id: candidate.id,
+            displayName: candidate.displayName,
+          })),
+        }
+      : {}),
     ...(options.includeInvite
       ? {
           inviteToken: room.inviteToken,
@@ -186,4 +247,37 @@ function toRoomResponse(
     roundBehavior: preset.roundBehavior,
     createdAt: room.createdAt.toISOString(),
   };
+}
+
+function groupCandidatesByRoom(candidates: StoredCandidate[]): Map<string, StoredCandidate[]> {
+  const grouped = new Map<string, StoredCandidate[]>();
+  for (const candidate of candidates) {
+    const existing = grouped.get(candidate.roomId) ?? [];
+    existing.push(candidate);
+    grouped.set(candidate.roomId, existing);
+  }
+  return grouped;
+}
+
+async function loadTalliesForClosedRounds(
+  repository: RoomRepository,
+  rounds: StoredRound[],
+  candidatesByRoom: Map<string, StoredCandidate[]>,
+): Promise<Map<string, RoundTally>> {
+  const tallies = new Map<string, RoundTally>();
+  for (const round of rounds) {
+    if (round.status !== "closed") {
+      continue;
+    }
+    if (round.outcome !== "elected" && round.outcome !== "no_majority") {
+      continue;
+    }
+    const candidates = candidatesByRoom.get(round.roomId) ?? [];
+    if (candidates.length === 0) {
+      continue;
+    }
+    const ballotCandidateIds = await repository.listRoundBallotCandidateIds(round.id);
+    tallies.set(round.id, tallyRoundVotes(candidates, ballotCandidateIds));
+  }
+  return tallies;
 }

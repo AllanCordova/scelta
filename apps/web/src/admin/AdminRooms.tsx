@@ -14,6 +14,8 @@ import {
   roomErrorMessage,
   roundErrorMessage,
   showsPresence,
+  standingLabel,
+  tallySummaryLabel,
 } from "./copy";
 import { inviteUrl, quorumDraftFromPreset } from "./room-draft";
 import {
@@ -48,6 +50,7 @@ export function AdminRooms() {
     quorumUnit: QuorumUnit;
   } | null>(null);
   const [eligibleCount, setEligibleCount] = useState("");
+  const [candidatesInput, setCandidatesInput] = useState("");
   const [status, setStatus] = useState<CreatableRoomStatus>("draft");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [roundError, setRoundError] = useState<{ roomId: string; message: string } | null>(null);
@@ -146,6 +149,12 @@ export function AdminRooms() {
       return;
     }
 
+    const candidates = candidatesPayload(candidatesInput);
+    if ("error" in candidates) {
+      setErrorMessage(roomErrorMessage("invalid_room", "candidates"));
+      return;
+    }
+
     setIsSubmitting(true);
 
     const payload = {
@@ -155,6 +164,7 @@ export function AdminRooms() {
       status,
       ...quorumPayload(quorumValue, quorumUnit),
       ...eligible,
+      ...candidates,
     };
 
     try {
@@ -162,6 +172,7 @@ export function AdminRooms() {
       const link = inviteUrl(window.location.origin, room.invitePath);
       setInviteLink(link);
       setTitle("");
+      setCandidatesInput("");
       setListVersion((current) => current + 1);
     } catch (error) {
       setInviteLink(null);
@@ -300,6 +311,15 @@ export function AdminRooms() {
             />
           </label>
 
+          <label>
+            Candidatos
+            <input
+              value={candidatesInput}
+              placeholder="Opcional (ex.: Paulo, Silas)"
+              onChange={(event) => setCandidatesInput(event.target.value)}
+            />
+          </label>
+
           <fieldset className="choice-field">
             <legend>Situação</legend>
             <div className="choice-row compact">
@@ -396,6 +416,16 @@ function RoomRow({
             {FAILED_QUORUM_MESSAGE}
           </p>
         ) : null}
+        {room.round?.tally ? (
+          <div className="round-tally" role="status">
+            <p className="tally-outcome">{tallySummaryLabel(room.round.tally)}</p>
+            <ul className="tally-standings" aria-label="Apuração">
+              {room.round.tally.standings.map((item) => (
+                <li key={item.candidateId}>{standingLabel(item.displayName, item.votes)}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {error ? (
           <p className="form-error" role="alert">
             {error}
@@ -462,6 +492,33 @@ function eligiblePayload(
   }
 
   return { eligibleCount: count };
+}
+
+function candidatesPayload(
+  value: string,
+): { candidates: string[] } | { error: true } | Record<string, never> {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return {};
+  }
+
+  const names = trimmed.split(",").map((part) => part.trim());
+  if (names.length > 50) {
+    return { error: true };
+  }
+  const seen = new Set<string>();
+  for (const name of names) {
+    if (name.length === 0 || name.length > 120) {
+      return { error: true };
+    }
+    const key = name.toLocaleLowerCase();
+    if (seen.has(key)) {
+      return { error: true };
+    }
+    seen.add(key);
+  }
+
+  return { candidates: names };
 }
 
 function messageFromError(error: unknown): string {

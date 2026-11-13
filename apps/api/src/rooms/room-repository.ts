@@ -1,4 +1,5 @@
 import type {
+  BallotRejectionReason,
   CreateRoomStatus,
   QuorumUnit,
   RoomStatus,
@@ -28,7 +29,22 @@ export type NewRoom = {
   quorumUnit: QuorumUnit;
   eligibleCount: number;
   status: CreateRoomStatus;
+  candidates?: string[];
 };
+
+export type StoredCandidate = {
+  id: string;
+  roomId: string;
+  displayName: string;
+  isEligible: boolean;
+};
+
+export type CastBallotResult =
+  | { ok: true; roundId: string }
+  | {
+      ok: false;
+      reason: BallotRejectionReason;
+    };
 
 export type StoredRoundStatus = "pending" | "open" | "closed" | "restarted";
 
@@ -60,6 +76,8 @@ export type RoomRepository = {
   findRoomById(roomId: string): Promise<StoredRoom | null>;
   joinRoom(roomId: string, displayName: string, joinKeyHash: string): Promise<JoinedParticipant>;
   countPresent(roomId: string): Promise<number>;
+  listCandidates(roomId: string): Promise<StoredCandidate[]>;
+  listCandidatesByRooms(roomIds: string[]): Promise<StoredCandidate[]>;
   openRound(roomId: string): Promise<OpenRoundResult>;
   closeRound(
     roomId: string,
@@ -69,4 +87,12 @@ export type RoomRepository = {
   findRound(roomId: string, roundId: string): Promise<StoredRound | null>;
   latestRounds(roomIds: string[]): Promise<StoredRound[]>;
   latestClosedRound(roomId: string): Promise<StoredRound | null>;
+  castBallot(input: {
+    roomId: string;
+    roundId: string;
+    joinKeyHash: string;
+    candidateId: string;
+  }): Promise<CastBallotResult>;
+  hasVotedInRound(roomId: string, roundId: string, joinKeyHash: string): Promise<boolean>;
+  listRoundBallotCandidateIds(roundId: string): Promise<string[]>;
 };

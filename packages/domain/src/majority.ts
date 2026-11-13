@@ -10,6 +10,26 @@ export type MajorityResult = {
   sorted: TallyEntry[];
 };
 
+export type CandidateOption = {
+  id: string;
+  displayName: string;
+};
+
+export type CandidateStanding = {
+  candidateId: string;
+  displayName: string;
+  votes: number;
+};
+
+export type RoundTally = {
+  totalVotes: number;
+  threshold: number;
+  outcome: "elected" | "no_majority";
+  winnerId: string | null;
+  winnerName: string | null;
+  standings: CandidateStanding[];
+};
+
 /** Absolute majority: strictly more than 50% of votes (> half). */
 export function hasAbsoluteMajority(
   tallies: TallyEntry[],
@@ -25,6 +45,49 @@ export function hasAbsoluteMajority(
     .map((entry) => entry.candidateId);
 
   return { totalVotes, threshold, winnerIds, sorted };
+}
+
+export function tallyRoundVotes(
+  candidates: readonly CandidateOption[],
+  ballotCandidateIds: readonly string[],
+): RoundTally {
+  const counts = new Map<string, number>();
+  for (const candidate of candidates) {
+    counts.set(candidate.id, 0);
+  }
+
+  for (const candidateId of ballotCandidateIds) {
+    const current = counts.get(candidateId);
+    if (current === undefined) {
+      throw new Error("Ballot references an unknown candidate");
+    }
+    counts.set(candidateId, current + 1);
+  }
+
+  const tallies: TallyEntry[] = candidates.map((candidate) => ({
+    candidateId: candidate.id,
+    votes: counts.get(candidate.id) ?? 0,
+  }));
+
+  const majority = hasAbsoluteMajority(tallies, 1);
+  const nameById = new Map(candidates.map((candidate) => [candidate.id, candidate.displayName]));
+  const standings: CandidateStanding[] = majority.sorted.map((entry) => ({
+    candidateId: entry.candidateId,
+    displayName: nameById.get(entry.candidateId) ?? "",
+    votes: entry.votes,
+  }));
+
+  const winnerId = majority.winnerIds[0] ?? null;
+  const winnerName = winnerId ? (nameById.get(winnerId) ?? null) : null;
+
+  return {
+    totalVotes: majority.totalVotes,
+    threshold: majority.threshold,
+    outcome: winnerId ? "elected" : "no_majority",
+    winnerId,
+    winnerName,
+    standings,
+  };
 }
 
 export function selectTopCandidates(
