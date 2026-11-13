@@ -193,7 +193,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       return rows.map(toStoredCandidate);
     },
 
-    async openRound(roomId) {
+    async openRound(roomId, eligibleCandidateIds) {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const existing = await db.select().from(rounds).where(eq(rounds.roomId, roomId));
         if (existing.some((row) => row.status === "open")) {
@@ -202,20 +202,40 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
 
         const number = existing.reduce((max, row) => Math.max(max, row.number), 0) + 1;
         try {
-          const inserted = await db
-            .insert(rounds)
-            .values({
-              roomId,
-              number,
-              status: "open",
-              openedAt: new Date(),
-            })
-            .returning();
-          const row = inserted[0];
-          if (!row) {
-            throw new Error("Round insert returned no row");
-          }
-          return { ok: true, round: toStoredRound(row) };
+          return await db.transaction(async (tx) => {
+            const inserted = await tx
+              .insert(rounds)
+              .values({
+                roomId,
+                number,
+                status: "open",
+                openedAt: new Date(),
+              })
+              .returning();
+            const row = inserted[0];
+            if (!row) {
+              throw new Error("Round insert returned no row");
+            }
+
+            if (eligibleCandidateIds !== undefined) {
+              const roomCandidates = await tx
+                .select({ id: candidates.id })
+                .from(candidates)
+                .where(and(eq(candidates.roomId, roomId), eq(candidates.isEligible, true)));
+              const allowed = new Set(eligibleCandidateIds);
+              const eliminatedIds = roomCandidates
+                .map((candidate) => candidate.id)
+                .filter((id) => !allowed.has(id));
+              if (eliminatedIds.length > 0) {
+                await tx
+                  .update(candidates)
+                  .set({ isEligible: false })
+                  .where(and(eq(candidates.roomId, roomId), inArray(candidates.id, eliminatedIds)));
+              }
+            }
+
+            return { ok: true as const, round: toStoredRound(row) };
+          });
         } catch (error) {
           if (!isUniqueViolation(error)) {
             throw error;

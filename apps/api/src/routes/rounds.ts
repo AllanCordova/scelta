@@ -2,8 +2,10 @@ import {
   canOpenRound,
   canPublishWinner,
   closeRoundOutcome,
+  resolveNextRoundCandidateIds,
   tallyRoundVotes,
   type RoundTally,
+  type TallyEntry,
 } from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
@@ -13,10 +15,12 @@ import type { RoomRepository } from "../rooms/room-repository.js";
 import { toRoundSummary } from "../rooms/round-summary.js";
 import type { UserRepository } from "../users/user-repository.js";
 
+const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 const Uuid = Type.String({
   minLength: 36,
   maxLength: 36,
-  pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+  pattern: UUID_PATTERN.source,
 });
 
 export type RoundRouteOptions = {
@@ -38,6 +42,11 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         return;
       }
 
+      const parsedBody = parseOpenRoundBody(request.body);
+      if (!parsedBody.ok) {
+        return reply.code(400).send({ error: "invalid_candidate_subset" });
+      }
+
       const { roomId } = request.params as { roomId: string };
       try {
         const room = await repository.findRoomById(roomId);
@@ -48,12 +57,67 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "room_not_open" });
         }
 
-        const opened = await repository.openRound(room.id);
+        const latest = await repository.latestRounds([room.id]);
+        if (latest[0]?.status === "open") {
+          return reply.code(409).send({ error: "round_already_open" });
+        }
+
+        const [latestClosed, roomCandidates] = await Promise.all([
+          repository.latestClosedRound(room.id),
+          repository.listCandidates(room.id),
+        ]);
+
+        let previousTallies: TallyEntry[] = [];
+        if (
+          latestClosed &&
+          latestClosed.outcome === "no_majority" &&
+          roomCandidates.length > 0
+        ) {
+          const ballotCandidateIds = await repository.listRoundBallotCandidateIds(latestClosed.id);
+          const tally = tallyRoundVotes(roomCandidates, ballotCandidateIds);
+          previousTallies = tally.standings.map((standing) => ({
+            candidateId: standing.candidateId,
+            votes: standing.votes,
+          }));
+        }
+
+        const resolved = resolveNextRoundCandidateIds({
+          preset: room.rulesPreset,
+          previousRoundNumber: latestClosed?.number ?? null,
+          previousOutcome: latestClosed?.outcome ?? null,
+          eligibleCandidateIds: roomCandidates.map((candidate) => candidate.id),
+          previousTallies,
+          ...(parsedBody.candidateIds === undefined
+            ? {}
+            : { requestedCandidateIds: parsedBody.candidateIds }),
+        });
+
+        if (!resolved.ok) {
+          if (resolved.reason === "winner_already_elected") {
+            return reply.code(409).send({ error: "winner_already_elected" });
+          }
+          return reply.code(400).send({ error: "invalid_candidate_subset" });
+        }
+
+        const opened = await repository.openRound(room.id, resolved.candidateIds);
         if (!opened.ok) {
           return reply.code(409).send({ error: opened.reason });
         }
 
-        return reply.code(201).send({ round: toRoundSummary(opened.round) });
+        const activeSet = new Set(resolved.candidateIds);
+        const activeCandidates = roomCandidates.filter((candidate) => activeSet.has(candidate.id));
+
+        return reply.code(201).send({
+          round: toRoundSummary(opened.round),
+          ...(activeCandidates.length > 0
+            ? {
+                candidates: activeCandidates.map((candidate) => ({
+                  id: candidate.id,
+                  displayName: candidate.displayName,
+                })),
+              }
+            : {}),
+        });
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to open round");
         return reply.code(500).send({ error: "persistence_failed" });
@@ -160,4 +224,34 @@ async function adminRepository(
   }
 
   return options.roomRepository;
+}
+
+function parseOpenRoundBody(
+  body: unknown,
+): { ok: true; candidateIds?: string[] } | { ok: false } {
+  if (body === undefined || body === null) {
+    return { ok: true };
+  }
+  if (typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false };
+  }
+
+  const record = body as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.some((key) => key !== "candidateIds")) {
+    return { ok: false };
+  }
+  if (record.candidateIds === undefined) {
+    return { ok: true };
+  }
+  if (!Array.isArray(record.candidateIds) || record.candidateIds.length > 50) {
+    return { ok: false };
+  }
+  for (const item of record.candidateIds) {
+    if (typeof item !== "string" || !UUID_PATTERN.test(item)) {
+      return { ok: false };
+    }
+  }
+
+  return { ok: true, candidateIds: record.candidateIds as string[] };
 }

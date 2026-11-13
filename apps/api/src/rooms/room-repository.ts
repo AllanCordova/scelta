@@ -78,7 +78,7 @@ export type RoomRepository = {
   countPresent(roomId: string): Promise<number>;
   listCandidates(roomId: string): Promise<StoredCandidate[]>;
   listCandidatesByRooms(roomIds: string[]): Promise<StoredCandidate[]>;
-  openRound(roomId: string): Promise<OpenRoundResult>;
+  openRound(roomId: string, eligibleCandidateIds?: readonly string[]): Promise<OpenRoundResult>;
   closeRound(
     roomId: string,
     roundId: string,

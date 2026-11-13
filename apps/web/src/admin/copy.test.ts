@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FAILED_QUORUM_MESSAGE,
+  activeCandidatesLabel,
   quorumLabel,
   quorumStateLabel,
   roundErrorMessage,
@@ -26,6 +27,11 @@ describe("presence copy", () => {
     expect(roundErrorMessage("room_not_open")).toBe("Abra a sala antes do escrutínio.");
     expect(roundErrorMessage("round_already_open")).toBe("Já existe um escrutínio aberto.");
     expect(roundErrorMessage("round_not_open")).toBe("Esse escrutínio não está aberto.");
+    expect(roundErrorMessage("winner_already_elected")).toBe("Esta sala já elegeu um vencedor.");
+    expect(roundErrorMessage("invalid_candidate_subset")).toBe(
+      "Conjunto de candidatos inválido para o próximo escrutínio.",
+    );
     expect(roundErrorMessage("failed_quorum")).toBe("Não foi possível atualizar o escrutínio.");
+    expect(activeCandidatesLabel(3, ["Ana", "Bia"])).toBe("3º escrutínio — Candidatos: Ana, Bia");
   });
 });

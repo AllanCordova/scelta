@@ -104,17 +104,17 @@
 
 ### B1.5 — Multi-round / runoff
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Support 2nd ballot and 3rd/runoff (e.g. top-2 for society board; limit to most voted for local officers).
 
 **Acceptance criteria:**
 
-- [ ] If no winner under preset rules, admin (or auto-flow) can open next round with the correct candidate subset
-- [ ] Preset `ipb_society_board`: after 2 failed absolute-majority rounds → 3rd with top 2
-- [ ] Preset `ipb_local_officers`: after 2nd round without majority, further rounds may be limited to most voted
-- [ ] Prior round ballots do not carry into the new round
-- [ ] Each round resets one-vote-per-person
-- [ ] Feature tests for both presets; browser test for a full runoff path
+- [x] If no winner under preset rules, admin (or auto-flow) can open next round with the correct candidate subset
+- [x] Preset `ipb_society_board`: after 2 failed absolute-majority rounds → 3rd with top 2
+- [x] Preset `ipb_local_officers`: after 2nd round without majority, further rounds may be limited to most voted
+- [x] Prior round ballots do not carry into the new round
+- [x] Each round resets one-vote-per-person
+- [x] Feature tests for both presets; browser test for a full runoff path
 
 ### B1.6 — Start, pause, and restart voting
 

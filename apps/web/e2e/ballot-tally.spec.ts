@@ -86,4 +86,5 @@ async function loginAsAdmin(page: Page) {
   await page.locator("form").getByRole("button", { name: "Entrar" }).click();
   await expect(page).toHaveURL(/\/admin$/);
   await expect(page.getByRole("button", { name: "Criar sala" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("34");
 }

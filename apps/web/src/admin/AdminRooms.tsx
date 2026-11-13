@@ -8,6 +8,7 @@ import {
   PRESET_OPTIONS,
   ROOM_TYPE_OPTIONS,
   STATUS_LABELS,
+  activeCandidatesLabel,
   describePreset,
   quorumLabel,
   quorumStateLabel,
@@ -411,6 +412,14 @@ function RoomRow({
     <li>
       <div className="room-main">
         <span className="room-title">{room.title}</span>
+        {room.round?.status === "open" && room.candidates && room.candidates.length > 0 ? (
+          <p className="round-candidates">
+            {activeCandidatesLabel(
+              room.round.number,
+              room.candidates.map((item) => item.displayName),
+            )}
+          </p>
+        ) : null}
         {room.round?.outcome === "failed_quorum" ? (
           <p className="quorum-failed" role="status">
             {FAILED_QUORUM_MESSAGE}
