@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import QRCode from "qrcode";
+import { z } from "zod";
 import { apiUrl } from "../api-url";
+import { validateWithZod, type FieldErrors } from "../forms/validation";
 import {
   CLOSE_ROUND_LABEL,
   FAILED_QUORUM_MESSAGE,
@@ -60,6 +62,9 @@ export function AdminRooms() {
   const [eligibleCount, setEligibleCount] = useState("");
   const [candidatesInput, setCandidatesInput] = useState("");
   const [status, setStatus] = useState<CreatableRoomStatus>("draft");
+  const [fieldErrors, setFieldErrors] = useState<
+    FieldErrors<"title" | "quorumValue" | "eligibleCount" | "candidates">
+  >({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [roundError, setRoundError] = useState<{ roomId: string; message: string } | null>(null);
   const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
@@ -174,27 +179,30 @@ export function AdminRooms() {
     event.preventDefault();
     setErrorMessage(null);
 
-    if (quorumValue.trim().length === 0 || Number.isNaN(Number(quorumValue))) {
-      setErrorMessage(roomErrorMessage("invalid_room", "quorumValue"));
+    const validation = validateWithZod(createRoomFormSchema, {
+      title,
+      quorumValue,
+      quorumUnit,
+      eligibleCount,
+      candidates: candidatesInput,
+    });
+    if (!validation.ok) {
+      setFieldErrors(validation.fieldErrors);
+      setErrorMessage(validation.firstError);
       return;
     }
 
+    setFieldErrors({});
     const eligible = eligiblePayload(eligibleCount);
-    if ("error" in eligible) {
-      setErrorMessage(roomErrorMessage("invalid_room", "eligibleCount"));
-      return;
-    }
-
     const candidates = candidatesPayload(candidatesInput);
-    if ("error" in candidates) {
-      setErrorMessage(roomErrorMessage("invalid_room", "candidates"));
+    if ("error" in eligible || "error" in candidates) {
       return;
     }
 
     setIsSubmitting(true);
 
     const payload = {
-      title,
+      title: validation.data.title,
       roomType,
       rulesPreset,
       status,
@@ -212,6 +220,21 @@ export function AdminRooms() {
       setListVersion((current) => current + 1);
     } catch (error) {
       setInviteLink(null);
+      if (error instanceof RoomRequestError && error.details.length > 0) {
+        const nextFieldErrors: FieldErrors<"title" | "quorumValue" | "eligibleCount" | "candidates"> =
+          {};
+        for (const detail of error.details) {
+          if (
+            detail.field === "title" ||
+            detail.field === "quorumValue" ||
+            detail.field === "eligibleCount" ||
+            detail.field === "candidates"
+          ) {
+            nextFieldErrors[detail.field] = roomErrorMessage(error.errorCode, detail.field);
+          }
+        }
+        setFieldErrors(nextFieldErrors);
+      }
       setErrorMessage(messageFromError(error));
     } finally {
       setIsSubmitting(false);
@@ -308,16 +331,22 @@ export function AdminRooms() {
         <h2 id="admin-rooms-heading" className="sr-only">
           Formulário
         </h2>
-        <form className="room-form" onSubmit={handleSubmit}>
-          <label className="title-field">
-            Título
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Ex.: Eleição de presbíteros"
-              required
-            />
-          </label>
+        <form className="room-form" onSubmit={handleSubmit} noValidate>
+          <div className="field title-field">
+            <label>
+              Título
+              <input
+                value={title}
+                aria-invalid={Boolean(fieldErrors.title)}
+                onChange={(event) => {
+                  setTitle(event.target.value);
+                  setFieldErrors((current) => ({ ...current, title: undefined }));
+                }}
+                placeholder="Ex.: Eleição de presbíteros"
+              />
+            </label>
+            {fieldErrors.title ? <span className="field-error">{fieldErrors.title}</span> : null}
+          </div>
 
           <fieldset className="choice-field">
             <legend>Tipo</legend>
@@ -360,27 +389,35 @@ export function AdminRooms() {
           </fieldset>
 
           <div className="quorum-row">
-            <label>
-              Quórum
-              <input
-                inputMode="numeric"
-                value={quorumValue}
-                onChange={(event) =>
-                  setQuorumOverride({ quorumValue: event.target.value, quorumUnit })
-                }
-              />
-            </label>
+            <div className="field">
+              <label>
+                Quórum
+                <input
+                  inputMode="numeric"
+                  value={quorumValue}
+                  aria-invalid={Boolean(fieldErrors.quorumValue)}
+                  onChange={(event) => {
+                    setQuorumOverride({ quorumValue: event.target.value, quorumUnit });
+                    setFieldErrors((current) => ({ ...current, quorumValue: undefined }));
+                  }}
+                />
+              </label>
+              {fieldErrors.quorumValue ? (
+                <span className="field-error">{fieldErrors.quorumValue}</span>
+              ) : null}
+            </div>
             <label>
               Unidade
               <select
                 aria-label="Unidade do quórum"
                 value={quorumUnit}
-                onChange={(event) =>
+                onChange={(event) => {
                   setQuorumOverride({
                     quorumValue,
                     quorumUnit: event.target.value as QuorumUnit,
-                  })
-                }
+                  });
+                  setFieldErrors((current) => ({ ...current, quorumValue: undefined }));
+                }}
               >
                 <option value="absolute">Número absoluto</option>
                 <option value="percent">Percentual</option>
@@ -388,25 +425,42 @@ export function AdminRooms() {
             </label>
           </div>
 
-          <label>
-            Aptos
-            <input
-              inputMode="numeric"
-              value={eligibleCount}
-              placeholder="Opcional"
-              onChange={(event) => setEligibleCount(event.target.value)}
-            />
-          </label>
+          <div className="field">
+            <label>
+              Aptos
+              <input
+                inputMode="numeric"
+                value={eligibleCount}
+                placeholder="Opcional"
+                aria-invalid={Boolean(fieldErrors.eligibleCount)}
+                onChange={(event) => {
+                  setEligibleCount(event.target.value);
+                  setFieldErrors((current) => ({ ...current, eligibleCount: undefined }));
+                }}
+              />
+            </label>
+            {fieldErrors.eligibleCount ? (
+              <span className="field-error">{fieldErrors.eligibleCount}</span>
+            ) : null}
+          </div>
 
-          <label>
-            Candidatos
-            <input
-              value={candidatesInput}
-              placeholder="Ex.: Paulo, Silas"
-              onChange={(event) => setCandidatesInput(event.target.value)}
-              required
-            />
-          </label>
+          <div className="field">
+            <label>
+              Candidatos
+              <input
+                value={candidatesInput}
+                placeholder="Ex.: Paulo, Silas"
+                aria-invalid={Boolean(fieldErrors.candidates)}
+                onChange={(event) => {
+                  setCandidatesInput(event.target.value);
+                  setFieldErrors((current) => ({ ...current, candidates: undefined }));
+                }}
+              />
+            </label>
+            {fieldErrors.candidates ? (
+              <span className="field-error">{fieldErrors.candidates}</span>
+            ) : null}
+          </div>
 
           {suggestions.length > 0 ? (
             <fieldset className="choice-field">
@@ -747,6 +801,45 @@ function RoomRow({
     </li>
   );
 }
+
+const createRoomFormSchema = z
+  .object({
+    title: z.string().trim().min(1, roomErrorMessage("invalid_room", "title")),
+    quorumValue: z.string().trim(),
+    quorumUnit: z.enum(["absolute", "percent"]),
+    eligibleCount: z.string().trim(),
+    candidates: z.string(),
+  })
+  .superRefine((data, ctx) => {
+    if (
+      data.quorumValue.length === 0 ||
+      !/^\d+$/.test(data.quorumValue) ||
+      Number(data.quorumValue) < 1 ||
+      (data.quorumUnit === "percent" && Number(data.quorumValue) > 100)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["quorumValue"],
+        message: roomErrorMessage("invalid_room", "quorumValue"),
+      });
+    }
+
+    if ("error" in eligiblePayload(data.eligibleCount)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["eligibleCount"],
+        message: roomErrorMessage("invalid_room", "eligibleCount"),
+      });
+    }
+
+    if ("error" in candidatesPayload(data.candidates)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["candidates"],
+        message: roomErrorMessage("invalid_room", "candidates"),
+      });
+    }
+  });
 
 function quorumPayload(quorumValue: string, quorumUnit: QuorumUnit) {
   const trimmed = quorumValue.trim();

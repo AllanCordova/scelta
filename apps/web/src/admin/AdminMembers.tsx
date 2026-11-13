@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { z } from "zod";
 import { apiUrl } from "../api-url";
+import { validateWithZod } from "../forms/validation";
 import { memberImportSummaryLabel } from "./copy";
 import { importMembers, listMembers } from "./rooms-api";
 import type { StoredMemberItem } from "./types";
@@ -55,15 +57,33 @@ export function AdminMembers() {
     };
   }, [reloadVersion]);
 
+const csvFileSchema = z.object({
+  file: z
+    .custom<File>((val) => val instanceof File, "Por favor, envie um arquivo .CSV válido.")
+    .refine(
+      (file) => file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv",
+      "Por favor, envie um arquivo .CSV válido.",
+    )
+    .refine((file) => file.size > 0, "O arquivo CSV está vazio.")
+    .refine(
+      (file) => file.size <= 10 * 1024 * 1024,
+      "O arquivo CSV excede o limite de 10MB.",
+    ),
+});
+
+const csvImportSchema = z.object({
+  file: z.string().trim().min(1, "Selecione ou solte um arquivo CSV antes de importar."),
+});
   async function processSelectedFile(file: File) {
     setImportError(null);
     setImportSummary(null);
 
-    if (!file.name.toLowerCase().endsWith(".csv") && file.type !== "text/csv") {
+    const validation = validateWithZod(csvFileSchema, { file });
+    if (!validation.ok) {
       setSelectedFileName(null);
       setSelectedFileSizeKb(null);
       setCsvContent("");
-      setImportError("Por favor, envie um arquivo .CSV válido.");
+      setImportError(validation.firstError);
       return;
     }
 
@@ -106,8 +126,9 @@ export function AdminMembers() {
     setImportError(null);
     setImportSummary(null);
 
-    if (csvContent.trim().length === 0) {
-      setImportError("Selecione ou solte um arquivo CSV antes de importar.");
+    const validation = validateWithZod(csvImportSchema, { file: csvContent });
+    if (!validation.ok) {
+      setImportError(validation.firstError);
       return;
     }
 
@@ -162,6 +183,7 @@ export function AdminMembers() {
 
         <div
           className={isDragging ? "upload-zone dragging" : "upload-zone"}
+          aria-invalid={Boolean(importError)}
           onClick={() => fileInputRef.current?.click()}
           onDragEnter={handleDragOver}
           onDragOver={handleDragOver}

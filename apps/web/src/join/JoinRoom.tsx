@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { z } from "zod";
 import { apiUrl } from "../api-url";
+import { validateWithZod, type FieldErrors } from "../forms/validation";
 import {
   ballotErrorMessage,
   joinBlockedMessage,
@@ -20,6 +22,14 @@ import { createJoinKey, isJoinKey, readJoinIdentity, writeJoinIdentity } from ".
 
 const BALLOT_POLL_MS = 1000;
 
+const joinRoomSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Informe seu nome.")
+    .max(80, "Use no máximo 80 caracteres."),
+});
+
 type Phase =
   | { kind: "loading" }
   | { kind: "invalid"; message: string }
@@ -35,6 +45,7 @@ type StoredIdentity = {
 export function JoinRoom({ token }: { token: string }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [name, setName] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors<"name">>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -116,11 +127,15 @@ export function JoinRoom({ token }: { token: string }) {
       return;
     }
 
-    const displayName = name.trim();
-    if (displayName.length === 0) {
-      setErrorMessage("Informe seu nome.");
+    const validation = validateWithZod(joinRoomSchema, { name });
+    if (!validation.ok) {
+      setFieldErrors(validation.fieldErrors);
+      setErrorMessage(validation.firstError);
       return;
     }
+
+    setFieldErrors({});
+    const displayName = validation.data.name;
 
     setIsSubmitting(true);
     setErrorMessage(null);
@@ -186,17 +201,22 @@ export function JoinRoom({ token }: { token: string }) {
         <h2 id="join-room-heading" className="sr-only">
           Identidade
         </h2>
-        <form className="stack-form" onSubmit={handleSubmit}>
-          <label>
-            Seu nome
-            <input
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              autoComplete="name"
-              maxLength={80}
-              required
-            />
-          </label>
+        <form className="stack-form" onSubmit={handleSubmit} noValidate>
+          <div className="field">
+            <label>
+              Seu nome
+              <input
+                value={name}
+                aria-invalid={Boolean(fieldErrors.name)}
+                onChange={(event) => {
+                  setName(event.target.value);
+                  setFieldErrors((current) => ({ ...current, name: undefined }));
+                }}
+                autoComplete="name"
+              />
+            </label>
+            {fieldErrors.name ? <span className="field-error">{fieldErrors.name}</span> : null}
+          </div>
           {errorMessage ? (
             <p className="form-error" role="alert">
               {errorMessage}
