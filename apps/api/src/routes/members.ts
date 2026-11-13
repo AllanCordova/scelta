@@ -17,6 +17,33 @@ const ImportMembersBody = Type.Object(
   { additionalProperties: false },
 );
 
+const ListMembersQuery = Type.Object(
+  {
+    search: Type.Optional(Type.String({ maxLength: 120 })),
+    page: Type.Optional(Type.Integer({ minimum: 1, maximum: 10_000 })),
+    pageSize: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })),
+  },
+  { additionalProperties: false },
+);
+
+const CreateMemberBody = Type.Object(
+  {
+    fullName: Type.String({ minLength: 2, maxLength: 120 }),
+    isCommunicant: Type.Boolean(),
+    isMale: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+    birthDate: Type.Optional(Type.Union([Type.String({ minLength: 10, maxLength: 10 }), Type.Null()])),
+  },
+  { additionalProperties: false },
+);
+
+const MemberIdParams = Type.Object({
+  memberId: Type.String({
+    minLength: 36,
+    maxLength: 36,
+    pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+  }),
+});
+
 const SuggestionsQuery = Type.Object(
   {
     roomType: Type.Union([
@@ -46,6 +73,19 @@ type SuggestionsQueryType = {
   minAgeYears?: number;
   minSocietyMonths?: number;
   requireMaleForOfficers?: boolean;
+};
+
+type ListMembersQueryType = {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+};
+
+type CreateMemberBodyType = {
+  fullName: string;
+  isCommunicant: boolean;
+  isMale?: boolean | null;
+  birthDate?: string | null;
 };
 
 export type MemberRouteOptions = {
@@ -93,32 +133,129 @@ export const memberRoutes: FastifyPluginAsync<MemberRouteOptions> = async (app, 
     },
   );
 
-  app.get("/v1/admin/members", async (request, reply) => {
-    if (!(await requireAdmin(request, reply, options.userRepository))) {
-      return;
-    }
+  app.get(
+    "/v1/admin/members",
+    { schema: { querystring: ListMembersQuery } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
 
-    if (!options.roomRepository) {
-      return reply.code(503).send({ error: "persistence_unavailable" });
-    }
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
 
-    try {
-      const stored = await options.roomRepository.listMembers();
-      return {
-        members: stored.map((member) => ({
-          id: member.id,
-          fullName: member.fullName,
-          isCommunicant: member.isCommunicant,
-          isMale: member.isMale,
-          birthDate: member.birthDate,
-          societyFlags: member.societyFlags,
-        })),
-      };
-    } catch (error) {
-      request.log.error({ err: error }, "Failed to list members");
-      return reply.code(500).send({ error: "persistence_failed" });
-    }
-  });
+      const query = (request.query ?? {}) as ListMembersQueryType;
+      const search = query.search?.trim().toLocaleLowerCase() ?? "";
+
+      try {
+        const stored = await options.roomRepository.listMembers();
+        const filtered =
+          search.length > 0
+            ? stored.filter((member) => member.fullName.toLocaleLowerCase().includes(search))
+            : stored;
+
+        const total = filtered.length;
+        const shouldPaginate = query.page !== undefined || query.pageSize !== undefined;
+        const pageSize = shouldPaginate ? (query.pageSize ?? 20) : Math.max(total, 1);
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        const page = shouldPaginate ? Math.min(query.page ?? 1, totalPages) : 1;
+        const offset = (page - 1) * pageSize;
+        const pageItems = shouldPaginate ? filtered.slice(offset, offset + pageSize) : filtered;
+
+        return {
+          members: pageItems.map((member) => ({
+            id: member.id,
+            fullName: member.fullName,
+            isCommunicant: member.isCommunicant,
+            isMale: member.isMale,
+            birthDate: member.birthDate,
+            societyFlags: member.societyFlags,
+          })),
+          total,
+          page,
+          pageSize,
+          totalPages,
+        };
+      } catch (error) {
+        request.log.error({ err: error }, "Failed to list members");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/members",
+    { schema: { body: CreateMemberBody } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const body = request.body as CreateMemberBodyType;
+      const fullName = body.fullName.trim();
+      if (fullName.length < 2) {
+        return reply.code(400).send({ error: "invalid_member_name" });
+      }
+
+      const birthDate = body.birthDate ?? null;
+      if (birthDate !== null && !parseIsoDate(birthDate)) {
+        return reply.code(400).send({ error: "invalid_birth_date" });
+      }
+
+      try {
+        const created = await options.roomRepository.createMember({
+          fullName,
+          isCommunicant: body.isCommunicant,
+          isMale: body.isMale ?? null,
+          birthDate,
+        });
+        return reply.code(201).send({
+          member: {
+            id: created.id,
+            fullName: created.fullName,
+            isCommunicant: created.isCommunicant,
+            isMale: created.isMale,
+            birthDate: created.birthDate,
+            societyFlags: created.societyFlags,
+          },
+        });
+      } catch (error) {
+        request.log.error({ err: error }, "Failed to create member");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.delete(
+    "/v1/admin/members/:memberId",
+    { schema: { params: MemberIdParams } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { memberId } = request.params as { memberId: string };
+      try {
+        const deleted = await options.roomRepository.deleteMember(memberId);
+        if (!deleted) {
+          return reply.code(404).send({ error: "member_not_found" });
+        }
+        return { deleted: true };
+      } catch (error) {
+        request.log.error({ err: error }, "Failed to delete member");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
 
   app.get(
     "/v1/admin/members/suggestions",

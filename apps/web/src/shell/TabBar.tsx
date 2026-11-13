@@ -14,15 +14,21 @@ export function TabBar() {
         <HomeIcon />
       </TabLink>
       <TabLink
-        href="/admin"
+        href="/admin/salas"
         label="Salas"
-        current={path === "/admin" || path.startsWith("/admin/salas/")}
+        current={path === "/admin/salas" || path.startsWith("/admin/salas/")}
       >
         <RoomsIcon />
       </TabLink>
-      <TabLink href="/admin/membros" label="Membros" current={path === "/admin/membros"}>
-        <MembersIcon />
-      </TabLink>
+      {auth.status === "authenticated" && auth.user.role === "admin" ? (
+        <TabLink
+          href="/admin"
+          label="Admin"
+          current={path === "/admin" || path === "/admin/codigos" || path === "/admin/membros"}
+        >
+          <MembersIcon />
+        </TabLink>
+      ) : null}
       <TabLink href={accountHref} label={accountLabel} current={path === accountHref}>
         <PersonIcon />
       </TabLink>

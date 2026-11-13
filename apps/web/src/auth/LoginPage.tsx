@@ -34,7 +34,7 @@ export function LoginPage() {
 
     try {
       const user = await login(validation.data.email, validation.data.password);
-      window.location.assign(user.role === "admin" ? "/admin" : "/");
+      window.location.assign(user.role === "admin" ? "/admin/salas" : "/");
     } catch (error) {
       const code = error instanceof AuthRequestError ? error.errorCode : "unknown";
       setErrorMessage(authErrorMessage(code, "login"));

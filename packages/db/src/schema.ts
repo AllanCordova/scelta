@@ -155,6 +155,7 @@ export const rounds = pgTable(
     status: roundStatusEnum("status").notNull().default("pending"),
     /** null while open or waiting for the tally; otherwise a round result. */
     outcome: text("outcome"),
+    declinedCandidateId: uuid("declined_candidate_id"),
     openedAt: timestamp("opened_at", { withTimezone: true }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
   },

@@ -164,16 +164,31 @@ export function getElectedCandidateIds(
 }
 
 export function countOfficeRoundNumber(
-  rounds: readonly { number: number; officeLabel: string | null }[],
+  rounds: readonly { number: number; officeLabel: string | null; outcome?: RoundResult | null }[],
   targetRound: { number: number; officeLabel: string | null },
 ): number {
+  const scoped = rounds
+    .filter(
+      (round) =>
+        round.officeLabel === targetRound.officeLabel && round.number <= targetRound.number,
+    )
+    .sort((a, b) => a.number - b.number);
+
+  let lastDeclinedIndex = -1;
+  for (let i = 0; i < scoped.length - 1; i += 1) {
+    if (scoped[i]?.outcome === "declined") {
+      lastDeclinedIndex = i;
+    }
+  }
+
+  if (lastDeclinedIndex >= 0) {
+    const count = scoped.length - 1 - lastDeclinedIndex;
+    return count > 0 ? count : 1;
+  }
+
   if (targetRound.officeLabel === null) {
     return targetRound.number;
   }
 
-  const count = rounds.filter(
-    (round) =>
-      round.officeLabel === targetRound.officeLabel && round.number <= targetRound.number,
-  ).length;
-  return count > 0 ? count : 1;
+  return scoped.length > 0 ? scoped.length : 1;
 }

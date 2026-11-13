@@ -35,6 +35,8 @@ describe("App access", () => {
     expect(await screen.findByRole("button", { name: "Entrar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Cadastrar" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Scelta" })).toHaveAttribute("href", "/");
+    expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Membros" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Nova sala" })).not.toBeInTheDocument();
   });
 
@@ -46,7 +48,11 @@ describe("App access", () => {
     expect(name.closest(".account-identity")?.querySelector("svg")).toBeTruthy();
     const salas = screen.getAllByRole("link", { name: "Salas" });
     expect(salas.length).toBeGreaterThan(0);
-    expect(salas.every((link) => link.getAttribute("href") === "/admin")).toBe(true);
+    expect(salas.every((link) => link.getAttribute("href") === "/admin/salas")).toBe(true);
+    const adminLinks = screen.getAllByRole("link", { name: "Admin" });
+    expect(adminLinks.length).toBeGreaterThan(0);
+    expect(adminLinks.every((link) => link.getAttribute("href") === "/admin")).toBe(true);
+    expect(screen.queryByRole("link", { name: "Membros" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Entrar" })).not.toBeInTheDocument();
   });
 
@@ -66,6 +72,7 @@ describe("App access", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Esta área é só para administradores.");
     expect(screen.getByText("Mia Membro")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Criar sala" })).not.toBeInTheDocument();
   });
 
@@ -79,13 +86,37 @@ describe("App access", () => {
     expect(screen.queryByRole("heading", { name: "Nova sala" })).not.toBeInTheDocument();
   });
 
-  it("shows room management to an admin", async () => {
+  it("shows admin hub on /admin to an admin", async () => {
     window.history.pushState(null, "", "/admin");
+    installSession(admin);
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Administração" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Códigos de Acesso/i })).toHaveAttribute(
+      "href",
+      "/admin/codigos",
+    );
+    expect(screen.getByRole("link", { name: /Membros da Plataforma/i })).toHaveAttribute(
+      "href",
+      "/admin/membros",
+    );
+  });
+
+  it("shows room management on /admin/salas to an admin", async () => {
+    window.history.pushState(null, "", "/admin/salas");
     installSession(admin);
     render(<App />);
 
     expect(await screen.findByRole("button", { name: "Criar sala" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Token de administrador")).not.toBeInTheDocument();
+  });
+
+  it("shows access codes management on /admin/codigos to an admin", async () => {
+    window.history.pushState(null, "", "/admin/codigos");
+    installSession(admin);
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Códigos de Acesso" })).toBeInTheDocument();
   });
 
   it("shows member roll import on /admin/membros to an admin", async () => {

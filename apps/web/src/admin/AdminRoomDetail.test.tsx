@@ -127,7 +127,7 @@ describe("AdminRoomDetail", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Voltar para Painel de Salas/i })).toHaveAttribute(
       "href",
-      "/admin",
+      "/admin/salas",
     );
     expect(screen.getByText("Votos Computados")).toBeInTheDocument();
     expect(screen.getByText("Faltam Votar")).toBeInTheDocument();
@@ -458,6 +458,46 @@ describe("AdminRoomDetail", () => {
     await waitFor(() => {
       expect(openedOfficePayload).toBe("Tesoureiro");
     });
+  });
+
+  it("paginates presence flow receipts 5 per page", async () => {
+    const manyReceiptsRoom: RoomDetail = {
+      ...sampleRoom,
+      votedCount: 7,
+      receiptTimestamps: [
+        "2026-04-04T15:01:00.000Z",
+        "2026-04-04T15:02:00.000Z",
+        "2026-04-04T15:03:00.000Z",
+        "2026-04-04T15:04:00.000Z",
+        "2026-04-04T15:05:00.000Z",
+        "2026-04-04T15:06:00.000Z",
+        "2026-04-04T15:07:00.000Z",
+      ],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: manyReceiptsRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    expect(await screen.findByText("Página 1 de 2")).toBeInTheDocument();
+    expect(screen.getAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(5);
+
+    fireEvent.click(screen.getByRole("button", { name: "Próxima" }));
+    expect(screen.getByText("Página 2 de 2")).toBeInTheDocument();
+    expect(screen.getAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(2);
   });
 });
 

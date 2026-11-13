@@ -7,10 +7,12 @@ import { submitBallot, submitJoin } from "../join/join-api";
 import { createJoinKey } from "../join/join-identity";
 import {
   CLOSE_ROUND_LABEL,
+  DECLINE_ROUND_LABEL,
   FAILED_QUORUM_MESSAGE,
   OPEN_ROUND_LABEL,
   RESTART_ROUND_LABEL,
   ROOM_TYPE_LABELS,
+  ROUND_DECLINED_MESSAGE,
   ROUND_RESTARTED_MESSAGE,
   STATUS_LABELS,
   quorumLabel,
@@ -25,16 +27,12 @@ import {
   RoomRequestError,
   closeRound,
   createSimulatedAccessCodes,
+  declineRound,
   deleteRoom,
-  generateAccessCodes,
-  listAccessCodes,
   openRound,
   removeParticipants,
   restartRound,
-  revokeAccessCode,
-  revokeAllAccessCodes,
 } from "./rooms-api";
-import type { MemberAccessCodeItem } from "./types";
 import { useRoomDetail } from "./use-room-detail";
 
 const apiBase = apiUrl("");
@@ -57,32 +55,10 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   const [isSimulating, setIsSimulating] = useState(false);
   const [simProgress, setSimProgress] = useState<string | null>(null);
   const simulatedVotersRef = useRef<SimulatedVoter[]>([]);
-  const [accessCodes, setAccessCodes] = useState<MemberAccessCodeItem[]>([]);
-  const [isCodesBusy, setIsCodesBusy] = useState(false);
-  const [codesError, setCodesError] = useState<string | null>(null);
-  const [codesNotice, setCodesNotice] = useState<string | null>(null);
-  const [printCards, setPrintCards] = useState<Array<{ id: string; displayName: string; code: string; qrUrl: string }> | null>(null);
   const [selectedOffice, setSelectedOffice] = useState<string>("");
+  const [receiptPage, setReceiptPage] = useState(1);
 
   const { room, loadError, lastSyncedAt } = useRoomDetail(roomId, refreshTick);
-
-  useEffect(() => {
-    let cancelled = false;
-    void listAccessCodes(apiBase, roomId)
-      .then((codes) => {
-        if (!cancelled) {
-          setAccessCodes(codes);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setAccessCodes([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [roomId, refreshTick]);
 
   const invitePath = room ? (room.invitePath ?? `/join/${room.inviteToken}`) : null;
   const fullInviteUrl = invitePath ? inviteUrl(window.location.origin, invitePath) : null;
@@ -168,6 +144,22 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
+  async function handleDeclineRound(roundId: string) {
+    if (!room) {
+      return;
+    }
+    setActionError(null);
+    setIsBusy(true);
+    try {
+      await declineRound(apiBase, room.id, roundId);
+      setRefreshTick((current) => current + 1);
+    } catch (error) {
+      setActionError(messageFromRoundError(error));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleDeleteRoom() {
     if (!room) {
       return;
@@ -176,7 +168,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     setIsBusy(true);
     try {
       await deleteRoom(apiBase, room.id);
-      window.location.assign("/admin");
+      window.location.assign("/admin/salas");
     } catch {
       setActionError("Não foi possível excluir a sala.");
       setIsBusy(false);
@@ -225,105 +217,6 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       setSimProgress(null);
     } finally {
       setIsSimulating(false);
-    }
-  }
-
-  async function handleGenerateAccessCodes() {
-    if (!room || isCodesBusy) {
-      return;
-    }
-    setCodesError(null);
-    setCodesNotice(null);
-    setIsCodesBusy(true);
-    try {
-      const next = await generateAccessCodes(apiBase, room.id);
-      setAccessCodes(next);
-      const activeCount = next.filter((item) => item.revokedAt === null).length;
-      setCodesNotice(
-        activeCount === 0
-          ? "Nenhum membro elegível encontrado no rol. Importe o rol em Membros primeiro."
-          : `${activeCount} códigos ativos prontos para credenciamento.`,
-      );
-    } catch {
-      setCodesError("Não foi possível gerar os códigos de acesso.");
-    } finally {
-      setIsCodesBusy(false);
-    }
-  }
-
-  async function handleRevokeSingleCode(codeId: string) {
-    if (!room || isCodesBusy) {
-      return;
-    }
-    setCodesError(null);
-    setCodesNotice(null);
-    setIsCodesBusy(true);
-    try {
-      const updated = await revokeAccessCode(apiBase, room.id, codeId);
-      setAccessCodes((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item)),
-      );
-      setRefreshTick((current) => current + 1);
-    } catch {
-      setCodesError("Não foi possível revogar o código.");
-    } finally {
-      setIsCodesBusy(false);
-    }
-  }
-
-  async function handleRevokeAllCodes() {
-    if (!room || isCodesBusy) {
-      return;
-    }
-    setCodesError(null);
-    setCodesNotice(null);
-    setIsCodesBusy(true);
-    try {
-      const { revokedCount } = await revokeAllAccessCodes(apiBase, room.id);
-      setRefreshTick((current) => current + 1);
-      setCodesNotice(
-        revokedCount === 0
-          ? "Não havia códigos ativos para revogar."
-          : `${revokedCount} código(s) revogado(s).`,
-      );
-    } catch {
-      setCodesError("Não foi possível revogar os códigos.");
-    } finally {
-      setIsCodesBusy(false);
-    }
-  }
-
-  async function handlePreparePrintCards() {
-    if (!fullInviteUrl) {
-      return;
-    }
-    const activeCodes = accessCodes
-      .filter((item) => item.revokedAt === null)
-      .sort((a, b) => a.displayName.localeCompare(b.displayName, "pt-BR"));
-    if (activeCodes.length === 0) {
-      setCodesError("Gere os códigos antes de imprimir os cartões.");
-      return;
-    }
-    setCodesError(null);
-    setIsCodesBusy(true);
-    try {
-      const cards = await Promise.all(
-        activeCodes.map(async (item) => {
-          const urlWithCode = `${fullInviteUrl}?code=${encodeURIComponent(item.code)}`;
-          const qrUrl = await QRCode.toDataURL(urlWithCode, { margin: 1, width: 120 });
-          return {
-            id: item.id,
-            displayName: item.displayName,
-            code: item.code,
-            qrUrl,
-          };
-        }),
-      );
-      setPrintCards(cards);
-    } catch {
-      setCodesError("Não foi possível preparar os cartões para impressão.");
-    } finally {
-      setIsCodesBusy(false);
     }
   }
 
@@ -428,7 +321,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     return (
       <div className="admin-page room-detail-page">
         <div className="detail-breadcrumb-bar">
-          <a className="detail-back-link" href="/admin">
+          <a className="detail-back-link" href="/admin/salas">
             ← Voltar para Painel de Salas
           </a>
         </div>
@@ -445,7 +338,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     return (
       <div className="admin-page room-detail-page">
         <div className="detail-breadcrumb-bar">
-          <a className="detail-back-link" href="/admin">
+          <a className="detail-back-link" href="/admin/salas">
             ← Voltar para Painel de Salas
           </a>
         </div>
@@ -493,7 +386,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   return (
     <div className="admin-page room-detail-page">
       <div className="detail-breadcrumb-bar">
-        <a className="detail-back-link" href="/admin">
+        <a className="detail-back-link" href="/admin/salas">
           ← Voltar para Painel de Salas
         </a>
         <span className="detail-sync-badge" aria-live="polite">
@@ -558,6 +451,18 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                     onClick={() => void handleRestartRound(openRoundId)}
                   >
                     {RESTART_ROUND_LABEL}
+                  </button>
+                ) : null}
+                {!openRoundId &&
+                room.round?.status === "closed" &&
+                room.round.outcome === "elected" ? (
+                  <button
+                    type="button"
+                    className="ghost danger-text round-action"
+                    disabled={isBusy}
+                    onClick={() => void handleDeclineRound(room.round!.id)}
+                  >
+                    {DECLINE_ROUND_LABEL}
                   </button>
                 ) : null}
                 {!openRoundId && offices.length > 0 && unelectedOffices.length > 0 ? (
@@ -756,6 +661,12 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             </p>
           ) : null}
 
+          {room.round?.outcome === "declined" ? (
+            <p className="round-restarted" role="status">
+              {ROUND_DECLINED_MESSAGE}
+            </p>
+          ) : null}
+
           {tally ? (
             <div className="round-tally" role="status">
               <p className="tally-outcome">{tallySummaryLabel(tally)}</p>
@@ -906,128 +817,6 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             ) : null}
           </section>
 
-          <section className="panel audit-feed-card" aria-labelledby="presence-flow-heading">
-            <div className="audit-feed-header">
-              <h2 id="presence-flow-heading">Fluxo de Presença</h2>
-              <span className="detail-kpi-pill">
-                {room.votedCount} de {Math.max(room.presence.presentCount, room.votedCount)}
-              </span>
-            </div>
-
-            <div className="audit-feed-list">
-              {room.receiptTimestamps.map((timestamp, index) => (
-                <div key={`${timestamp}-${index}`} className="audit-receipt-item">
-                  <span className="audit-receipt-dot" aria-hidden="true" />
-                  <div>
-                    <p className="audit-receipt-title">Cédula recebida e assinada digitalmente</p>
-                    <p className="audit-receipt-meta">
-                      Hash verificado • {formatReceiptTime(timestamp)}
-                    </p>
-                  </div>
-                </div>
-              ))}
-
-              <div className="audit-pending-item">
-                <p className="audit-pending-title">{pendingVoters} Membros Aguardando</p>
-                <p className="audit-receipt-meta">Sessões autenticadas ainda não enviaram cédula</p>
-              </div>
-            </div>
-
-            <p className="audit-privacy-footer">
-              O sistema desacopla a identificação do membro do voto registrado.
-            </p>
-          </section>
-
-          <section className="panel access-codes-card" aria-labelledby="access-codes-heading">
-            <div className="audit-feed-header">
-              <h2 id="access-codes-heading">Códigos de Acesso</h2>
-              <span className="detail-kpi-pill">
-                {accessCodes.filter((item) => item.revokedAt === null).length} ativos
-              </span>
-            </div>
-            <p className="muted">
-              Gere os códigos individuais do rol para imprimir a folha A4 e entregue na entrada.
-              Revogue códigos perdidos ou ao fim da assembleia.
-            </p>
-            <div className="access-codes-actions">
-              <button
-                type="button"
-                className="round-action"
-                disabled={isCodesBusy}
-                onClick={() => void handleGenerateAccessCodes()}
-              >
-                Gerar códigos do rol
-              </button>
-              <button
-                type="button"
-                className="ghost round-action"
-                disabled={
-                  isCodesBusy || accessCodes.filter((item) => item.revokedAt === null).length === 0
-                }
-                onClick={() => void handlePreparePrintCards()}
-              >
-                Imprimir cartões A4
-              </button>
-              <button
-                type="button"
-                className="ghost danger-text round-action"
-                disabled={
-                  isCodesBusy || accessCodes.filter((item) => item.revokedAt === null).length === 0
-                }
-                onClick={() => void handleRevokeAllCodes()}
-              >
-                Revogar todos
-              </button>
-            </div>
-            {codesError ? (
-              <p className="form-error" role="alert">
-                {codesError}
-              </p>
-            ) : null}
-            {codesNotice ? (
-              <p className="simulator-status" role="status">
-                {codesNotice}
-              </p>
-            ) : null}
-            {accessCodes.length > 0 ? (
-              <ul className="access-codes-list" aria-label="Códigos de acesso gerados">
-                {accessCodes.map((item) => {
-                  const isRevoked = item.revokedAt !== null;
-                  return (
-                    <li
-                      key={item.id}
-                      className={isRevoked ? "access-code-row revoked" : "access-code-row"}
-                    >
-                      <div className="access-code-info">
-                        <span className="access-code-name">{item.displayName}</span>
-                        <span className="access-code-pin">{item.code}</span>
-                      </div>
-                      <div className="access-code-meta">
-                        <span
-                          className={
-                            isRevoked ? "access-code-badge revoked" : "access-code-badge active"
-                          }
-                        >
-                          {isRevoked ? "Revogado" : "Ativo"}
-                        </span>
-                        {!isRevoked ? (
-                          <button
-                            type="button"
-                            className="ghost danger-text access-code-revoke-btn"
-                            disabled={isCodesBusy}
-                            onClick={() => void handleRevokeSingleCode(item.id)}
-                          >
-                            Revogar
-                          </button>
-                        ) : null}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : null}
-          </section>
-
           {isActive ? (
             <section className="panel simulator-card" aria-labelledby="simulator-heading">
               <div className="simulator-header">
@@ -1088,50 +877,74 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
               ) : null}
             </section>
           ) : null}
+
+          {(() => {
+            const pageSize = 5;
+            const totalPages = Math.max(1, Math.ceil(room.receiptTimestamps.length / pageSize));
+            const currentPage = Math.min(receiptPage, totalPages);
+            const startIndex = (currentPage - 1) * pageSize;
+            const visibleReceipts = room.receiptTimestamps.slice(startIndex, startIndex + pageSize);
+
+            return (
+              <section className="panel audit-feed-card" aria-labelledby="presence-flow-heading">
+                <div className="audit-feed-header">
+                  <h2 id="presence-flow-heading">Fluxo de Presença</h2>
+                  <span className="detail-kpi-pill">
+                    {room.votedCount} de {Math.max(room.presence.presentCount, room.votedCount)}
+                  </span>
+                </div>
+
+                <div className="audit-pending-item">
+                  <p className="audit-pending-title">{pendingVoters} Membros Aguardando</p>
+                  <p className="audit-receipt-meta">Sessões autenticadas ainda não enviaram cédula</p>
+                </div>
+
+                {totalPages > 1 ? (
+                  <div className="pagination-bar">
+                    <button
+                      type="button"
+                      className="ghost round-action"
+                      disabled={currentPage <= 1}
+                      onClick={() => setReceiptPage(Math.max(1, currentPage - 1))}
+                    >
+                      Anterior
+                    </button>
+                    <span className="muted">
+                      Página {currentPage} de {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      className="ghost round-action"
+                      disabled={currentPage >= totalPages}
+                      onClick={() => setReceiptPage(Math.min(totalPages, currentPage + 1))}
+                    >
+                      Próxima
+                    </button>
+                  </div>
+                ) : null}
+
+                <div className="audit-feed-list">
+                  {visibleReceipts.map((timestamp, index) => (
+                    <div key={`${timestamp}-${startIndex + index}`} className="audit-receipt-item">
+                      <span className="audit-receipt-dot" aria-hidden="true" />
+                      <div>
+                        <p className="audit-receipt-title">Cédula recebida e assinada digitalmente</p>
+                        <p className="audit-receipt-meta">
+                          Hash verificado • {formatReceiptTime(timestamp)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="audit-privacy-footer">
+                  O sistema desacopla a identificação do membro do voto registrado.
+                </p>
+              </section>
+            );
+          })()}
         </div>
       </div>
-
-      {printCards ? (
-        <div className="print-cards-overlay" role="dialog" aria-label="Cartões de acesso para impressão">
-          <div className="print-cards-toolbar no-print">
-            <div>
-              <h2>Cartões de Acesso — {room.title}</h2>
-              <p className="muted">
-                {printCards.length} cartões ativos em ordem alfabética, prontos para impressão em A4.
-              </p>
-            </div>
-            <div className="print-cards-toolbar-actions">
-              <button
-                type="button"
-                className="round-action"
-                onClick={() => window.print()}
-              >
-                Imprimir agora (A4)
-              </button>
-              <button
-                type="button"
-                className="ghost round-action"
-                onClick={() => setPrintCards(null)}
-              >
-                Fechar
-              </button>
-            </div>
-          </div>
-          <div className="print-cards-grid">
-            {printCards.map((card) => (
-              <article key={card.id} className="print-card-item">
-                <img src={card.qrUrl} alt={`QR Code de ${card.displayName}`} width={104} height={104} />
-                <div className="print-card-details">
-                  <span className="print-card-room">{room.title}</span>
-                  <strong className="print-card-name">{card.displayName}</strong>
-                  <span className="print-card-code-label">Código de acesso:</span>
-                  <code className="print-card-code">{card.code}</code>
-                </div>
-              </article>
-            ))}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

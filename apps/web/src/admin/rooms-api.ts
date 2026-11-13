@@ -4,6 +4,7 @@ import type {
   FieldError,
   MemberAccessCodeItem,
   MemberImportReport,
+  PaginatedMembersResult,
   PresetDefinition,
   QuorumUnit,
   RoomDetail,
@@ -12,7 +13,6 @@ import type {
   RoomType,
   RulesPreset,
   StoredMemberItem,
-  SuggestedCandidate,
 } from "./types";
 
 export class RoomRequestError extends Error {
@@ -143,6 +143,16 @@ export async function restartRound(
   );
 }
 
+export async function declineRound(
+  apiBase: string,
+  roomId: string,
+  roundId: string,
+): Promise<RoomRound> {
+  return postRound(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds/${encodeURIComponent(roundId)}/decline`,
+  );
+}
+
 export async function importMembers(
   apiBase: string,
   csv: string,
@@ -167,23 +177,6 @@ export async function importMembers(
   return body.report;
 }
 
-export async function fetchCandidateSuggestions(
-  apiBase: string,
-  roomType: RoomType,
-): Promise<SuggestedCandidate[]> {
-  const response = await fetch(
-    `${apiBase}/v1/admin/members/suggestions?roomType=${encodeURIComponent(roomType)}`,
-    { credentials: "include" },
-  );
-  if (!response.ok) {
-    return [];
-  }
-  const body = (await response.json().catch(() => ({}))) as {
-    suggestions?: SuggestedCandidate[];
-  };
-  return Array.isArray(body.suggestions) ? body.suggestions : [];
-}
-
 export async function listMembers(apiBase: string): Promise<StoredMemberItem[]> {
   const response = await fetch(`${apiBase}/v1/admin/members`, {
     credentials: "include",
@@ -195,6 +188,77 @@ export async function listMembers(apiBase: string): Promise<StoredMemberItem[]> 
     members?: StoredMemberItem[];
   };
   return Array.isArray(body.members) ? body.members : [];
+}
+
+export async function listMembersPage(
+  apiBase: string,
+  params: { search?: string; page?: number; pageSize?: number } = {},
+): Promise<PaginatedMembersResult> {
+  const searchParams = new URLSearchParams();
+  if (params.search && params.search.trim().length > 0) {
+    searchParams.set("search", params.search.trim());
+  }
+  if (params.page !== undefined) {
+    searchParams.set("page", String(params.page));
+  }
+  if (params.pageSize !== undefined) {
+    searchParams.set("pageSize", String(params.pageSize));
+  }
+  const qs = searchParams.toString();
+  const response = await fetch(`${apiBase}/v1/admin/members${qs ? `?${qs}` : ""}`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    return { members: [], total: 0, page: 1, pageSize: params.pageSize ?? 10, totalPages: 1 };
+  }
+  const body = (await response.json().catch(() => ({}))) as Partial<PaginatedMembersResult>;
+  const members = Array.isArray(body.members) ? body.members : [];
+  return {
+    members,
+    total: typeof body.total === "number" ? body.total : members.length,
+    page: typeof body.page === "number" ? body.page : 1,
+    pageSize: typeof body.pageSize === "number" ? body.pageSize : params.pageSize ?? 10,
+    totalPages: typeof body.totalPages === "number" ? body.totalPages : 1,
+  };
+}
+
+export async function createMember(
+  apiBase: string,
+  input: {
+    fullName: string;
+    isCommunicant: boolean;
+    isMale: boolean | null;
+    birthDate: string | null;
+  },
+): Promise<StoredMemberItem> {
+  const response = await fetch(`${apiBase}/v1/admin/members`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const body = (await response.json().catch(() => ({}))) as {
+    member?: StoredMemberItem;
+    error?: string;
+  };
+  if (!response.ok || !body.member) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.member;
+}
+
+export async function deleteMember(apiBase: string, memberId: string): Promise<void> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/members/${encodeURIComponent(memberId)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
 }
 
 export async function deleteRoom(apiBase: string, roomId: string): Promise<void> {

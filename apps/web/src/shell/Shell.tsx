@@ -1,3 +1,5 @@
+import { AdminAccessCodes } from "../admin/AdminAccessCodes";
+import { AdminHub } from "../admin/AdminHub";
 import { AdminMembers } from "../admin/AdminMembers";
 import { AdminRoomDetail } from "../admin/AdminRoomDetail";
 import { AdminRooms } from "../admin/AdminRooms";
@@ -26,10 +28,12 @@ export function Shell() {
           {page === "home" ? <Home /> : null}
           {page === "login" ? <LoginPage /> : null}
           {page === "register" ? <RegisterPage /> : null}
-          {page === "admin" ? <AdminGate view="rooms" /> : null}
+          {page === "admin" ? <AdminGate view="hub" /> : null}
+          {page === "admin-rooms" ? <AdminGate view="rooms" /> : null}
           {page === "admin-room-detail" && adminRoomId ? (
             <AdminGate view="room-detail" roomId={adminRoomId} />
           ) : null}
+          {page === "admin-codes" ? <AdminGate view="codes" /> : null}
           {page === "admin-members" ? <AdminGate view="members" /> : null}
           {page === "account" ? <AccountPage /> : null}
           {page === "join" && joinToken ? <JoinRoom token={joinToken} /> : null}
@@ -44,7 +48,7 @@ function AdminGate({
   view,
   roomId,
 }: {
-  view: "rooms" | "members" | "room-detail";
+  view: "hub" | "rooms" | "members" | "codes" | "room-detail";
   roomId?: string;
 }) {
   const auth = useAuth();
@@ -55,12 +59,26 @@ function AdminGate({
     return <LoginPage />;
   }
   if (auth.user.role !== "admin") {
+    const heading =
+      view === "members"
+        ? "Membros"
+        : view === "codes"
+          ? "Códigos de Acesso"
+          : view === "hub"
+            ? "Administração"
+            : "Salas";
     return (
       <section className="panel">
-        <h2>{view === "members" ? "Membros" : "Salas"}</h2>
+        <h2>{heading}</h2>
         <p role="alert">Esta área é só para administradores.</p>
       </section>
     );
+  }
+  if (view === "hub") {
+    return <AdminHub />;
+  }
+  if (view === "codes") {
+    return <AdminAccessCodes />;
   }
   if (view === "members") {
     return <AdminMembers />;
@@ -77,7 +95,17 @@ function AdminGate({
  */
 function pageFor(
   pathname: string,
-): "home" | "login" | "register" | "admin" | "admin-room-detail" | "admin-members" | "account" | "join" {
+):
+  | "home"
+  | "login"
+  | "register"
+  | "admin"
+  | "admin-rooms"
+  | "admin-room-detail"
+  | "admin-codes"
+  | "admin-members"
+  | "account"
+  | "join" {
   const path = pathname.replace(/\/+$/, "") || "/";
   if (path === "/entrar") {
     return "login";
@@ -88,8 +116,14 @@ function pageFor(
   if (path === "/admin") {
     return "admin";
   }
+  if (path === "/admin/salas") {
+    return "admin-rooms";
+  }
   if (adminRoomIdFromPath(path)) {
     return "admin-room-detail";
+  }
+  if (path === "/admin/codigos") {
+    return "admin-codes";
   }
   if (path === "/admin/membros") {
     return "admin-members";

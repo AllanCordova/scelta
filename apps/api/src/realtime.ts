@@ -7,7 +7,7 @@ const ROOM_CHANNEL_ID =
 
 export type PresenceSnapshot = QuorumStatus;
 
-export type RoundLifecycleState = "open" | "closed" | "restarted";
+export type RoundLifecycleState = "open" | "closed" | "restarted" | "declined";
 
 export type RoundStateSnapshot = {
   roundId: string;

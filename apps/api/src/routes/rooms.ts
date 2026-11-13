@@ -129,25 +129,19 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         return reply.code(400).send({ error: "invalid_room", details: validated.errors });
       }
 
-      if (body.candidates === undefined || body.candidates.length === 0) {
-        return reply.code(400).send({
-          error: "invalid_room",
-          details: [{ field: "candidates", code: "required" }],
-        });
-      }
-
-      const validatedCandidates = validateCandidateNames(body.candidates);
-      if (!validatedCandidates.ok) {
-        return reply.code(400).send({
-          error: "invalid_room",
-          details: [{ field: "candidates", code: "invalid" }],
-        });
-      }
-      const candidateNames = validatedCandidates.value;
-
+      let candidateNames: string[] = [];
       try {
-        if (candidateNames.length > 0) {
-          const roll = await options.roomRepository.listMembers();
+        const roll = await options.roomRepository.listMembers();
+        if (body.candidates !== undefined && body.candidates.length > 0) {
+          const validatedCandidates = validateCandidateNames(body.candidates);
+          if (!validatedCandidates.ok) {
+            return reply.code(400).send({
+              error: "invalid_room",
+              details: [{ field: "candidates", code: "invalid" }],
+            });
+          }
+          candidateNames = validatedCandidates.value;
+
           if (roll.length > 0) {
             const memberByName = new Map(
               roll.map((member) => [member.fullName.toLocaleLowerCase(), member]),
@@ -165,6 +159,24 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
               }
             }
           }
+        } else {
+          const communicants = roll.filter((member) => member.isCommunicant);
+          if (communicants.length === 0) {
+            return reply.code(400).send({
+              error: "invalid_room",
+              details: [{ field: "candidates", code: "required" }],
+            });
+          }
+          const validatedCommunicants = validateCandidateNames(
+            communicants.map((member) => member.fullName),
+          );
+          if (!validatedCommunicants.ok || validatedCommunicants.value.length === 0) {
+            return reply.code(400).send({
+              error: "invalid_room",
+              details: [{ field: "candidates", code: "required" }],
+            });
+          }
+          candidateNames = validatedCommunicants.value;
         }
 
         const stored = await options.roomRepository.createRoom({

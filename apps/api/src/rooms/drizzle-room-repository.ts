@@ -23,7 +23,7 @@ import {
   type RoundResult,
   type RulesPreset,
 } from "@scelta/domain";
-import { and, asc, count, desc, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
 import { findChurchByName, getOrCreateChurch, isUniqueViolation } from "../churches/church-store.js";
 import { generateAccessCode } from "./access-code.js";
 import { createBallotToken } from "./ballot-token.js";
@@ -585,8 +585,31 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           await tx.delete(rounds).where(and(eq(rounds.roomId, roomId), ne(rounds.id, roundId)));
           await tx.update(candidates).set({ isEligible: true }).where(eq(candidates.roomId, roomId));
         } else {
-          await tx.delete(ballots).where(eq(ballots.roundId, roundId));
-          await tx.delete(voteReceipts).where(eq(voteReceipts.roundId, roundId));
+          const officeRoundRows = await tx
+            .select({ id: rounds.id })
+            .from(rounds)
+            .where(
+              and(
+                eq(rounds.roomId, roomId),
+                eq(rounds.officeLabel, existing.officeLabel),
+                or(isNull(rounds.outcome), ne(rounds.outcome, "declined")),
+              ),
+            );
+          const officeRoundIds = officeRoundRows.map((item) => item.id);
+          if (officeRoundIds.length > 0) {
+            await tx.delete(ballots).where(inArray(ballots.roundId, officeRoundIds));
+            await tx.delete(voteReceipts).where(inArray(voteReceipts.roundId, officeRoundIds));
+          }
+          await tx
+            .delete(rounds)
+            .where(
+              and(
+                eq(rounds.roomId, roomId),
+                eq(rounds.officeLabel, existing.officeLabel),
+                ne(rounds.id, roundId),
+                or(isNull(rounds.outcome), ne(rounds.outcome, "declined")),
+              ),
+            );
         }
 
         const updated = await tx
@@ -618,6 +641,44 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
 
         const restartCounts = await loadRestartCountsByRoom(tx, [roomId]);
         return toStoredRound(row, restartCounts.get(row.id) ?? 1);
+      });
+    },
+
+    async declineRound(roomId, roundId, declinedCandidateId) {
+      return db.transaction(async (tx) => {
+        const updated = await tx
+          .update(rounds)
+          .set({
+            outcome: "declined",
+            declinedCandidateId,
+          })
+          .where(
+            and(
+              eq(rounds.id, roundId),
+              eq(rounds.roomId, roomId),
+              eq(rounds.status, "closed"),
+              eq(rounds.outcome, "elected"),
+            ),
+          )
+          .returning();
+        const row = updated[0];
+        if (!row) {
+          return null;
+        }
+
+        await tx.insert(auditEvents).values({
+          roomId,
+          actorRole: "admin",
+          action: "office_declined",
+          payload: {
+            roundId: row.id,
+            roundNumber: row.number,
+            declinedCandidateId,
+            ...(row.officeLabel !== null ? { officeLabel: row.officeLabel } : {}),
+          },
+        });
+
+        return toStoredRound(row);
       });
     },
 
@@ -868,6 +929,50 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       });
     },
 
+    async createMember(input) {
+      const churchId = await getOrCreateChurch(db, churchName);
+      return db.transaction(async (tx) => {
+        const inserted = await tx
+          .insert(members)
+          .values({
+            churchId,
+            fullName: input.fullName,
+            isCommunicant: input.isCommunicant,
+            isMale: input.isMale,
+            birthDate: input.birthDate ? new Date(`${input.birthDate}T00:00:00.000Z`) : null,
+            societyFlags: {},
+          })
+          .returning();
+        return toStoredMember(inserted[0]!);
+      });
+    },
+
+    async deleteMember(memberId) {
+      return db.transaction(async (tx) => {
+        const church = await findChurchByName(tx, churchName);
+        if (!church) {
+          return false;
+        }
+        await tx
+          .update(roomMemberCodes)
+          .set({ memberId: null })
+          .where(eq(roomMemberCodes.memberId, memberId));
+        await tx
+          .update(participants)
+          .set({ memberId: null })
+          .where(eq(participants.memberId, memberId));
+        await tx
+          .update(candidates)
+          .set({ memberId: null })
+          .where(eq(candidates.memberId, memberId));
+        const deleted = await tx
+          .delete(members)
+          .where(and(eq(members.id, memberId), eq(members.churchId, church.id)))
+          .returning({ id: members.id });
+        return deleted.length > 0;
+      });
+    },
+
     async listMembers() {
       const church = await findChurchByName(db, churchName);
       if (!church) {
@@ -977,6 +1082,7 @@ function toStoredRound(
     officeLabel: string | null;
     status: StoredRoundStatus;
     outcome: string | null;
+    declinedCandidateId?: string | null;
     openedAt: Date | null;
     closedAt: Date | null;
   },
@@ -989,6 +1095,7 @@ function toStoredRound(
     officeLabel: row.officeLabel ?? null,
     status: row.status,
     outcome: toRoundResult(row.outcome),
+    declinedCandidateId: row.declinedCandidateId ?? null,
     openedAt: row.openedAt,
     closedAt: row.closedAt,
     ...(restartCount > 0 ? { restartCount } : {}),

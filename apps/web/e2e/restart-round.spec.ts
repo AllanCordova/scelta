@@ -8,10 +8,14 @@ test("admin starts, restarts, and closes a round while participants receive stat
 }) => {
   const title = `Reinício de escrutínio ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   await loginAsAdmin(page);
+  await page.request.post("http://127.0.0.1:3334/v1/admin/members/import", {
+    data: {
+      csv: "nome,comungante,sexo,data_nascimento\nPaulo,sim,M,1985-04-12\nSilas,sim,M,1990-01-10",
+    },
+  });
   await page.getByLabel("Título").fill(title);
   await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("2");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
-  await page.getByLabel("Candidatos").fill("Paulo, Silas");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
@@ -50,14 +54,14 @@ test("admin starts, restarts, and closes a round while participants receive stat
     await expect(voterOne.getByText("Escrutínio aberto para votação.")).toBeVisible({
       timeout: 10_000,
     });
-    await voterOne.getByRole("button", { name: "Paulo" }).click();
+    await voterOne.getByRole("button", { name: "Paulo", exact: true }).click();
     await voterOne.getByRole("button", { name: "Confirmar voto" }).click();
     await expect(voterOne.getByRole("status")).toContainText("seu voto foi registrado com sigilo");
 
     await expect(voterTwo.getByText("Escrutínio aberto para votação.")).toBeVisible({
       timeout: 10_000,
     });
-    await voterTwo.getByRole("button", { name: "Paulo" }).click();
+    await voterTwo.getByRole("button", { name: "Paulo", exact: true }).click();
     await voterTwo.getByRole("button", { name: "Confirmar voto" }).click();
     await expect(voterTwo.getByRole("status")).toContainText("seu voto foi registrado com sigilo");
 
@@ -71,14 +75,14 @@ test("admin starts, restarts, and closes a round while participants receive stat
     await expect(
       voterOne.getByText("Escrutínio reiniciado — os votos anteriores foram limpos. Vote novamente."),
     ).toBeVisible({ timeout: 10_000 });
-    await voterOne.getByRole("button", { name: "Silas" }).click();
+    await voterOne.getByRole("button", { name: "Silas", exact: true }).click();
     await voterOne.getByRole("button", { name: "Confirmar voto" }).click();
     await expect(voterOne.getByRole("status")).toContainText("seu voto foi registrado com sigilo");
 
     await expect(
       voterTwo.getByText("Escrutínio reiniciado — os votos anteriores foram limpos. Vote novamente."),
     ).toBeVisible({ timeout: 10_000 });
-    await voterTwo.getByRole("button", { name: "Silas" }).click();
+    await voterTwo.getByRole("button", { name: "Silas", exact: true }).click();
     await voterTwo.getByRole("button", { name: "Confirmar voto" }).click();
     await expect(voterTwo.getByRole("status")).toContainText("seu voto foi registrado com sigilo");
 
@@ -116,7 +120,7 @@ async function loginAsAdmin(page: Page) {
   await page.getByLabel("E-mail").fill(adminEmail);
   await page.getByLabel("Senha").fill(adminPassword);
   await page.locator("form").getByRole("button", { name: "Entrar" }).click();
-  await expect(page).toHaveURL(/\/admin$/);
+  await expect(page).toHaveURL(/\/admin\/salas$/);
   await expect(page.getByRole("button", { name: "Criar sala" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("34");
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import confetti from "canvas-confetti";
 import { z } from "zod";
 import { apiUrl } from "../api-url";
 import { validateWithZod, type FieldErrors } from "../forms/validation";
@@ -282,6 +283,7 @@ function JoinedRoomView({
   const [ballotState, setBallotState] = useState<BallotState | null>(null);
   const [votedRoundIds, setVotedRoundIds] = useState<Record<string, boolean>>({});
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>("");
+  const [candidateSearch, setCandidateSearch] = useState<string>("");
   const [voteError, setVoteError] = useState<string | null>(null);
   const [isVoting, setIsVoting] = useState(false);
 
@@ -322,12 +324,80 @@ function JoinedRoomView({
   const round = ballotState?.round ?? null;
   const candidates = ballotState?.candidates ?? [];
   const currentRoundKey = round ? roundInstanceKey(round.id, round.restartCount) : null;
+  const isElectedResult =
+    round?.status === "closed" &&
+    round.tally?.outcome === "elected" &&
+    Boolean(round.tally.winnerName);
+
+  useEffect(() => {
+    if (!isElectedResult || !currentRoundKey || typeof window === "undefined") {
+      return;
+    }
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      return;
+    }
+
+    let cancelled = false;
+    let timeoutId: number | undefined;
+    const colors = ["#10b981", "#34d399", "#4edea3", "#fbbf24", "#6ee7b7"];
+
+    async function runLoop() {
+      while (!cancelled) {
+        try {
+          const burst = confetti({
+            particleCount: 55,
+            spread: 70,
+            origin: { y: 0.6 },
+            colors,
+          });
+          if (burst) {
+            await burst;
+          }
+        } catch {
+          return;
+        }
+        if (cancelled) {
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          timeoutId = window.setTimeout(resolve, 1000);
+        });
+      }
+    }
+
+    void runLoop();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+      try {
+        confetti.reset();
+      } catch {
+        // Canvas may be unavailable in headless test environments such as jsdom.
+      }
+    };
+  }, [isElectedResult, currentRoundKey]);
   const hasVotedInCurrentRound = Boolean(currentRoundKey && votedRoundIds[currentRoundKey]);
   const activeSelectedCandidateId =
     selectedCandidateId === NULL_VOTE_CHOICE ||
     candidates.some((candidate) => candidate.id === selectedCandidateId)
       ? selectedCandidateId
       : "";
+
+  const normalizedSearch = candidateSearch.trim().toLocaleLowerCase("pt-BR");
+  const filteredCandidates = normalizedSearch
+    ? candidates.filter((candidate) =>
+        candidate.displayName.toLocaleLowerCase("pt-BR").includes(normalizedSearch),
+      )
+    : candidates;
+
+  const selectedCandidateLabel =
+    activeSelectedCandidateId === NULL_VOTE_CHOICE
+      ? "Voto Nulo / Em Branco"
+      : candidates.find((candidate) => candidate.id === activeSelectedCandidateId)?.displayName ??
+        null;
 
   async function handleCastVote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -358,95 +428,315 @@ function JoinedRoomView({
     }
   }
 
+  const roundHeading = round
+    ? round.officeLabel
+      ? `${round.officeLabel} — ${round.officeRoundNumber ?? round.number}º escrutínio`
+      : `${round.number}º escrutínio`
+    : "";
+
+  const totalTallyVotes = round?.tally
+    ? round.tally.standings.reduce((sum, item) => sum + item.votes, 0) +
+      (round.tally.nullVotes ?? 0)
+    : 0;
+  const winnerStanding =
+    round?.tally?.outcome === "elected" && round.tally.winnerName
+      ? round.tally.standings.find((item) => item.displayName === round.tally?.winnerName) ??
+        round.tally.standings[0] ??
+        null
+      : null;
+  const winnerPercent =
+    winnerStanding && totalTallyVotes > 0
+      ? Math.round((winnerStanding.votes / totalTallyVotes) * 1000) / 10
+      : 0;
+
   return (
-    <div className="join-page">
-      <header className="page-intro">
-        <h1>Você entrou</h1>
-        <p className="lede">{title}</p>
-        <p className="meta">Votante: <strong>{displayName}</strong></p>
+    <div className="join-page voter-flow">
+      <header className="voter-session-header panel">
+        <div className="voter-session-meta">
+          <div className="voter-live-pill">
+            <span className="voter-live-dot" aria-hidden="true" />
+            <span>Sessão conectada</span>
+          </div>
+          <h1>Você entrou</h1>
+          <p className="lede">{title}</p>
+          <p className="meta">
+            Votante: <strong>{displayName}</strong>
+          </p>
+        </div>
+        <div className="voter-avatar-placeholder" aria-hidden="true">
+          {initialsFromName(displayName)}
+        </div>
       </header>
-      <section className="panel">
-        <p>Sua presença foi registrada.</p>
+
+      <section className="voter-presence-pill panel">
+        <div className="voter-presence-check" aria-hidden="true">
+          ✓
+        </div>
+        <div className="voter-presence-copy">
+          <span className="voter-presence-kicker">Presença validada</span>
+          <p>Sua presença foi registrada.</p>
+        </div>
+        <span className="voter-secret-badge">Voto Secreto</span>
       </section>
 
       {round?.status === "open" && candidates.length > 0 ? (
-        <section className="panel" aria-label="Cédula">
-          <h2>
-            {round.officeLabel
-              ? `${round.officeLabel} — ${round.officeRoundNumber ?? round.number}º escrutínio`
-              : `${round.number}º escrutínio`}
-          </h2>
-          <p className="round-notice" aria-live="polite">
-            {voterRoundStateNotice(round.status, round.restartCount)}
-          </p>
+        <section className="voter-ballot-section" aria-label="Cédula">
+          <div className="panel voter-scrutiny-brief">
+            <div className="voter-scrutiny-top">
+              <span className="voter-scrutiny-kicker">Cédula Eleitoral</span>
+              <span className="voter-secret-badge">1 escolha permitida</span>
+            </div>
+            <div className="voter-scrutiny-main">
+              <div className="voter-emblem-placeholder" aria-hidden="true">
+                {round.officeLabel ? initialsFromName(round.officeLabel) : "SC"}
+              </div>
+              <div>
+                <h2>{roundHeading}</h2>
+                <p className="muted">
+                  Selecione um candidato abaixo ou opte por Voto Nulo / Em Branco.
+                </p>
+              </div>
+            </div>
+            <p className="round-notice" aria-live="polite">
+              {voterRoundStateNotice(round.status, round.restartCount)}
+            </p>
+          </div>
+
           {hasVotedInCurrentRound ? (
-            <p role="status">Comprovante: seu voto foi registrado com sigilo neste escrutínio.</p>
+            <div className="panel voter-receipt-card">
+              <div className="voter-receipt-icon" aria-hidden="true">
+                ✓
+              </div>
+              <div>
+                <h3>Voto registrado</h3>
+                <p role="status">
+                  Comprovante: seu voto foi registrado com sigilo neste escrutínio.
+                </p>
+              </div>
+            </div>
           ) : (
-            <form className="stack-form" onSubmit={handleCastVote}>
-              <fieldset className="choice-field">
-                <legend>Candidatos</legend>
-                <div className="choice-row">
-                  {candidates.map((candidate) => (
+            <form className="voter-ballot-form" onSubmit={handleCastVote}>
+              <div className="voter-search-bar">
+                <input
+                  type="search"
+                  value={candidateSearch}
+                  onChange={(event) => setCandidateSearch(event.target.value)}
+                  placeholder="Buscar candidato por nome..."
+                  aria-label="Buscar candidato por nome"
+                />
+                <div className="voter-search-meta">
+                  <span className="muted">
+                    Mostrando {filteredCandidates.length} de {candidates.length}{" "}
+                    {candidates.length === 1 ? "candidato" : "candidatos"}
+                  </span>
+                  {candidateSearch ? (
                     <button
-                      key={candidate.id}
                       type="button"
-                      className={
-                        activeSelectedCandidateId === candidate.id ? "choice selected" : "choice"
-                      }
-                      aria-pressed={activeSelectedCandidateId === candidate.id}
-                      onClick={() => setSelectedCandidateId(candidate.id)}
+                      className="ghost voter-clear-search"
+                      onClick={() => setCandidateSearch("")}
                     >
-                      {candidate.displayName}
+                      Limpar busca
                     </button>
-                  ))}
-                  <button
-                    type="button"
-                    className={
-                      activeSelectedCandidateId === NULL_VOTE_CHOICE ? "choice selected" : "choice"
-                    }
-                    aria-pressed={activeSelectedCandidateId === NULL_VOTE_CHOICE}
-                    onClick={() => setSelectedCandidateId(NULL_VOTE_CHOICE)}
-                  >
-                    Voto Nulo / Em Branco
-                  </button>
+                  ) : null}
                 </div>
+              </div>
+
+              <button
+                type="button"
+                aria-label="Voto Nulo / Em Branco"
+                className={
+                  activeSelectedCandidateId === NULL_VOTE_CHOICE
+                    ? "choice voter-null-card selected"
+                    : "choice voter-null-card"
+                }
+                aria-pressed={activeSelectedCandidateId === NULL_VOTE_CHOICE}
+                onClick={() => setSelectedCandidateId(NULL_VOTE_CHOICE)}
+              >
+                <span className="voter-null-icon" aria-hidden="true">
+                  ⊘
+                </span>
+                <span className="voter-null-copy">
+                  <strong>Voto Nulo / Em Branco</strong>
+                  <small>Nenhum dos candidatos da cédula</small>
+                </span>
+                <span className="voter-radio" aria-hidden="true" />
+              </button>
+
+              <fieldset className="choice-field voter-candidates-fieldset">
+                <legend>Candidatos</legend>
+                {filteredCandidates.length === 0 ? (
+                  <p className="panel muted">
+                    Nenhum candidato encontrado para &ldquo;{candidateSearch}&rdquo;.
+                  </p>
+                ) : (
+                  <div className="voter-candidates-grid">
+                    {filteredCandidates.map((candidate) => {
+                      const isSelected = activeSelectedCandidateId === candidate.id;
+                      return (
+                        <button
+                          key={candidate.id}
+                          type="button"
+                          aria-label={candidate.displayName}
+                          className={
+                            isSelected
+                              ? "choice voter-candidate-card selected"
+                              : "choice voter-candidate-card"
+                          }
+                          aria-pressed={isSelected}
+                          onClick={() => setSelectedCandidateId(candidate.id)}
+                        >
+                          <span className="voter-candidate-top">
+                            <span className="voter-candidate-avatar" aria-hidden="true">
+                              {initialsFromName(candidate.displayName)}
+                            </span>
+                            <span className="voter-radio" aria-hidden="true" />
+                          </span>
+                          <span className="voter-candidate-name">{candidate.displayName}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </fieldset>
+
               {voteError ? (
                 <p className="form-error" role="alert">
                   {voteError}
                 </p>
               ) : null}
-              <button type="submit" disabled={isVoting}>
-                Confirmar voto
-              </button>
+
+              <div className="panel voter-confirm-dock">
+                <div className="voter-confirm-selection">
+                  <span className="voter-confirm-label">Sua escolha</span>
+                  <strong>{selectedCandidateLabel ?? "Nenhum candidato selecionado"}</strong>
+                </div>
+                <button type="submit" disabled={isVoting}>
+                  Confirmar voto
+                </button>
+              </div>
             </form>
           )}
         </section>
       ) : null}
 
       {round?.status === "closed" && round.tally ? (
-        <section className="panel" aria-label="Resultado do escrutínio">
-          <h2>
-            {round.officeLabel
-              ? `Resultado — ${round.officeLabel} (${round.officeRoundNumber ?? round.number}º escrutínio)`
-              : `Resultado — ${round.number}º escrutínio`}
-          </h2>
-          <p className="round-notice" aria-live="polite">
-            {voterRoundStateNotice(round.status, round.restartCount)}
-          </p>
-          <p role="status">
-            {voterTallyOutcome(round.tally.outcome, round.tally.winnerName)}
-          </p>
-          <ul aria-label="Apuração">
-            {round.tally.standings.map((item) => (
-              <li key={item.candidateId}>
-                {voterStandingLabel(item.displayName, item.votes)}
-              </li>
-            ))}
-            {(round.tally.nullVotes ?? 0) > 0 ? (
-              <li>{voterStandingLabel("Votos Nulos / Em Branco", round.tally.nullVotes ?? 0)}</li>
-            ) : null}
-          </ul>
+        <section className="voter-result-section" aria-label="Resultado do escrutínio">
+          <div
+            className={
+              round.tally.outcome === "elected"
+                ? "voter-result-banner elected"
+                : "voter-result-banner"
+            }
+          >
+            <span>Resultado do escrutínio</span>
+            <strong>{round.tally.outcome === "elected" ? "100% Apurado" : "Encerrado"}</strong>
+          </div>
+
+          {round.tally.outcome === "elected" && round.tally.winnerName ? (
+            <div className="panel voter-winner-hero">
+              <div className="voter-winner-avatar-wrap">
+                <div className="voter-winner-avatar" aria-hidden="true">
+                  {initialsFromName(round.tally.winnerName)}
+                </div>
+                <span className="voter-winner-badge">Eleito</span>
+              </div>
+              <h2>{round.tally.winnerName}</h2>
+              <p className="voter-winner-office">
+                {round.officeLabel ? `${round.officeLabel} Eleito` : title}
+              </p>
+              <p className="round-notice" aria-live="polite">
+                {voterRoundStateNotice(round.status, round.restartCount)}
+              </p>
+              <p className="voter-outcome-status" role="status">
+                {voterTallyOutcome(round.tally.outcome, round.tally.winnerName)}
+              </p>
+
+              <div className="voter-majority-box">
+                <div className="voter-majority-header">
+                  <span>Maioria absoluta</span>
+                  <strong>{winnerPercent}%</strong>
+                </div>
+                <div className="voter-majority-track" aria-hidden="true">
+                  <div
+                    className="voter-majority-fill"
+                    style={{ width: `${Math.min(100, winnerPercent)}%` }}
+                  />
+                  <div className="voter-majority-threshold" />
+                </div>
+                <div className="voter-majority-footer">
+                  <span>
+                    Total de votos: <strong>{totalTallyVotes}</strong>
+                  </span>
+                  <span>Critério: 50% + 1</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="panel voter-non-elected-card">
+              <h2>
+                {round.officeLabel
+                  ? `Resultado — ${round.officeLabel} (${round.officeRoundNumber ?? round.number}º escrutínio)`
+                  : `Resultado — ${round.number}º escrutínio`}
+              </h2>
+              <p className="round-notice" aria-live="polite">
+                {voterRoundStateNotice(round.status, round.restartCount)}
+              </p>
+              <p className="voter-outcome-status" role="status">
+                {voterTallyOutcome(round.tally.outcome, round.tally.winnerName)}
+              </p>
+            </div>
+          )}
+
+          <div className="panel voter-standings-card">
+            <div className="voter-standings-header">
+              <h3>Apuração dos votos</h3>
+              <span className="muted">
+                {round.officeLabel
+                  ? `${round.officeLabel} • ${round.officeRoundNumber ?? round.number}º escrutínio`
+                  : `${round.number}º escrutínio`}
+              </span>
+            </div>
+            <ul className="voter-standings-list" aria-label="Apuração">
+              {round.tally.standings.map((item) => {
+                const percent =
+                  totalTallyVotes > 0 ? Math.round((item.votes / totalTallyVotes) * 100) : 0;
+                const isWinner =
+                  round.tally?.outcome === "elected" &&
+                  round.tally.winnerName === item.displayName;
+                return (
+                  <li
+                    key={item.candidateId}
+                    className={isWinner ? "voter-standing-item winner" : "voter-standing-item"}
+                  >
+                    <div className="voter-standing-row">
+                      <span>{voterStandingLabel(item.displayName, item.votes)}</span>
+                      <span className="muted">{percent}%</span>
+                    </div>
+                    <div className="voter-standing-bar" aria-hidden="true">
+                      <div
+                        className="voter-standing-fill"
+                        style={{ width: `${Math.min(100, percent)}%` }}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
+              {(round.tally.nullVotes ?? 0) > 0 ? (
+                <li className="voter-standing-item">
+                  <div className="voter-standing-row">
+                    <span>
+                      {voterStandingLabel("Votos Nulos / Em Branco", round.tally.nullVotes ?? 0)}
+                    </span>
+                    <span className="muted">
+                      {totalTallyVotes > 0
+                        ? `${Math.round(((round.tally.nullVotes ?? 0) / totalTallyVotes) * 100)}%`
+                        : "0%"}
+                    </span>
+                  </div>
+                </li>
+              ) : null}
+            </ul>
+          </div>
         </section>
       ) : null}
       {ballotState?.offices && ballotState.offices.length > 0 ? (
@@ -474,6 +764,17 @@ function JoinedRoomView({
       ) : null}
     </div>
   );
+}
+
+function initialsFromName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return "SC";
+  }
+  if (parts.length === 1) {
+    return parts[0]!.slice(0, 2).toUpperCase();
+  }
+  return `${parts[0]![0] ?? ""}${parts[parts.length - 1]![0] ?? ""}`.toUpperCase();
 }
 
 function readAccessCodeFromSearch(search: string): string {

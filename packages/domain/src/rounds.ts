@@ -33,6 +33,28 @@ export function canRestartRound(
   return { ok: true };
 }
 
+export type DeclineRoundRejectionReason =
+  | "room_not_open"
+  | "round_not_closed"
+  | "winner_not_elected";
+
+export function canDeclineRound(
+  roomStatus: RoomStatus,
+  roundStatus: string,
+  roundOutcome: RoundResult | null,
+): { ok: true } | { ok: false; reason: DeclineRoundRejectionReason } {
+  if (!canOpenRound(roomStatus)) {
+    return { ok: false, reason: "room_not_open" };
+  }
+  if (roundStatus !== "closed") {
+    return { ok: false, reason: "round_not_closed" };
+  }
+  if (roundOutcome !== "elected") {
+    return { ok: false, reason: "winner_not_elected" };
+  }
+  return { ok: true };
+}
+
 export type RoundOutcome =
   | { kind: "winners"; winnerIds: string[] }
   | { kind: "next_round"; candidateIds: string[]; reason: string }
