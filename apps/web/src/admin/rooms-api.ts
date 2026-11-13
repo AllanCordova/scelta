@@ -200,6 +200,30 @@ export async function deleteRoom(apiBase: string, roomId: string): Promise<void>
   }
 }
 
+export async function removeParticipants(
+  apiBase: string,
+  roomId: string,
+  count: number,
+): Promise<{ removedCount: number }> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/participants/remove`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ count }),
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    removedCount?: number;
+    error?: string;
+  };
+  if (!response.ok || typeof body.removedCount !== "number") {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return { removedCount: body.removedCount };
+}
+
 async function postRound(url: string): Promise<RoomRound> {
   const response = await fetch(url, { method: "POST", credentials: "include" });
   const body = (await response.json().catch(() => ({}))) as { round?: RoomRound; error?: string };

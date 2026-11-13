@@ -24,6 +24,7 @@ import {
   closeRound,
   deleteRoom,
   openRound,
+  removeParticipants,
   restartRound,
 } from "./rooms-api";
 import { useRoomDetail } from "./use-room-detail";
@@ -187,13 +188,44 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
+  async function handleSimulateRemove() {
+    if (!room || isSimulating) {
+      return;
+    }
+    const targetCount = parseSimulationCount();
+    setActionError(null);
+    setIsSimulating(true);
+    try {
+      const { removedCount } = await removeParticipants(apiBase, room.id, targetCount);
+      if (removedCount > 0) {
+        simulatedVotersRef.current.splice(-removedCount, removedCount);
+      }
+      setRefreshTick((current) => current + 1);
+      setSimProgress(
+        removedCount === 0
+          ? "Nenhum participante presente para remover."
+          : `${removedCount} participantes removidos da presença.`,
+      );
+    } catch {
+      setActionError("Não foi possível remover participantes.");
+      setSimProgress(null);
+    } finally {
+      setIsSimulating(false);
+    }
+  }
+
   async function handleSimulateVotes() {
     if (!room || isSimulating) {
       return;
     }
     const currentRound = room.round;
     const roomCandidates = room.candidates ?? [];
-    if (!currentRound || currentRound.status !== "open" || roomCandidates.length === 0) {
+    if (roomCandidates.length === 0) {
+      setActionError("Cadastre candidatos na sala antes de simular votos.");
+      return;
+    }
+    if (!currentRound || currentRound.status !== "open") {
+      setActionError("Abra o escrutínio antes de simular votos.");
       return;
     }
 
@@ -202,17 +234,17 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     setActionError(null);
     setIsSimulating(true);
     try {
-      let pendingVoters = simulatedVotersRef.current.filter(
+      const pendingVoters = simulatedVotersRef.current.filter(
         (voter) => !voter.votedRoundIds.has(roundInstanceId),
       );
 
-      if (pendingVoters.length === 0) {
+      if (pendingVoters.length < targetCount) {
+        const needed = targetCount - pendingVoters.length;
         const startIndex = simulatedVotersRef.current.length + 1;
-        const created: SimulatedVoter[] = [];
-        for (let i = 0; i < targetCount; i += 1) {
+        for (let i = 0; i < needed; i += 1) {
           const displayName = `Simulado ${startIndex + i}`;
           const joinKey = createJoinKey();
-          setSimProgress(`Preparando fila ${i + 1} / ${targetCount}…`);
+          setSimProgress(`Preparando fila ${i + 1} / ${needed}…`);
           await submitJoin(apiBase, room.inviteToken, { displayName, joinKey });
           const voter: SimulatedVoter = {
             joinKey,
@@ -220,9 +252,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             votedRoundIds: new Set(),
           };
           simulatedVotersRef.current.push(voter);
-          created.push(voter);
+          pendingVoters.push(voter);
         }
-        pendingVoters = created;
       }
 
       const votersToCast = pendingVoters.slice(0, targetCount);
@@ -714,8 +745,16 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                   </button>
                   <button
                     type="button"
+                    className="ghost round-action danger-action"
+                    disabled={isSimulating || room.presence.presentCount === 0}
+                    onClick={() => void handleSimulateRemove()}
+                  >
+                    Remover participantes
+                  </button>
+                  <button
+                    type="button"
                     className="round-action"
-                    disabled={isSimulating || !openRoundId || candidatesList.length === 0}
+                    disabled={isSimulating}
                     onClick={() => void handleSimulateVotes()}
                   >
                     Simular votos

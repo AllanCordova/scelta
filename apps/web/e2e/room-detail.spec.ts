@@ -37,6 +37,19 @@ test("admin clicks a room card to open the room detail view and manages the scru
   const inviteUrlValue = await page.getByLabel("Token Direto para Votantes").inputValue();
   expect(inviteUrlValue).toMatch(/\/join\//);
 
+  // Simulator: clicking Simular votos before opening a round shows clear feedback
+  await page.getByRole("button", { name: "Simular votos" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Abra o escrutínio antes de simular votos.");
+
+  // Simulator: admin can add and remove participants before opening round
+  await page.getByLabel("Participantes").fill("2");
+  await page.getByRole("button", { name: "Simular entrada" }).click();
+  await expect(page.getByText("2 participantes simulados entraram na sala.")).toBeVisible();
+
+  await page.getByLabel("Participantes").fill("1");
+  await page.getByRole("button", { name: "Remover participantes" }).click();
+  await expect(page.getByText("1 participantes removidos da presença.")).toBeVisible();
+
   // Join as a voter and cast a ballot after admin opens round from detail view
   const voterPage = await context.newPage();
   await voterPage.goto(inviteUrlValue);

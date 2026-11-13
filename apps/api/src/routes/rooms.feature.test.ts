@@ -1,4 +1,13 @@
-import { createPgliteDatabase, rooms, type Db } from "@scelta/db";
+import {
+  ballots,
+  candidates,
+  createPgliteDatabase,
+  participants,
+  rooms,
+  rounds,
+  voteReceipts,
+  type Db,
+} from "@scelta/db";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
 import { hashPassword } from "../auth/password.js";
@@ -52,6 +61,11 @@ describe("admin rooms", () => {
 
   beforeEach(async () => {
     resetAuthAttempts();
+    await db.delete(ballots);
+    await db.delete(voteReceipts);
+    await db.delete(rounds);
+    await db.delete(candidates);
+    await db.delete(participants);
     await db.delete(rooms);
   });
 
@@ -272,6 +286,9 @@ describe("admin rooms", () => {
         },
         async joinRoom() {
           throw new Error("not implemented");
+        },
+        async removePresentParticipants() {
+          return 0;
         },
         async countPresent() {
           return 0;
@@ -535,6 +552,65 @@ describe("admin rooms", () => {
       tally: {
         totalVotes: 1,
         winnerId: firstCandidateId,
+      },
+    });
+
+    await app.close();
+  });
+
+  it("removes present participants and updates quorum presence", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Sala remoção",
+        roomType: "elder",
+        rulesPreset: "ipb_local_officers",
+        quorumValue: 2,
+        quorumUnit: "absolute",
+        status: "open",
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const room = created.json().room as { id: string; inviteToken: string };
+
+    for (const [name, key] of [
+      ["Ana", "join-key-ana-0001"],
+      ["Bia", "join-key-bia-0002"],
+    ] as const) {
+      const joinRes = await app.inject({
+        method: "POST",
+        url: `/v1/join/${room.inviteToken}`,
+        payload: { displayName: name, joinKey: key },
+      });
+      expect(joinRes.statusCode).toBe(200);
+    }
+
+    const forbidden = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/participants/remove`,
+      headers: { cookie: memberCookie },
+      payload: { count: 1 },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    const removed = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/participants/remove`,
+      headers: { cookie: adminCookie },
+      payload: { count: 1 },
+    });
+    expect(removed.statusCode).toBe(200);
+    expect(removed.json()).toEqual({
+      removedCount: 1,
+      presence: {
+        presentCount: 1,
+        eligibleCount: 0,
+        requiredCount: 2,
+        quorumMet: false,
       },
     });
 

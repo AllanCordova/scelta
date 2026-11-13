@@ -43,6 +43,7 @@ export async function buildApp(dependencies: AppDependencies = {}) {
   await app.register(roomRoutes, {
     roomRepository: dependencies.roomRepository,
     userRepository: dependencies.userRepository,
+    presencePublisher: dependencies.presencePublisher,
   });
   await app.register(memberRoutes, {
     roomRepository: dependencies.roomRepository,

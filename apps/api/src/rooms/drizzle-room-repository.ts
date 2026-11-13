@@ -204,6 +204,28 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       }
     },
 
+    async removePresentParticipants(roomId, limit) {
+      if (limit <= 0) {
+        return 0;
+      }
+      const rows = await db
+        .select({ id: participants.id })
+        .from(participants)
+        .where(and(eq(participants.roomId, roomId), eq(participants.isPresent, true)))
+        .orderBy(desc(participants.joinedAt), desc(participants.id))
+        .limit(limit);
+      const ids = rows.map((row) => row.id);
+      if (ids.length === 0) {
+        return 0;
+      }
+      const updated = await db
+        .update(participants)
+        .set({ isPresent: false })
+        .where(and(eq(participants.roomId, roomId), inArray(participants.id, ids)))
+        .returning({ id: participants.id });
+      return updated.length;
+    },
+
     async countPresent(roomId) {
       const rows = await db
         .select({ value: count() })

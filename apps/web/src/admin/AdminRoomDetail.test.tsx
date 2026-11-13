@@ -239,6 +239,22 @@ describe("AdminRoomDetail", () => {
             receipt: { roundId: "round-1", roundNumber: 1, voted: true },
           });
         }
+        if (
+          url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/participants/remove`) &&
+          method === "POST"
+        ) {
+          joinedCount = Math.max(0, joinedCount - 1);
+          currentRoom = {
+            ...currentRoom,
+            presence: {
+              presentCount: joinedCount,
+              eligibleCount: 4,
+              requiredCount: 1,
+              quorumMet: joinedCount >= 1,
+            },
+          };
+          return json({ removedCount: 1 });
+        }
         return json({ error: "not_found" }, 404);
       }),
     );
@@ -262,6 +278,12 @@ describe("AdminRoomDetail", () => {
     expect(await screen.findByText("2 votos aleatórios computados.")).toBeInTheDocument();
     expect(await screen.findAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(2);
     expect(screen.getByText("0 Membros Aguardando")).toBeInTheDocument();
+
+    // Remove 1 participant from presence
+    fireEvent.change(screen.getByLabelText("Participantes"), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Remover participantes" }));
+    expect(await screen.findByText("1 participantes removidos da presença.")).toBeInTheDocument();
+    expect(await screen.findByText("1 / 1 (presentes / mínimo)")).toBeInTheDocument();
 
     // Emit a socket ballot:activity event and verify live refresh
     currentRoom = {

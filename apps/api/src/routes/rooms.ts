@@ -10,6 +10,7 @@ import {
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
 import { requireAdmin } from "../auth/require-admin.js";
+import type { PresencePublisher } from "../realtime.js";
 import { quorumStatus } from "../rooms/quorum-status.js";
 import type {
   RoomRepository,
@@ -64,9 +65,17 @@ const RoomIdParams = Type.Object({
   }),
 });
 
+const RemoveParticipantsBody = Type.Object(
+  {
+    count: Type.Integer({ minimum: 1, maximum: 50 }),
+  },
+  { additionalProperties: false },
+);
+
 export type RoomRouteOptions = {
   roomRepository?: RoomRepository;
   userRepository?: UserRepository;
+  presencePublisher?: PresencePublisher;
 };
 
 export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, options) => {
@@ -312,6 +321,44 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         return reply.code(204).send();
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to delete room");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/participants/remove",
+    {
+      schema: {
+        params: RoomIdParams,
+        body: RemoveParticipantsBody,
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      const { count } = request.body as { count: number };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const removedCount = await options.roomRepository.removePresentParticipants(roomId, count);
+        const presentCount = await options.roomRepository.countPresent(roomId);
+        const presence = quorumStatus(room, presentCount);
+        options.presencePublisher?.publishPresence(roomId, presence);
+
+        return { removedCount, presence };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to remove participants");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },

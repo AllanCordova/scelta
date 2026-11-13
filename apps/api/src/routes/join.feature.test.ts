@@ -247,6 +247,9 @@ describe("join room", () => {
         async joinRoom() {
           throw new Error("not implemented");
         },
+        async removePresentParticipants() {
+          return 0;
+        },
         async countPresent() {
           return 0;
         },
