@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminRoomDetail } from "./AdminRoomDetail";
 import type { RoomDetail } from "./types";
@@ -146,7 +146,8 @@ describe("AdminRoomDetail", () => {
     expect(
       await screen.findByText(/Eleito por maioria absoluta: Paulo Apóstolo/i),
     ).toBeInTheDocument();
-    expect(screen.getByText("Eleito")).toBeInTheDocument();
+    expect(screen.getAllByText("Eleito").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("button", { name: "Minimizar destaque do eleito" })).toBeInTheDocument();
   });
 
   it("shows not-found alert when room does not exist", async () => {
@@ -339,6 +340,8 @@ describe("AdminRoomDetail", () => {
     // Remove 1 participant from presence
     fireEvent.change(screen.getByLabelText("Participantes"), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Remover participantes" }));
+    const confirmDialog = await screen.findByRole("dialog");
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "Remover participantes" }));
     expect(await screen.findByText("1 participantes removidos da presença.")).toBeInTheDocument();
     expect(await screen.findByText("1 / 1 (presentes / mínimo)")).toBeInTheDocument();
 

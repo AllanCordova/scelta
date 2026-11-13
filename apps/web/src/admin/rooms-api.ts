@@ -229,6 +229,11 @@ export async function createMember(
     isCommunicant: boolean;
     isMale: boolean | null;
     birthDate: string | null;
+    photoUrl?: string | null;
+    societyFlags?: {
+      upaActive?: boolean;
+      umpActive?: boolean;
+    };
   },
 ): Promise<StoredMemberItem> {
   const response = await fetch(`${apiBase}/v1/admin/members`, {
@@ -237,6 +242,40 @@ export async function createMember(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
+  const body = (await response.json().catch(() => ({}))) as {
+    member?: StoredMemberItem;
+    error?: string;
+  };
+  if (!response.ok || !body.member) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.member;
+}
+
+export async function updateMember(
+  apiBase: string,
+  memberId: string,
+  input: {
+    fullName: string;
+    isCommunicant: boolean;
+    isMale: boolean | null;
+    birthDate: string | null;
+    photoUrl?: string | null;
+    societyFlags?: {
+      upaActive?: boolean;
+      umpActive?: boolean;
+    };
+  },
+): Promise<StoredMemberItem> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/members/${encodeURIComponent(memberId)}`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
   const body = (await response.json().catch(() => ({}))) as {
     member?: StoredMemberItem;
     error?: string;

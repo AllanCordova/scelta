@@ -33,6 +33,7 @@ test("admin navigates via /admin hub, manages members manually and via CSV, and 
   await page.getByLabel("Buscar membro").fill("Temporário");
   await expect(page.getByText("Membro Temporário")).toBeVisible();
   await page.getByRole("button", { name: "Remover" }).first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Remover" }).click();
   await expect(page.getByText("Membro Temporário")).toHaveCount(0);
   await page.getByLabel("Buscar membro").fill("");
 
@@ -43,7 +44,7 @@ test("admin navigates via /admin hub, manages members manually and via CSV, and 
     buffer: Buffer.from(csv, "utf-8"),
   });
   await page.getByRole("button", { name: "Importar membros" }).click();
-  await expect(page.getByText(/Importação concluída:/)).toBeVisible();
+  await expect(page.getByText(/Importação concluída:/).first()).toBeVisible();
 
   // Navigate back to Salas (/admin/salas)
   await page.getByRole("link", { name: "Salas" }).first().click();

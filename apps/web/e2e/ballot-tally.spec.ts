@@ -60,9 +60,10 @@ test("two voters cast distinct votes, results match, and neither UI exposes who 
     await expect(voterTwo.getByRole("status")).toContainText("seu voto foi registrado com sigilo");
 
     await item.getByRole("button", { name: "Encerrar escrutínio" }).click();
-    await expect(item.getByText("Sem maioria absoluta neste escrutínio.")).toBeVisible();
-    await expect(item.getByText("Paulo: 1 voto")).toBeVisible();
-    await expect(item.getByText("Silas: 1 voto")).toBeVisible();
+    await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeVisible();
+    await item.getByRole("link", { name: title }).click();
+    await expect(page.locator(".candidate-detail-card", { hasText: "Paulo" }).getByText("1 voto", { exact: true })).toBeVisible();
+    await expect(page.locator(".candidate-detail-card", { hasText: "Silas" }).getByText("1 voto", { exact: true })).toBeVisible();
 
     await expect(voterOne.getByText("Sem maioria absoluta neste escrutínio.")).toBeVisible({
       timeout: 10_000,
@@ -70,7 +71,7 @@ test("two voters cast distinct votes, results match, and neither UI exposes who 
     await expect(voterOne.getByText("Paulo: 1 voto")).toBeVisible();
     await expect(voterOne.getByText("Silas: 1 voto")).toBeVisible();
 
-    const adminText = await item.innerText();
+    const adminText = await page.locator("main").innerText();
     expect(adminText).not.toContain("Votante Alfa");
     expect(adminText).not.toContain("Votante Beta");
 

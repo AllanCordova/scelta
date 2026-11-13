@@ -37,7 +37,7 @@ export function LoginPage() {
       window.location.assign(user.role === "admin" ? "/admin/salas" : "/");
     } catch (error) {
       const code = error instanceof AuthRequestError ? error.errorCode : "unknown";
-      setErrorMessage(authErrorMessage(code, "login"));
+      setErrorMessage(authErrorMessage(code));
       setIsSubmitting(false);
     }
   }
@@ -88,9 +88,6 @@ export function LoginPage() {
           Entrar
         </button>
       </form>
-      <p className="auth-switch">
-        Não tem conta? <a href="/cadastrar">Criar conta</a>
-      </p>
     </section>
   );
 }

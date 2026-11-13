@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type FormEvent } from "react";
+import { toast } from "sonner";
 import { z } from "zod";
 import { apiUrl } from "../api-url";
 import { validateWithZod } from "../forms/validation";
+import { ConfirmDialog } from "../shell/ConfirmDialog";
+import { DatePickerField } from "../shell/DatePickerField";
+import { ImageDropzone } from "../shell/ImageDropzone";
 import { memberImportSummaryLabel } from "./copy";
-import { createMember, deleteMember, importMembers, listMembersPage } from "./rooms-api";
+import { createMember, deleteMember, importMembers, listMembersPage, updateMember } from "./rooms-api";
 import type { StoredMemberItem } from "./types";
 
 const apiBase = apiUrl("");
@@ -17,13 +21,14 @@ const EXPECTED_COLUMNS = [
   "upa_ingresso",
   "ump_ativo",
   "ump_ingresso",
+  "foto",
 ] as const;
 
 const CSV_TEMPLATE_CONTENT = [
   EXPECTED_COLUMNS.join(","),
-  "Paulo Apóstolo,sim,M,1985-04-12,nao,,nao,",
-  "Silas Companheiro,sim,M,1998-06-01,sim,2024-01-10,nao,",
-  "Lídia de Tiatira,sim,F,1995-03-20,sim,2023-05-01,sim,2023-05-01",
+  "Allan Silva,sim,M,1985-04-12,nao,,nao,,https://example.com/allan.jpg",
+  "Silas Companheiro,sim,M,1998-06-01,sim,2024-01-10,nao,,",
+  "Lídia de Tiatira,sim,F,1995-03-20,nao,,sim,2023-05-01,",
 ].join("\n");
 
 const TEMPLATE_DATA_URL = `data:text/csv;charset=utf-8,${encodeURIComponent(CSV_TEMPLATE_CONTENT)}`;
@@ -39,17 +44,47 @@ export function AdminMembers() {
   const [manualCommunicant, setManualCommunicant] = useState(true);
   const [manualGender, setManualGender] = useState<"" | "M" | "F">("");
   const [manualBirthDate, setManualBirthDate] = useState("");
+  const [manualPhotoUrl, setManualPhotoUrl] = useState<string | null>(null);
+  const [manualPhotoName, setManualPhotoName] = useState<string | null>(null);
+  const [manualUpaActive, setManualUpaActive] = useState(false);
+  const [manualUmpActive, setManualUmpActive] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
   const [isAddingMember, setIsAddingMember] = useState(false);
   const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null);
+  const [pendingDeleteMember, setPendingDeleteMember] = useState<StoredMemberItem | null>(null);
+  const [editingMember, setEditingMember] = useState<StoredMemberItem | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editCommunicant, setEditCommunicant] = useState(true);
+  const [editGender, setEditGender] = useState<"" | "M" | "F">("");
+  const [editBirthDate, setEditBirthDate] = useState("");
+  const [editPhotoUrl, setEditPhotoUrl] = useState<string | null>(null);
+  const [editPhotoName, setEditPhotoName] = useState<string | null>(null);
+  const [editUpaActive, setEditUpaActive] = useState(false);
+  const [editUmpActive, setEditUmpActive] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
   const [selectedFileSizeKb, setSelectedFileSizeKb] = useState<string | null>(null);
   const [csvContent, setCsvContent] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
+  const [rejectedRows, setRejectedRows] = useState<{ line: number; name?: string; reason: string }[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
   const [reloadVersion, setReloadVersion] = useState(0);
+
+  useEffect(() => {
+    if (!editingMember) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !isSavingEdit) {
+        setEditingMember(null);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [editingMember, isSavingEdit]);
 
   useEffect(() => {
     let cancelled = false;
@@ -94,6 +129,7 @@ const csvImportSchema = z.object({
   async function processSelectedFile(file: File) {
     setImportError(null);
     setImportSummary(null);
+    setRejectedRows([]);
 
     const validation = validateWithZod(csvFileSchema, { file });
     if (!validation.ok) {
@@ -142,6 +178,7 @@ const csvImportSchema = z.object({
   async function handleImport() {
     setImportError(null);
     setImportSummary(null);
+    setRejectedRows([]);
 
     const validation = validateWithZod(csvImportSchema, { file: csvContent });
     if (!validation.ok) {
@@ -152,9 +189,18 @@ const csvImportSchema = z.object({
     setIsImporting(true);
     try {
       const report = await importMembers(apiBase, csvContent);
-      setImportSummary(
-        memberImportSummaryLabel(report.createdCount, report.updatedCount, report.rejectedCount),
+      const summary = memberImportSummaryLabel(
+        report.createdCount,
+        report.updatedCount,
+        report.rejectedCount,
       );
+      setImportSummary(summary);
+      setRejectedRows(Array.isArray(report.rejectedRows) ? report.rejectedRows : []);
+      if (report.rejectedCount > 0) {
+        toast.warning(summary);
+      } else {
+        toast.success(summary);
+      }
       setSelectedFileName(null);
       setSelectedFileSizeKb(null);
       setCsvContent("");
@@ -169,12 +215,21 @@ const csvImportSchema = z.object({
     }
   }
 
+  function handleClearPhoto() {
+    setManualPhotoUrl(null);
+    setManualPhotoName(null);
+  }
+
   async function handleAddMember(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setManualError(null);
     const trimmed = manualName.trim();
     if (trimmed.length < 2) {
       setManualError("Informe o nome completo com ao menos 2 caracteres.");
+      return;
+    }
+    if (manualUpaActive && manualUmpActive) {
+      setManualError("Um membro não pode estar ativo na UPA e na UMP ao mesmo tempo.");
       return;
     }
 
@@ -185,17 +240,80 @@ const csvImportSchema = z.object({
         isCommunicant: manualCommunicant,
         isMale: manualGender === "" ? null : manualGender === "M",
         birthDate: manualBirthDate.trim().length > 0 ? manualBirthDate.trim() : null,
+        photoUrl: manualPhotoUrl,
+        societyFlags: {
+          upaActive: manualUpaActive,
+          umpActive: manualUmpActive,
+        },
       });
       setManualName("");
       setManualCommunicant(true);
       setManualGender("");
       setManualBirthDate("");
+      setManualUpaActive(false);
+      setManualUmpActive(false);
+      handleClearPhoto();
       setPage(1);
       setReloadVersion((current) => current + 1);
+      toast.success("Membro cadastrado com sucesso.");
     } catch {
       setManualError("Não foi possível cadastrar o membro.");
+      toast.error("Não foi possível cadastrar o membro.");
     } finally {
       setIsAddingMember(false);
+    }
+  }
+
+  function openEditMember(member: StoredMemberItem) {
+    setEditingMember(member);
+    setEditName(member.fullName);
+    setEditCommunicant(member.isCommunicant);
+    setEditGender(member.isMale === true ? "M" : member.isMale === false ? "F" : "");
+    setEditBirthDate(member.birthDate ?? "");
+    setEditPhotoUrl(member.photoUrl ?? null);
+    setEditPhotoName(null);
+    setEditUpaActive(Boolean(member.societyFlags.upaActive));
+    setEditUmpActive(Boolean(member.societyFlags.umpActive));
+    setEditError(null);
+  }
+
+  async function handleSaveEditMember(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingMember || isSavingEdit) {
+      return;
+    }
+    setEditError(null);
+    const trimmed = editName.trim();
+    if (trimmed.length < 2) {
+      setEditError("Informe o nome completo com ao menos 2 caracteres.");
+      return;
+    }
+    if (editUpaActive && editUmpActive) {
+      setEditError("Um membro não pode estar ativo na UPA e na UMP ao mesmo tempo.");
+      return;
+    }
+
+    setIsSavingEdit(true);
+    try {
+      await updateMember(apiBase, editingMember.id, {
+        fullName: trimmed,
+        isCommunicant: editCommunicant,
+        isMale: editGender === "" ? null : editGender === "M",
+        birthDate: editBirthDate.trim().length > 0 ? editBirthDate.trim() : null,
+        photoUrl: editPhotoUrl,
+        societyFlags: {
+          upaActive: editUpaActive,
+          umpActive: editUmpActive,
+        },
+      });
+      setEditingMember(null);
+      setReloadVersion((current) => current + 1);
+      toast.success("Membro atualizado com sucesso.");
+    } catch {
+      setEditError("Não foi possível atualizar o membro.");
+      toast.error("Não foi possível atualizar o membro.");
+    } finally {
+      setIsSavingEdit(false);
     }
   }
 
@@ -206,9 +324,12 @@ const csvImportSchema = z.object({
     setDeletingMemberId(memberId);
     try {
       await deleteMember(apiBase, memberId);
+      setPendingDeleteMember(null);
       setReloadVersion((current) => current + 1);
+      toast.success("Membro removido do rol.");
     } catch {
       setManualError("Não foi possível remover o membro.");
+      toast.error("Não foi possível remover o membro.");
     } finally {
       setDeletingMemberId(null);
     }
@@ -237,7 +358,7 @@ const csvImportSchema = z.object({
                 type="text"
                 value={manualName}
                 onChange={(event) => setManualName(event.target.value)}
-                placeholder="Ex.: Paulo Apóstolo"
+                placeholder="Ex.: Allan"
               />
             </div>
             <div>
@@ -254,23 +375,66 @@ const csvImportSchema = z.object({
             </div>
             <div>
               <label htmlFor="manual-member-birth">Data de nascimento</label>
-              <input
+              <DatePickerField
                 id="manual-member-birth"
-                type="date"
                 value={manualBirthDate}
-                onChange={(event) => setManualBirthDate(event.target.value)}
+                onChange={setManualBirthDate}
               />
             </div>
           </div>
-          <label className="checkbox-row" htmlFor="manual-member-communicant">
-            <input
-              id="manual-member-communicant"
-              type="checkbox"
-              checked={manualCommunicant}
-              onChange={(event) => setManualCommunicant(event.target.checked)}
-            />
-            <span>Membro comungante</span>
-          </label>
+          <div className="member-society-row">
+            <label className="checkbox-row" htmlFor="manual-member-communicant">
+              <input
+                id="manual-member-communicant"
+                type="checkbox"
+                checked={manualCommunicant}
+                onChange={(event) => setManualCommunicant(event.target.checked)}
+              />
+              <span>Membro comungante</span>
+            </label>
+            <label className="checkbox-row" htmlFor="manual-member-upa">
+              <input
+                id="manual-member-upa"
+                type="checkbox"
+                checked={manualUpaActive}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setManualUpaActive(checked);
+                  if (checked) {
+                    setManualUmpActive(false);
+                  }
+                }}
+              />
+              <span>Ativo na UPA</span>
+            </label>
+            <label className="checkbox-row" htmlFor="manual-member-ump">
+              <input
+                id="manual-member-ump"
+                type="checkbox"
+                checked={manualUmpActive}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setManualUmpActive(checked);
+                  if (checked) {
+                    setManualUpaActive(false);
+                  }
+                }}
+              />
+              <span>Ativo na UMP</span>
+            </label>
+          </div>
+          <ImageDropzone
+            id="manual-member-photo"
+            label="Foto do membro (opcional)"
+            value={manualPhotoUrl}
+            fileName={manualPhotoName}
+            fallbackName={manualName || "SC"}
+            onChange={(nextUrl, nextFileName) => {
+              setManualPhotoUrl(nextUrl);
+              setManualPhotoName(nextFileName);
+            }}
+            onError={setManualError}
+          />
           {manualError ? (
             <p className="form-error" role="alert">
               {manualError}
@@ -308,22 +472,46 @@ const csvImportSchema = z.object({
           <ul className="member-directory-list" aria-label="Lista de membros">
             {members.map((member) => (
               <li key={member.id} className="member-directory-row">
-                <div className="member-directory-info">
-                  <strong>{member.fullName}</strong>
-                  <span className="muted">
-                    {member.isCommunicant ? "Comungante" : "Não comungante"}
-                    {member.isMale === true ? " · Masculino" : member.isMale === false ? " · Feminino" : ""}
-                    {member.birthDate ? ` · ${member.birthDate}` : ""}
-                  </span>
+                <div className="member-directory-lead">
+                  {member.photoUrl ? (
+                    <img src={member.photoUrl} alt="" className="member-avatar-img" />
+                  ) : (
+                    <span className="member-avatar-placeholder" aria-hidden="true">
+                      {initialsFromName(member.fullName)}
+                    </span>
+                  )}
+                  <div className="member-directory-info">
+                    <strong>{member.fullName}</strong>
+                    <span className="muted">
+                      {member.isCommunicant ? "Comungante" : "Não comungante"}
+                      {member.isMale === true
+                        ? " · Masculino"
+                        : member.isMale === false
+                          ? " · Feminino"
+                          : ""}
+                      {member.birthDate ? ` · ${member.birthDate}` : ""}
+                      {member.societyFlags.upaActive ? " · UPA" : ""}
+                      {member.societyFlags.umpActive ? " · UMP" : ""}
+                    </span>
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  className="ghost danger-text"
-                  disabled={deletingMemberId === member.id}
-                  onClick={() => void handleDeleteMember(member.id)}
-                >
-                  {deletingMemberId === member.id ? "Removendo…" : "Remover"}
-                </button>
+                <div className="member-row-actions">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => openEditMember(member)}
+                  >
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost danger-text"
+                    disabled={deletingMemberId === member.id}
+                    onClick={() => setPendingDeleteMember(member)}
+                  >
+                    {deletingMemberId === member.id ? "Removendo…" : "Remover"}
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -362,7 +550,7 @@ const csvImportSchema = z.object({
           <div className="member-import-badges">
             <span className="member-count-pill">Membros: {totalMembers} aptos</span>
             <a
-              className="template-download-link"
+              className="template-download-btn"
               href={TEMPLATE_DATA_URL}
               download="modelo-membros-scelta.csv"
             >
@@ -439,14 +627,199 @@ const csvImportSchema = z.object({
             {importSummary}
           </p>
         ) : null}
+        {rejectedRows.length > 0 ? (
+          <div className="import-rejected-box" role="alert">
+            <strong>Linhas rejeitadas na importação:</strong>
+            <ul className="import-rejected-list">
+              {rejectedRows.map((row, index) => (
+                <li key={`${row.line}-${row.reason}-${index}`}>
+                  Linha {row.line}
+                  {row.name ? ` (${row.name})` : ""}: {importRejectionReasonLabel(row.reason)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {importError ? (
           <p className="form-error" role="alert">
             {importError}
           </p>
         ) : null}
       </section>
+
+      <ConfirmDialog
+        open={pendingDeleteMember !== null}
+        title="Remover membro"
+        description={
+          pendingDeleteMember
+            ? `Tem certeza que deseja remover "${pendingDeleteMember.fullName}" do rol de membros?`
+            : ""
+        }
+        confirmLabel={deletingMemberId ? "Removendo…" : "Remover"}
+        busy={Boolean(deletingMemberId)}
+        onCancel={() => setPendingDeleteMember(null)}
+        onConfirm={() => {
+          if (pendingDeleteMember) {
+            void handleDeleteMember(pendingDeleteMember.id);
+          }
+        }}
+      />
+
+      {editingMember ? (
+        <div
+          className="confirm-dialog-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !isSavingEdit) {
+              setEditingMember(null);
+            }
+          }}
+        >
+          <div
+            className="panel member-edit-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-member-dialog-title"
+          >
+            <h2 id="edit-member-dialog-title">Editar membro</h2>
+            <form
+              className="member-manual-form"
+              onSubmit={(event) => void handleSaveEditMember(event)}
+            >
+              <div className="member-manual-grid">
+                <div>
+                  <label htmlFor="edit-member-name">Nome completo</label>
+                  <input
+                    id="edit-member-name"
+                    type="text"
+                    value={editName}
+                    onChange={(event) => setEditName(event.target.value)}
+                    placeholder="Ex.: Allan"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="edit-member-gender">Sexo</label>
+                  <select
+                    id="edit-member-gender"
+                    value={editGender}
+                    onChange={(event) => setEditGender(event.target.value as "" | "M" | "F")}
+                  >
+                    <option value="">Não informado</option>
+                    <option value="M">Masculino</option>
+                    <option value="F">Feminino</option>
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="edit-member-birth">Data de nascimento</label>
+                  <DatePickerField
+                    id="edit-member-birth"
+                    value={editBirthDate}
+                    onChange={setEditBirthDate}
+                  />
+                </div>
+              </div>
+              <div className="member-society-row">
+                <label className="checkbox-row" htmlFor="edit-member-communicant">
+                  <input
+                    id="edit-member-communicant"
+                    type="checkbox"
+                    checked={editCommunicant}
+                    onChange={(event) => setEditCommunicant(event.target.checked)}
+                  />
+                  <span>Membro comungante</span>
+                </label>
+                <label className="checkbox-row" htmlFor="edit-member-upa">
+                  <input
+                    id="edit-member-upa"
+                    type="checkbox"
+                    checked={editUpaActive}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setEditUpaActive(checked);
+                      if (checked) {
+                        setEditUmpActive(false);
+                      }
+                    }}
+                  />
+                  <span>Ativo na UPA</span>
+                </label>
+                <label className="checkbox-row" htmlFor="edit-member-ump">
+                  <input
+                    id="edit-member-ump"
+                    type="checkbox"
+                    checked={editUmpActive}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setEditUmpActive(checked);
+                      if (checked) {
+                        setEditUpaActive(false);
+                      }
+                    }}
+                  />
+                  <span>Ativo na UMP</span>
+                </label>
+              </div>
+              <ImageDropzone
+                id="edit-member-photo"
+                label="Foto do membro (opcional)"
+                value={editPhotoUrl}
+                fileName={editPhotoName}
+                fallbackName={editName || "SC"}
+                onChange={(nextUrl, nextFileName) => {
+                  setEditPhotoUrl(nextUrl);
+                  setEditPhotoName(nextFileName);
+                }}
+                onError={setEditError}
+              />
+              {editError ? (
+                <p className="form-error" role="alert">
+                  {editError}
+                </p>
+              ) : null}
+              <div className="confirm-dialog-actions">
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={isSavingEdit}
+                  onClick={() => setEditingMember(null)}
+                >
+                  Cancelar
+                </button>
+                <button type="submit" disabled={isSavingEdit}>
+                  {isSavingEdit ? "Salvando…" : "Salvar alterações"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function importRejectionReasonLabel(reason: string): string {
+  switch (reason) {
+    case "missing_name":
+      return "Nome ausente";
+    case "name_too_long":
+      return "Nome muito longo";
+    case "invalid_communicant":
+      return "Valor inválido para comungante (use sim ou não)";
+    case "invalid_gender":
+      return "Sexo inválido (use M, F ou deixe em branco)";
+    case "invalid_birth_date":
+      return "Data de nascimento inválida (use AAAA-MM-DD)";
+    case "invalid_photo_url":
+      return "URL ou caminho da foto inválido";
+    case "invalid_society_flag":
+      return "Valor inválido para UPA/UMP (use sim ou não)";
+    case "invalid_society_date":
+      return "Data de ingresso UPA/UMP inválida (use AAAA-MM-DD)";
+    case "conflicting_societies":
+      return "Ativo na UPA e na UMP ao mesmo tempo";
+    default:
+      return reason;
+  }
 }
 
 function readFileAsText(file: File): Promise<string> {
@@ -460,4 +833,15 @@ function readFileAsText(file: File): Promise<string> {
     reader.onerror = () => reject(new Error("file_read_failed"));
     reader.readAsText(file);
   });
+}
+
+function initialsFromName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return "SC";
+  }
+  if (parts.length === 1) {
+    return parts[0]!.slice(0, 2).toLocaleUpperCase("pt-BR");
+  }
+  return `${parts[0]![0] ?? ""}${parts[parts.length - 1]![0] ?? ""}`.toLocaleUpperCase("pt-BR");
 }

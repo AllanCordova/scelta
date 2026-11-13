@@ -27,10 +27,6 @@ export async function login(email: string, password: string): Promise<SessionUse
   return sendCredentials("/v1/auth/login", { email, password });
 }
 
-export async function register(name: string, email: string, password: string): Promise<SessionUser> {
-  return sendCredentials("/v1/auth/register", { name, email, password });
-}
-
 export async function logout(): Promise<void> {
   const response = await fetch(apiUrl("/v1/auth/logout"), {
     method: "POST",
@@ -39,6 +35,23 @@ export async function logout(): Promise<void> {
   if (!response.ok) {
     throw new AuthRequestError("logout_failed");
   }
+}
+
+export async function updateAdminProfile(input: {
+  name: string;
+  photoUrl: string | null;
+}): Promise<SessionUser> {
+  const response = await fetch(apiUrl("/v1/admin/profile"), {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const body = (await response.json().catch(() => ({}))) as { user?: unknown; error?: string };
+  if (!response.ok || !isSessionUser(body.user)) {
+    throw new AuthRequestError(body.error ?? "unknown");
+  }
+  return body.user;
 }
 
 async function sendCredentials(

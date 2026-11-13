@@ -1,16 +1,15 @@
 import { AdminAccessCodes } from "../admin/AdminAccessCodes";
 import { AdminHub } from "../admin/AdminHub";
 import { AdminMembers } from "../admin/AdminMembers";
+import { AdminProfile } from "../admin/AdminProfile";
 import { AdminRoomDetail } from "../admin/AdminRoomDetail";
 import { AdminRooms } from "../admin/AdminRooms";
 import { LoginPage } from "../auth/LoginPage";
-import { RegisterPage } from "../auth/RegisterPage";
 import { useAuth } from "../auth/AuthProvider";
 import { JoinRoom } from "../join/JoinRoom";
 import { joinTokenFromPath } from "../join/path";
 import { AccountPage } from "./AccountPage";
 import { Header } from "./Header";
-import { Home } from "./Home";
 import { adminRoomIdFromPath } from "./paths";
 import { TabBar } from "./TabBar";
 
@@ -25,9 +24,8 @@ export function Shell() {
       <Header />
       <div className="shell">
         <main className="content">
-          {page === "home" ? <Home /> : null}
+          {page === "home" ? <RootLanding /> : null}
           {page === "login" ? <LoginPage /> : null}
-          {page === "register" ? <RegisterPage /> : null}
           {page === "admin" ? <AdminGate view="hub" /> : null}
           {page === "admin-rooms" ? <AdminGate view="rooms" /> : null}
           {page === "admin-room-detail" && adminRoomId ? (
@@ -35,6 +33,7 @@ export function Shell() {
           ) : null}
           {page === "admin-codes" ? <AdminGate view="codes" /> : null}
           {page === "admin-members" ? <AdminGate view="members" /> : null}
+          {page === "admin-profile" ? <AdminGate view="profile" /> : null}
           {page === "account" ? <AccountPage /> : null}
           {page === "join" && joinToken ? <JoinRoom token={joinToken} /> : null}
         </main>
@@ -44,11 +43,22 @@ export function Shell() {
   );
 }
 
+function RootLanding() {
+  const auth = useAuth();
+  if (auth.status === "loading") {
+    return <p className="panel">Carregando…</p>;
+  }
+  if (auth.status === "authenticated") {
+    return auth.user.role === "admin" ? <AdminHub /> : <AccountPage />;
+  }
+  return <LoginPage />;
+}
+
 function AdminGate({
   view,
   roomId,
 }: {
-  view: "hub" | "rooms" | "members" | "codes" | "room-detail";
+  view: "hub" | "rooms" | "members" | "codes" | "room-detail" | "profile";
   roomId?: string;
 }) {
   const auth = useAuth();
@@ -64,9 +74,11 @@ function AdminGate({
         ? "Membros"
         : view === "codes"
           ? "Códigos de Acesso"
-          : view === "hub"
-            ? "Administração"
-            : "Salas";
+          : view === "profile"
+            ? "Perfil"
+            : view === "hub"
+              ? "Administração"
+              : "Salas";
     return (
       <section className="panel">
         <h2>{heading}</h2>
@@ -83,6 +95,9 @@ function AdminGate({
   if (view === "members") {
     return <AdminMembers />;
   }
+  if (view === "profile") {
+    return <AdminProfile />;
+  }
   if (view === "room-detail" && roomId) {
     return <AdminRoomDetail roomId={roomId} />;
   }
@@ -98,20 +113,17 @@ function pageFor(
 ):
   | "home"
   | "login"
-  | "register"
   | "admin"
   | "admin-rooms"
   | "admin-room-detail"
   | "admin-codes"
   | "admin-members"
+  | "admin-profile"
   | "account"
   | "join" {
   const path = pathname.replace(/\/+$/, "") || "/";
   if (path === "/entrar") {
     return "login";
-  }
-  if (path === "/cadastrar") {
-    return "register";
   }
   if (path === "/admin") {
     return "admin";
@@ -127,6 +139,9 @@ function pageFor(
   }
   if (path === "/admin/membros") {
     return "admin-members";
+  }
+  if (path === "/admin/perfil") {
+    return "admin-profile";
   }
   if (path === "/conta") {
     return "account";

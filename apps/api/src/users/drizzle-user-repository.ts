@@ -55,6 +55,7 @@ export function createDrizzleUserRepository(db: Db, churchName: string): UserRep
           id: users.id,
           name: users.name,
           email: users.email,
+          photoUrl: users.photoUrl,
           role: users.role,
           expiresAt: sessions.expiresAt,
         })
@@ -76,8 +77,22 @@ export function createDrizzleUserRepository(db: Db, churchName: string): UserRep
         id: row.id,
         name: row.name,
         email: row.email,
+        photoUrl: row.photoUrl ?? null,
         role: row.role,
       };
+    },
+
+    async updateUserProfile(userId, input) {
+      const updated = await db
+        .update(users)
+        .set({
+          name: input.name,
+          photoUrl: input.photoUrl,
+        })
+        .where(eq(users.id, userId))
+        .returning();
+      const row = updated[0];
+      return row ? toPublicUser(row) : null;
     },
 
     async createSession(userId, token, expiresAt) {
@@ -99,6 +114,7 @@ function toStoredUser(row: {
   name: string;
   email: string;
   passwordHash: string;
+  photoUrl?: string | null;
   role: UserRole;
 }): StoredUser {
   return {
@@ -107,11 +123,18 @@ function toStoredUser(row: {
   };
 }
 
-function toPublicUser(row: { id: string; name: string; email: string; role: UserRole }): PublicUser {
+function toPublicUser(row: {
+  id: string;
+  name: string;
+  email: string;
+  photoUrl?: string | null;
+  role: UserRole;
+}): PublicUser {
   return {
     id: row.id,
     name: row.name,
     email: row.email,
+    photoUrl: row.photoUrl ?? null,
     role: row.role,
   };
 }

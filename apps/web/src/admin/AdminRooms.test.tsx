@@ -331,11 +331,11 @@ describe("AdminRooms", () => {
     const item = await screen.findByRole("listitem");
     fireEvent.click(await within(item).findByRole("button", { name: "Encerrar escrutínio" }));
 
-    expect(await within(item).findByRole("status")).toHaveTextContent(
-      "Eleito por maioria absoluta: Paulo",
-    );
-    expect(within(item).getByText("Paulo: 2 votos")).toBeInTheDocument();
-    expect(within(item).getByText("Silas: 0 votos")).toBeInTheDocument();
+    expect(
+      await within(item).findByRole("button", { name: "Abrir escrutínio" }),
+    ).toBeInTheDocument();
+    expect(within(item).queryByText("Paulo: 2 votos")).not.toBeInTheDocument();
+    expect(within(item).queryByText("Silas: 0 votos")).not.toBeInTheDocument();
   });
 
   it("restarts an open round and displays the restarted notice", async () => {
@@ -511,6 +511,8 @@ describe("AdminRooms", () => {
 
     // Delete the existing room
     fireEvent.click(within(item).getByRole("button", { name: "Excluir" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Excluir" }));
     expect(await screen.findByText("Nenhuma sala ainda.")).toBeInTheDocument();
   });
 });

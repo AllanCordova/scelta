@@ -88,7 +88,7 @@ test("admin sees quorum met when required presence joins and closes without fail
   await expect(visitor.getByRole("status")).toContainText("seu voto foi registrado com sigilo");
   await item.getByRole("button", { name: "Encerrar escrutínio" }).click();
   await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeVisible();
-  await expect(item.getByRole("status")).not.toContainText("Quórum não atingido");
+  await expect(item).not.toContainText("Quórum não atingido");
 });
 
 async function createSimulatedCodes(page: Page, roomTitle: string, count: number): Promise<string[]> {

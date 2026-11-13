@@ -1,8 +1,10 @@
 import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import QRCode from "qrcode";
+import { toast } from "sonner";
 import { z } from "zod";
 import { apiUrl } from "../api-url";
 import { validateWithZod, type FieldErrors } from "../forms/validation";
+import { ConfirmDialog } from "../shell/ConfirmDialog";
 import {
   CLOSE_ROUND_LABEL,
   FAILED_QUORUM_MESSAGE,
@@ -19,8 +21,6 @@ import {
   roomErrorMessage,
   roundErrorMessage,
   showsPresence,
-  standingLabel,
-  tallySummaryLabel,
 } from "./copy";
 import { inviteUrl, quorumDraftFromPreset } from "./room-draft";
 import {
@@ -64,6 +64,7 @@ export function AdminRooms() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [roundError, setRoundError] = useState<{ roomId: string; message: string } | null>(null);
   const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
+  const [pendingDeleteRoom, setPendingDeleteRoom] = useState<RoomSummary | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [qr, setQr] = useState<{ link: string; dataUrl: string } | null>(null);
@@ -190,6 +191,7 @@ export function AdminRooms() {
       setInviteLink(link);
       setTitle("");
       setListVersion((current) => current + 1);
+      toast.success("Sala criada com sucesso.");
     } catch (error) {
       setInviteLink(null);
       if (error instanceof RoomRequestError && error.details.length > 0) {
@@ -218,8 +220,11 @@ export function AdminRooms() {
       const round = await openRound(apiBase, roomId);
       setRooms((current) => current.map((item) => (item.id === roomId ? { ...item, round } : item)));
       setListVersion((current) => current + 1);
+      toast.success("Escrutínio aberto.");
     } catch (error) {
-      setRoundError({ roomId, message: messageFromRoundError(error) });
+      const msg = messageFromRoundError(error);
+      setRoundError({ roomId, message: msg });
+      toast.error(msg);
     } finally {
       setBusyRoomId(null);
     }
@@ -232,8 +237,11 @@ export function AdminRooms() {
       const round = await closeRound(apiBase, roomId, roundId);
       setRooms((current) => current.map((item) => (item.id === roomId ? { ...item, round } : item)));
       setListVersion((current) => current + 1);
+      toast.success("Escrutínio encerrado.");
     } catch (error) {
-      setRoundError({ roomId, message: messageFromRoundError(error) });
+      const msg = messageFromRoundError(error);
+      setRoundError({ roomId, message: msg });
+      toast.error(msg);
     } finally {
       setBusyRoomId(null);
     }
@@ -246,8 +254,11 @@ export function AdminRooms() {
       const round = await restartRound(apiBase, roomId, roundId);
       setRooms((current) => current.map((item) => (item.id === roomId ? { ...item, round } : item)));
       setListVersion((current) => current + 1);
+      toast.success("Escrutínio reiniciado.");
     } catch (error) {
-      setRoundError({ roomId, message: messageFromRoundError(error) });
+      const msg = messageFromRoundError(error);
+      setRoundError({ roomId, message: msg });
+      toast.error(msg);
     } finally {
       setBusyRoomId(null);
     }
@@ -260,8 +271,10 @@ export function AdminRooms() {
       await deleteRoom(apiBase, roomId);
       setRooms((current) => current.filter((item) => item.id !== roomId));
       setListVersion((current) => current + 1);
+      toast.success("Sala excluída.");
     } catch {
       setRoundError({ roomId, message: "Não foi possível excluir a sala." });
+      toast.error("Não foi possível excluir a sala.");
     } finally {
       setBusyRoomId(null);
     }
@@ -498,12 +511,32 @@ export function AdminRooms() {
                 onClose={(roundId) => void handleCloseRound(room.id, roundId)}
                 onRestart={(roundId) => void handleRestartRound(room.id, roundId)}
                 onShowQr={() => handleShowRoomQr(room)}
-                onDelete={() => void handleDeleteRoom(room.id)}
+                onDelete={() => setPendingDeleteRoom(room)}
               />
             ))}
           </ul>
         )}
       </section>
+
+      <ConfirmDialog
+        open={pendingDeleteRoom !== null}
+        title="Excluir sala"
+        description={
+          pendingDeleteRoom
+            ? `Tem certeza que deseja excluir a sala "${pendingDeleteRoom.title}"? Essa ação não pode ser desfeita.`
+            : ""
+        }
+        confirmLabel="Excluir"
+        busy={Boolean(pendingDeleteRoom && busyRoomId === pendingDeleteRoom.id)}
+        onCancel={() => setPendingDeleteRoom(null)}
+        onConfirm={() => {
+          const target = pendingDeleteRoom;
+          setPendingDeleteRoom(null);
+          if (target) {
+            void handleDeleteRoom(target.id);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -554,6 +587,7 @@ function RoomRow({
       await navigator.clipboard.writeText(fullUrl).catch(() => undefined);
     }
     setIsCopied(true);
+    toast.success("Link de convite copiado.");
     setTimeout(() => setIsCopied(false), 1800);
   }
 
@@ -628,6 +662,14 @@ function RoomRow({
                 />
               </div>
             </div>
+          ) : room.status === "closed" ? (
+            <div className="draft-room-summary">
+              <p className="draft-room-description">Assembleia encerrada.</p>
+            </div>
+          ) : room.status === "cancelled" ? (
+            <div className="draft-room-summary">
+              <p className="draft-room-description">Sala cancelada.</p>
+            </div>
           ) : (
             <div className="draft-room-summary">
               <p className="draft-room-description">
@@ -654,17 +696,6 @@ function RoomRow({
             <p className="quorum-failed" role="status">
               {FAILED_QUORUM_MESSAGE}
             </p>
-          ) : null}
-
-          {room.round?.tally ? (
-            <div className="round-tally" role="status">
-              <p className="tally-outcome">{tallySummaryLabel(room.round.tally)}</p>
-              <ul className="tally-standings" aria-label="Apuração">
-                {room.round.tally.standings.map((item) => (
-                  <li key={item.candidateId}>{standingLabel(item.displayName, item.votes)}</li>
-                ))}
-              </ul>
-            </div>
           ) : null}
 
           {error ? (

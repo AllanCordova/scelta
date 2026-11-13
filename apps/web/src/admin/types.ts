@@ -22,6 +22,7 @@ export type PresetDefinition = {
 export type CandidateOption = {
   id: string;
   displayName: string;
+  photoUrl?: string | null;
 };
 
 export type SuggestedCandidate = {
@@ -33,7 +34,7 @@ export type MemberImportReport = {
   createdCount: number;
   updatedCount: number;
   rejectedCount: number;
-  rejectedRows: { line: number; reason: string }[];
+  rejectedRows: { line: number; name?: string; reason: string }[];
 };
 
 export type StoredMemberItem = {
@@ -42,6 +43,7 @@ export type StoredMemberItem = {
   isCommunicant: boolean;
   isMale: boolean | null;
   birthDate: string | null;
+  photoUrl?: string | null;
   societyFlags: {
     upaActive?: boolean;
     upaEnrolledAt?: string;

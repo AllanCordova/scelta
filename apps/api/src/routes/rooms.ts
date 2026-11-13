@@ -599,6 +599,7 @@ function toRoomResponse(
           candidates: candidates.map((candidate) => ({
             id: candidate.id,
             displayName: candidate.displayName,
+            photoUrl: candidate.photoUrl ?? null,
           })),
         }
       : {}),

@@ -4,6 +4,7 @@ export type PublicUser = {
   id: string;
   name: string;
   email: string;
+  photoUrl?: string | null;
   role: UserRole;
 };
 
@@ -29,6 +30,10 @@ export type UserRepository = {
   findByEmail(email: string): Promise<StoredUser | null>;
   insertUser(user: NewUser): Promise<PublicUser>;
   findBySessionToken(token: string | undefined): Promise<PublicUser | null>;
+  updateUserProfile?(
+    userId: string,
+    input: { name: string; photoUrl: string | null },
+  ): Promise<PublicUser | null>;
   createSession(userId: string, token: string, expiresAt: Date): Promise<void>;
   deleteSession(token: string): Promise<void>;
 };

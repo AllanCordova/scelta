@@ -68,7 +68,7 @@ test("admin starts, restarts, and closes a round while participants receive stat
     // Admin restarts the current round
     await item.getByRole("button", { name: "Reiniciar escrutínio" }).click();
     await expect(
-      item.getByText("Escrutínio reiniciado — os votos anteriores foram limpos."),
+      page.getByText("Escrutínio reiniciado — os votos anteriores foram limpos."),
     ).toBeVisible();
 
     // Participants are notified of the restart and can vote again
@@ -88,9 +88,11 @@ test("admin starts, restarts, and closes a round while participants receive stat
 
     // Admin closes the round; only post-restart votes (Silas: 2) count
     await item.getByRole("button", { name: "Encerrar escrutínio" }).click();
-    await expect(item.getByText("Eleito por maioria absoluta: Silas")).toBeVisible();
-    await expect(item.getByText("Silas: 2 votos")).toBeVisible();
-    await expect(item.getByText("Paulo: 0 votos")).toBeVisible();
+    await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeVisible();
+    await item.getByRole("link", { name: title }).click();
+    await expect(page.locator(".admin-winner-hero")).toContainText("Silas");
+    await expect(page.locator(".candidate-detail-card", { hasText: "Silas" }).getByText("2 votos", { exact: true })).toBeVisible();
+    await expect(page.locator(".candidate-detail-card", { hasText: "Paulo: 0 votos" }).getByText("0 votos", { exact: true })).toBeVisible();
 
     await expect(voterOne.getByText("Escrutínio encerrado.")).toBeVisible({ timeout: 10_000 });
     await expect(voterOne.getByText("Eleito por maioria absoluta: Silas")).toBeVisible();

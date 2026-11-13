@@ -157,8 +157,8 @@ describe("multi-round and runoff elections", () => {
     });
     expect(ballotStateR3.statusCode).toBe(200);
     expect(ballotStateR3.json().candidates).toEqual([
-      { id: ana.id, displayName: "Ana" },
-      { id: bia.id, displayName: "Bia" },
+      { id: ana.id, displayName: "Ana", photoUrl: null },
+      { id: bia.id, displayName: "Bia", photoUrl: null },
     ]);
 
     // Voting for eliminated candidate Caio in Round 3 is rejected

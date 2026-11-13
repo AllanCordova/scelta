@@ -17,6 +17,7 @@ export type JoinResult = {
 export type BallotCandidate = {
   id: string;
   displayName: string;
+  photoUrl?: string | null;
 };
 
 export type BallotTally = {

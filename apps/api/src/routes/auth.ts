@@ -1,16 +1,16 @@
+import { parsePhotoUrl } from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
-import { normalizeEmail, validateNewAccount } from "../auth/account.js";
+import { normalizeEmail } from "../auth/account.js";
+import { requireAdmin } from "../auth/require-admin.js";
 import {
-  isClientLimited,
-  recordClientAttempt,
   clearLoginAccountAttempts,
   releaseLoginAttempt,
   releaseLoginClientAttempt,
   takeLoginAttempt,
   takeLoginClientAttempt,
 } from "../auth/auth-attempts.js";
-import { dummyPasswordHash, hashPassword, verifyPassword } from "../auth/password.js";
+import { dummyPasswordHash, verifyPassword } from "../auth/password.js";
 import {
   clearSessionCookieHeader,
   createSessionToken,
@@ -19,20 +19,7 @@ import {
   sessionExpiry,
 } from "../auth/session-cookie.js";
 import { env } from "../env.js";
-import {
-  EmailAlreadyUsedError,
-  type PublicUser,
-  type UserRepository,
-} from "../users/user-repository.js";
-
-const RegisterBody = Type.Object(
-  {
-    name: Type.String({ minLength: 1, maxLength: 80 }),
-    email: Type.String({ minLength: 3, maxLength: 254 }),
-    password: Type.String({ minLength: 1, maxLength: 200 }),
-  },
-  { additionalProperties: false },
-);
+import { type PublicUser, type UserRepository } from "../users/user-repository.js";
 
 const LoginBody = Type.Object(
   {
@@ -47,10 +34,6 @@ type CredentialsBody = {
   password: string;
 };
 
-type RegisterBodyType = CredentialsBody & {
-  name: string;
-};
-
 export type AuthRouteOptions = {
   userRepository?: UserRepository;
 };
@@ -59,51 +42,6 @@ export const authRoutes: FastifyPluginAsync<AuthRouteOptions> = async (app, opti
   app.addHook("onRequest", async (_request, reply) => {
     reply.header("cache-control", "no-store");
   });
-
-  app.post(
-    "/v1/auth/register",
-    { schema: { body: RegisterBody }, attachValidation: true },
-    async (request, reply) => {
-      if (request.validationError) {
-        return reply.code(400).send({ error: "invalid_account" });
-      }
-
-      const userRepository = options.userRepository;
-      if (!userRepository) {
-        return reply.code(503).send({ error: "persistence_unavailable" });
-      }
-
-      const clientKey = clientAddress(request);
-      if (isClientLimited("register", clientKey)) {
-        return reply.code(429).send({ error: "rate_limited" });
-      }
-      recordClientAttempt("register", clientKey);
-
-      const body = request.body as RegisterBodyType;
-      const validated = validateNewAccount(body);
-      if (!validated.ok) {
-        return reply.code(400).send({ error: "invalid_account", details: validated.issues });
-      }
-
-      try {
-        const passwordHash = await hashPassword(validated.value.password);
-        const user = await userRepository.insertUser({
-          name: validated.value.name,
-          email: validated.value.email,
-          passwordHash,
-          role: "member",
-        });
-        await startSession(reply, userRepository, user);
-        return reply.code(201).send({ user });
-      } catch (error) {
-        if (error instanceof EmailAlreadyUsedError) {
-          return reply.code(409).send({ error: "email_taken" });
-        }
-        request.log.error({ err: error }, "Failed to register user");
-        return reply.code(500).send({ error: "persistence_failed" });
-      }
-    },
-  );
 
   app.post(
     "/v1/auth/login",
@@ -185,6 +123,49 @@ export const authRoutes: FastifyPluginAsync<AuthRouteOptions> = async (app, opti
 
     return { user };
   });
+
+  app.patch(
+    "/v1/admin/profile",
+    {
+      bodyLimit: 12 * 1024 * 1024,
+      schema: {
+        body: Type.Object(
+          {
+            name: Type.String({ minLength: 2, maxLength: 120 }),
+            photoUrl: Type.Optional(Type.Union([Type.String({ maxLength: 12_000_000 }), Type.Null()])),
+          },
+          { additionalProperties: false },
+        ),
+      },
+    },
+    async (request, reply) => {
+      const admin = await requireAdmin(request, reply, options.userRepository);
+      if (!admin || !options.userRepository?.updateUserProfile) {
+        return;
+      }
+
+      const body = request.body as { name: string; photoUrl?: string | null };
+      const trimmedName = body.name.trim();
+      if (trimmedName.length < 2) {
+        return reply.code(400).send({ error: "invalid_name" });
+      }
+
+      const photoParsed = parsePhotoUrl(body.photoUrl);
+      if (!photoParsed.ok) {
+        return reply.code(400).send({ error: "invalid_photo_url" });
+      }
+
+      const updated = await options.userRepository.updateUserProfile(admin.id, {
+        name: trimmedName,
+        photoUrl: photoParsed.value,
+      });
+      if (!updated) {
+        return reply.code(404).send({ error: "user_not_found" });
+      }
+
+      return { user: updated };
+    },
+  );
 };
 
 async function startSession(

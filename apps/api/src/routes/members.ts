@@ -1,7 +1,10 @@
 import {
+  hasConflictingSocietyFlags,
   parseIsoDate,
   parseMemberImportCsv,
+  parsePhotoUrl,
   suggestCandidates,
+  type MemberSocietyFlags,
   type RoomType,
 } from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
@@ -32,6 +35,16 @@ const CreateMemberBody = Type.Object(
     isCommunicant: Type.Boolean(),
     isMale: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
     birthDate: Type.Optional(Type.Union([Type.String({ minLength: 10, maxLength: 10 }), Type.Null()])),
+    photoUrl: Type.Optional(Type.Union([Type.String({ maxLength: 12_000_000 }), Type.Null()])),
+    societyFlags: Type.Optional(
+      Type.Object(
+        {
+          upaActive: Type.Optional(Type.Boolean()),
+          umpActive: Type.Optional(Type.Boolean()),
+        },
+        { additionalProperties: false },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -86,6 +99,11 @@ type CreateMemberBodyType = {
   isCommunicant: boolean;
   isMale?: boolean | null;
   birthDate?: string | null;
+  photoUrl?: string | null;
+  societyFlags?: {
+    upaActive?: boolean;
+    umpActive?: boolean;
+  };
 };
 
 export type MemberRouteOptions = {
@@ -170,6 +188,7 @@ export const memberRoutes: FastifyPluginAsync<MemberRouteOptions> = async (app, 
             isCommunicant: member.isCommunicant,
             isMale: member.isMale,
             birthDate: member.birthDate,
+            photoUrl: member.photoUrl,
             societyFlags: member.societyFlags,
           })),
           total,
@@ -186,7 +205,7 @@ export const memberRoutes: FastifyPluginAsync<MemberRouteOptions> = async (app, 
 
   app.post(
     "/v1/admin/members",
-    { schema: { body: CreateMemberBody } },
+    { bodyLimit: 12 * 1024 * 1024, schema: { body: CreateMemberBody } },
     async (request, reply) => {
       if (!(await requireAdmin(request, reply, options.userRepository))) {
         return;
@@ -196,36 +215,51 @@ export const memberRoutes: FastifyPluginAsync<MemberRouteOptions> = async (app, 
         return reply.code(503).send({ error: "persistence_unavailable" });
       }
 
-      const body = request.body as CreateMemberBodyType;
-      const fullName = body.fullName.trim();
-      if (fullName.length < 2) {
-        return reply.code(400).send({ error: "invalid_member_name" });
-      }
-
-      const birthDate = body.birthDate ?? null;
-      if (birthDate !== null && !parseIsoDate(birthDate)) {
-        return reply.code(400).send({ error: "invalid_birth_date" });
+      const validated = validateMemberInput(request.body as CreateMemberBodyType);
+      if (!validated.ok) {
+        return reply.code(400).send({ error: validated.error });
       }
 
       try {
-        const created = await options.roomRepository.createMember({
-          fullName,
-          isCommunicant: body.isCommunicant,
-          isMale: body.isMale ?? null,
-          birthDate,
-        });
+        const created = await options.roomRepository.createMember(validated.value);
         return reply.code(201).send({
-          member: {
-            id: created.id,
-            fullName: created.fullName,
-            isCommunicant: created.isCommunicant,
-            isMale: created.isMale,
-            birthDate: created.birthDate,
-            societyFlags: created.societyFlags,
-          },
+          member: serializeMember(created),
         });
       } catch (error) {
         request.log.error({ err: error }, "Failed to create member");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.patch(
+    "/v1/admin/members/:memberId",
+    { bodyLimit: 12 * 1024 * 1024, schema: { params: MemberIdParams, body: CreateMemberBody } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const validated = validateMemberInput(request.body as CreateMemberBodyType);
+      if (!validated.ok) {
+        return reply.code(400).send({ error: validated.error });
+      }
+
+      const { memberId } = request.params as { memberId: string };
+      try {
+        const updated = await options.roomRepository.updateMember(memberId, validated.value);
+        if (!updated) {
+          return reply.code(404).send({ error: "member_not_found" });
+        }
+        return {
+          member: serializeMember(updated),
+        };
+      } catch (error) {
+        request.log.error({ err: error }, "Failed to update member");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },
@@ -295,3 +329,76 @@ export const memberRoutes: FastifyPluginAsync<MemberRouteOptions> = async (app, 
     },
   );
 };
+
+function validateMemberInput(body: CreateMemberBodyType):
+  | {
+      ok: true;
+      value: {
+        fullName: string;
+        isCommunicant: boolean;
+        isMale: boolean | null;
+        birthDate: string | null;
+        photoUrl: string | null;
+        societyFlags: MemberSocietyFlags;
+      };
+    }
+  | { ok: false; error: string } {
+  const fullName = body.fullName.trim();
+  if (fullName.length < 2) {
+    return { ok: false, error: "invalid_member_name" };
+  }
+
+  const birthDate = body.birthDate ?? null;
+  if (birthDate !== null && !parseIsoDate(birthDate)) {
+    return { ok: false, error: "invalid_birth_date" };
+  }
+
+  const photoParsed = parsePhotoUrl(body.photoUrl);
+  if (!photoParsed.ok) {
+    return { ok: false, error: "invalid_photo_url" };
+  }
+
+  const societyFlags: MemberSocietyFlags = {
+    ...(body.societyFlags?.upaActive !== undefined
+      ? { upaActive: body.societyFlags.upaActive }
+      : {}),
+    ...(body.societyFlags?.umpActive !== undefined
+      ? { umpActive: body.societyFlags.umpActive }
+      : {}),
+  };
+  if (hasConflictingSocietyFlags(societyFlags)) {
+    return { ok: false, error: "conflicting_societies" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      fullName,
+      isCommunicant: body.isCommunicant,
+      isMale: body.isMale ?? null,
+      birthDate,
+      photoUrl: photoParsed.value,
+      societyFlags,
+    },
+  };
+}
+
+function serializeMember(member: {
+  id: string;
+  fullName: string;
+  isCommunicant: boolean;
+  isMale: boolean | null;
+  birthDate: string | null;
+  photoUrl?: string | null;
+  societyFlags: MemberSocietyFlags;
+}) {
+  return {
+    id: member.id,
+    fullName: member.fullName,
+    isCommunicant: member.isCommunicant,
+    isMale: member.isMale,
+    birthDate: member.birthDate,
+    photoUrl: member.photoUrl,
+    societyFlags: member.societyFlags,
+  };
+}

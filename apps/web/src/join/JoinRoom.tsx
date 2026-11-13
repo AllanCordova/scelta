@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
-import confetti from "canvas-confetti";
+import { toast } from "sonner";
 import { z } from "zod";
 import { apiUrl } from "../api-url";
 import { validateWithZod, type FieldErrors } from "../forms/validation";
+import { startTwoSidedConfettiLoop } from "../shell/confetti";
 import {
   ballotErrorMessage,
   joinBlockedMessage,
@@ -282,6 +283,9 @@ function JoinedRoomView({
 }) {
   const [ballotState, setBallotState] = useState<BallotState | null>(null);
   const [votedRoundIds, setVotedRoundIds] = useState<Record<string, boolean>>({});
+  const [votedChoicesByRound, setVotedChoicesByRound] = useState<
+    Record<string, { label: string; isNull: boolean; photoUrl: string | null }>
+  >({});
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>("");
   const [candidateSearch, setCandidateSearch] = useState<string>("");
   const [voteError, setVoteError] = useState<string | null>(null);
@@ -330,56 +334,13 @@ function JoinedRoomView({
     Boolean(round.tally.winnerName);
 
   useEffect(() => {
-    if (!isElectedResult || !currentRoundKey || typeof window === "undefined") {
+    if (!isElectedResult || !currentRoundKey) {
       return;
     }
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      return;
-    }
-
-    let cancelled = false;
-    let timeoutId: number | undefined;
-    const colors = ["#10b981", "#34d399", "#4edea3", "#fbbf24", "#6ee7b7"];
-
-    async function runLoop() {
-      while (!cancelled) {
-        try {
-          const burst = confetti({
-            particleCount: 55,
-            spread: 70,
-            origin: { y: 0.6 },
-            colors,
-          });
-          if (burst) {
-            await burst;
-          }
-        } catch {
-          return;
-        }
-        if (cancelled) {
-          return;
-        }
-        await new Promise<void>((resolve) => {
-          timeoutId = window.setTimeout(resolve, 1000);
-        });
-      }
-    }
-
-    void runLoop();
-
-    return () => {
-      cancelled = true;
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId);
-      }
-      try {
-        confetti.reset();
-      } catch {
-        // Canvas may be unavailable in headless test environments such as jsdom.
-      }
-    };
+    return startTwoSidedConfettiLoop();
   }, [isElectedResult, currentRoundKey]);
   const hasVotedInCurrentRound = Boolean(currentRoundKey && votedRoundIds[currentRoundKey]);
+  const votedChoice = currentRoundKey ? votedChoicesByRound[currentRoundKey] ?? null : null;
   const activeSelectedCandidateId =
     selectedCandidateId === NULL_VOTE_CHOICE ||
     candidates.some((candidate) => candidate.id === selectedCandidateId)
@@ -412,14 +373,29 @@ function JoinedRoomView({
     setIsVoting(true);
     setVoteError(null);
     try {
+      const chosenLabel = selectedCandidateLabel;
+      const isNullChoice = activeSelectedCandidateId === NULL_VOTE_CHOICE;
+      const chosenCandidate = isNullChoice
+        ? null
+        : candidates.find((candidate) => candidate.id === activeSelectedCandidateId) ?? null;
       const receipt = await submitBallot(apiUrl(""), token, {
         joinKey,
-        candidateId:
-          activeSelectedCandidateId === NULL_VOTE_CHOICE ? null : activeSelectedCandidateId,
+        candidateId: isNullChoice ? null : activeSelectedCandidateId,
       });
       setSelectedCandidateId("");
       const key = roundInstanceKey(receipt.roundId, round.restartCount);
       setVotedRoundIds((current) => ({ ...current, [key]: true }));
+      toast.success("Voto registrado com sigilo.");
+      if (chosenLabel) {
+        setVotedChoicesByRound((current) => ({
+          ...current,
+          [key]: {
+            label: chosenLabel,
+            isNull: isNullChoice,
+            photoUrl: chosenCandidate?.photoUrl ?? null,
+          },
+        }));
+      }
     } catch (error) {
       const message = ballotErrorMessage(error);
       setVoteError(message);
@@ -504,15 +480,41 @@ function JoinedRoomView({
 
           {hasVotedInCurrentRound ? (
             <div className="panel voter-receipt-card">
-              <div className="voter-receipt-icon" aria-hidden="true">
-                ✓
+              <div className="voter-receipt-header">
+                <div className="voter-receipt-icon" aria-hidden="true">
+                  ✓
+                </div>
+                <div>
+                  <h3>Voto registrado</h3>
+                  <p role="status">
+                    Comprovante: seu voto foi registrado com sigilo neste escrutínio.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3>Voto registrado</h3>
-                <p role="status">
-                  Comprovante: seu voto foi registrado com sigilo neste escrutínio.
-                </p>
-              </div>
+              {votedChoice ? (
+                <div className="voter-receipt-choice">
+                  <span
+                    className={
+                      votedChoice.isNull
+                        ? "voter-null-icon voter-receipt-avatar"
+                        : "voter-candidate-avatar voter-receipt-avatar"
+                    }
+                    aria-hidden="true"
+                  >
+                    {votedChoice.isNull ? (
+                      "⊘"
+                    ) : votedChoice.photoUrl ? (
+                      <img src={votedChoice.photoUrl} alt="" className="voter-avatar-img" />
+                    ) : (
+                      initialsFromName(votedChoice.label)
+                    )}
+                  </span>
+                  <div className="voter-receipt-choice-copy">
+                    <span className="voter-confirm-label">Sua escolha</span>
+                    <strong>{votedChoice.label}</strong>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : (
             <form className="voter-ballot-form" onSubmit={handleCastVote}>
@@ -587,7 +589,11 @@ function JoinedRoomView({
                         >
                           <span className="voter-candidate-top">
                             <span className="voter-candidate-avatar" aria-hidden="true">
-                              {initialsFromName(candidate.displayName)}
+                              {candidate.photoUrl ? (
+                                <img src={candidate.photoUrl} alt="" className="voter-avatar-img" />
+                              ) : (
+                                initialsFromName(candidate.displayName)
+                              )}
                             </span>
                             <span className="voter-radio" aria-hidden="true" />
                           </span>
@@ -636,7 +642,18 @@ function JoinedRoomView({
             <div className="panel voter-winner-hero">
               <div className="voter-winner-avatar-wrap">
                 <div className="voter-winner-avatar" aria-hidden="true">
-                  {initialsFromName(round.tally.winnerName)}
+                  {(() => {
+                    const winnerCandidate = candidates.find(
+                      (candidate) =>
+                        candidate.id === round.tally?.winnerId ||
+                        candidate.displayName === round.tally?.winnerName,
+                    );
+                    return winnerCandidate?.photoUrl ? (
+                      <img src={winnerCandidate.photoUrl} alt="" className="voter-avatar-img" />
+                    ) : (
+                      initialsFromName(round.tally.winnerName)
+                    );
+                  })()}
                 </div>
                 <span className="voter-winner-badge">Eleito</span>
               </div>
@@ -703,13 +720,27 @@ function JoinedRoomView({
                 const isWinner =
                   round.tally?.outcome === "elected" &&
                   round.tally.winnerName === item.displayName;
+                const matchedCandidate = candidates.find(
+                  (candidate) =>
+                    candidate.id === item.candidateId ||
+                    candidate.displayName === item.displayName,
+                );
                 return (
                   <li
                     key={item.candidateId}
                     className={isWinner ? "voter-standing-item winner" : "voter-standing-item"}
                   >
                     <div className="voter-standing-row">
-                      <span>{voterStandingLabel(item.displayName, item.votes)}</span>
+                      <span className="voter-standing-identity">
+                        <span className="voter-standing-avatar" aria-hidden="true">
+                          {matchedCandidate?.photoUrl ? (
+                            <img src={matchedCandidate.photoUrl} alt="" className="voter-avatar-img" />
+                          ) : (
+                            initialsFromName(item.displayName)
+                          )}
+                        </span>
+                        <span>{voterStandingLabel(item.displayName, item.votes)}</span>
+                      </span>
                       <span className="muted">{percent}%</span>
                     </div>
                     <div className="voter-standing-bar" aria-hidden="true">

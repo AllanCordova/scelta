@@ -55,7 +55,7 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await page.getByLabel("Sala").selectOption(roomOptionValue!);
 
   await page.getByRole("button", { name: "Gerar códigos do rol" }).click();
-  await expect(page.getByText(/códigos ativos prontos para credenciamento/)).toBeVisible();
+  await expect(page.locator(".simulator-status").filter({ hasText: /códigos ativos prontos para credenciamento/ })).toBeVisible();
   const firstPin = await page.locator(".access-code-pin").first().textContent();
   expect(firstPin).toBeTruthy();
 
@@ -76,6 +76,7 @@ test("admin clicks a room card to open the room detail view and manages the scru
 
   await page.getByLabel("Participantes").fill("1");
   await page.getByRole("button", { name: "Remover participantes" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Remover participantes" }).click();
   await expect(page.getByText("1 participantes removidos da presença.")).toBeVisible();
 
   const voterPage = await context.newPage();

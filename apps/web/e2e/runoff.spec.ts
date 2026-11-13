@@ -44,10 +44,12 @@ test("society board election runs 2 inconclusive rounds then narrows 3rd round t
 
     const item = page.getByRole("listitem").filter({ hasText: title });
     await expect(item.getByText("2 / 2", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await item.getByRole("link", { name: title }).click();
+    await expect(page).toHaveURL(/\/admin\/salas\/[0-9a-f-]{36}$/);
 
     // Round 1: all 3 candidates present; votes split Ana 1, Bia 1, Caio 0 -> no majority
-    await item.getByRole("button", { name: "Abrir escrutínio" }).click();
-    await expect(item.getByText("1º escrutínio", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Abrir escrutínio" }).click();
+    await expect(page.getByText("1º Escrutínio")).toBeVisible();
 
     await expect(voterOne.getByRole("heading", { name: "1º escrutínio" })).toBeVisible({
       timeout: 10_000,
@@ -64,13 +66,13 @@ test("society board election runs 2 inconclusive rounds then narrows 3rd round t
     await voterTwo.getByRole("button", { name: "Confirmar voto" }).click();
     await expect(voterTwo.getByRole("status")).toContainText("seu voto foi registrado com sigilo");
 
-    await item.getByRole("button", { name: "Encerrar escrutínio" }).click();
-    await expect(item.getByText("Sem maioria absoluta neste escrutínio.")).toBeVisible();
-    await expect(item.getByText("Caio: 0 votos")).toBeVisible();
+    await page.getByRole("button", { name: "Encerrar escrutínio" }).click();
+    await expect(page.getByRole("button", { name: "Abrir escrutínio" })).toBeVisible();
+    await expect(page.locator(".candidate-detail-card", { hasText: "Caio" }).getByText("0 votos", { exact: true })).toBeVisible();
 
     // Round 2: all 3 candidates remain; one-vote-per-person resets; votes split Ana 1, Bia 1, Caio 0 -> no majority
-    await item.getByRole("button", { name: "Abrir escrutínio" }).click();
-    await expect(item.getByText("2º escrutínio", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Abrir escrutínio" }).click();
+    await expect(page.getByText("2º Escrutínio")).toBeVisible();
 
     await expect(voterOne.getByRole("heading", { name: "2º escrutínio" })).toBeVisible({
       timeout: 10_000,
@@ -87,12 +89,12 @@ test("society board election runs 2 inconclusive rounds then narrows 3rd round t
     await voterTwo.getByRole("button", { name: "Confirmar voto" }).click();
     await expect(voterTwo.getByRole("status")).toContainText("seu voto foi registrado com sigilo");
 
-    await item.getByRole("button", { name: "Encerrar escrutínio" }).click();
-    await expect(item.getByText("Sem maioria absoluta neste escrutínio.")).toBeVisible();
+    await page.getByRole("button", { name: "Encerrar escrutínio" }).click();
+    await expect(page.getByRole("button", { name: "Abrir escrutínio" })).toBeVisible();
 
     // Round 3: runoff of top 2 (Ana and Bia); Caio is eliminated
-    await item.getByRole("button", { name: "Abrir escrutínio" }).click();
-    await expect(item.getByText("3º escrutínio", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Abrir escrutínio" }).click();
+    await expect(page.getByText("3º Escrutínio")).toBeVisible();
 
     await expect(voterOne.getByRole("heading", { name: "3º escrutínio" })).toBeVisible({
       timeout: 10_000,
@@ -113,10 +115,10 @@ test("society board election runs 2 inconclusive rounds then narrows 3rd round t
     await voterTwo.getByRole("button", { name: "Confirmar voto" }).click();
     await expect(voterTwo.getByRole("status")).toContainText("seu voto foi registrado com sigilo");
 
-    await item.getByRole("button", { name: "Encerrar escrutínio" }).click();
-    await expect(item.getByText("Eleito por maioria absoluta: Ana")).toBeVisible();
-    await expect(item.getByText("Ana: 2 votos")).toBeVisible();
-    await expect(item.getByText("Bia: 0 votos")).toBeVisible();
+    await page.getByRole("button", { name: "Encerrar escrutínio" }).click();
+    await expect(page.locator(".admin-winner-hero")).toContainText("Ana");
+    await expect(page.locator(".candidate-detail-card", { hasText: "Ana" }).getByText("2 votos", { exact: true })).toBeVisible();
+    await expect(page.locator(".candidate-detail-card", { hasText: "Bia" }).getByText("0 votos", { exact: true })).toBeVisible();
 
     await expect(voterOne.getByText("Eleito por maioria absoluta: Ana")).toBeVisible({
       timeout: 10_000,

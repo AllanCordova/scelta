@@ -99,8 +99,8 @@ describe("member roll import and listing", () => {
         rejectedCount: 3,
         rejectedRows: [
           { line: 4, reason: "missing_name" },
-          { line: 5, reason: "invalid_communicant" },
-          { line: 6, reason: "invalid_birth_date" },
+          { line: 5, name: "Timóteo Jovem", reason: "invalid_communicant" },
+          { line: 6, name: "Barnabé Consolador", reason: "invalid_birth_date" },
         ],
       },
     });
@@ -141,6 +141,7 @@ describe("member roll import and listing", () => {
         isCommunicant: true,
         isMale: true,
         birthDate: "1985-04-12",
+        photoUrl: null,
         societyFlags: {
           upaActive: false,
         },
@@ -151,6 +152,7 @@ describe("member roll import and listing", () => {
         isCommunicant: true,
         isMale: true,
         birthDate: "1992-11-03",
+        photoUrl: null,
         societyFlags: {
           upaActive: false,
         },
@@ -161,6 +163,7 @@ describe("member roll import and listing", () => {
         isCommunicant: false,
         isMale: false,
         birthDate: "2004-09-20",
+        photoUrl: null,
         societyFlags: {
           upaActive: true,
           upaEnrolledAt: "2023-06-01",
@@ -226,11 +229,31 @@ describe("member roll import and listing", () => {
         isCommunicant: true,
         isMale: false,
         birthDate: "1996-05-10",
+        photoUrl: "https://example.com/kamila.png",
+        societyFlags: { upaActive: true },
       },
     });
     expect(createdRes.statusCode).toBe(201);
-    const createdMember = createdRes.json().member as { id: string; fullName: string };
+    const createdMember = createdRes.json().member as {
+      id: string;
+      fullName: string;
+      photoUrl: string | null;
+    };
     expect(createdMember.fullName).toBe("Kamila Costa");
+    expect(createdMember.photoUrl).toBe("https://example.com/kamila.png");
+
+    const conflictingRes = await app.inject({
+      method: "POST",
+      url: "/v1/admin/members",
+      headers: { cookie: adminCookie },
+      payload: {
+        fullName: "Conflito UPA UMP",
+        isCommunicant: true,
+        societyFlags: { upaActive: true, umpActive: true },
+      },
+    });
+    expect(conflictingRes.statusCode).toBe(400);
+    expect(conflictingRes.json()).toEqual({ error: "conflicting_societies" });
 
     const searchRes = await app.inject({
       method: "GET",

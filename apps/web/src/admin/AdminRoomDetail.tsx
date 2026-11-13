@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
+import { toast } from "sonner";
 import { z } from "zod";
 import { apiUrl } from "../api-url";
 import { validateWithZod } from "../forms/validation";
 import { submitBallot, submitJoin } from "../join/join-api";
 import { createJoinKey } from "../join/join-identity";
+import { startTwoSidedConfettiLoop } from "../shell/confetti";
+import { ConfirmDialog } from "../shell/ConfirmDialog";
 import {
   CLOSE_ROUND_LABEL,
   DECLINE_ROUND_LABEL,
@@ -57,11 +60,31 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   const simulatedVotersRef = useRef<SimulatedVoter[]>([]);
   const [selectedOffice, setSelectedOffice] = useState<string>("");
   const [receiptPage, setReceiptPage] = useState(1);
+  const [dismissedWinnerRoundId, setDismissedWinnerRoundId] = useState<string | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<
+    "delete-room" | "remove-participants" | null
+  >(null);
 
   const { room, loadError, lastSyncedAt } = useRoomDetail(roomId, refreshTick);
 
   const invitePath = room ? (room.invitePath ?? `/join/${room.inviteToken}`) : null;
   const fullInviteUrl = invitePath ? inviteUrl(window.location.origin, invitePath) : null;
+
+  const isQrVisibleRef = useRef(isQrVisible);
+  void isQrVisibleRef;
+  const roundId = room?.round?.id ?? null;
+  const isElectedWinner =
+    room?.round?.status === "closed" &&
+    room.round.tally?.outcome === "elected" &&
+    Boolean(room.round.tally.winnerName);
+  const showWinnerHero = Boolean(roundId && isElectedWinner && dismissedWinnerRoundId !== roundId);
+
+  useEffect(() => {
+    if (!showWinnerHero) {
+      return;
+    }
+    return startTwoSidedConfettiLoop();
+  }, [showWinnerHero, roundId]);
 
   useEffect(() => {
     if (!isQrVisible || !fullInviteUrl) {
@@ -93,6 +116,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       await navigator.clipboard.writeText(fullInviteUrl).catch(() => undefined);
     }
     setIsCopied(true);
+    toast.success("Link de convite copiado.");
     setTimeout(() => setIsCopied(false), 1800);
   }
 
@@ -105,8 +129,11 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     try {
       await openRound(apiBase, room.id, officeLabel);
       setRefreshTick((current) => current + 1);
+      toast.success("Escrutínio aberto.");
     } catch (error) {
-      setActionError(messageFromRoundError(error));
+      const msg = messageFromRoundError(error);
+      setActionError(msg);
+      toast.error(msg);
     } finally {
       setIsBusy(false);
     }
@@ -121,8 +148,11 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     try {
       await closeRound(apiBase, room.id, roundId);
       setRefreshTick((current) => current + 1);
+      toast.success("Escrutínio encerrado.");
     } catch (error) {
-      setActionError(messageFromRoundError(error));
+      const msg = messageFromRoundError(error);
+      setActionError(msg);
+      toast.error(msg);
     } finally {
       setIsBusy(false);
     }
@@ -137,8 +167,11 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     try {
       await restartRound(apiBase, room.id, roundId);
       setRefreshTick((current) => current + 1);
+      toast.success("Escrutínio reiniciado.");
     } catch (error) {
-      setActionError(messageFromRoundError(error));
+      const msg = messageFromRoundError(error);
+      setActionError(msg);
+      toast.error(msg);
     } finally {
       setIsBusy(false);
     }
@@ -153,8 +186,11 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     try {
       await declineRound(apiBase, room.id, roundId);
       setRefreshTick((current) => current + 1);
+      toast.info("Cargo declinado.");
     } catch (error) {
-      setActionError(messageFromRoundError(error));
+      const msg = messageFromRoundError(error);
+      setActionError(msg);
+      toast.error(msg);
     } finally {
       setIsBusy(false);
     }
@@ -374,14 +410,38 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
 
   const tally = room.round?.tally ?? null;
   const totalValidVotes = tally ? tally.totalVotes : room.votedCount;
-  const candidatesList = room.candidates ?? [];
   const standingsByCandidate = new Map(
     (tally?.standings ?? []).map((item) => [item.candidateId, item.votes]),
   );
+  const rawCandidates = room.candidates ?? [];
+  const candidatesList = tally
+    ? [...rawCandidates].sort((a, b) => {
+        const diff = (standingsByCandidate.get(b.id) ?? 0) - (standingsByCandidate.get(a.id) ?? 0);
+        if (diff !== 0) {
+          return diff;
+        }
+        return a.displayName.localeCompare(b.displayName, "pt-BR");
+      })
+    : rawCandidates;
   const highestVotes =
     tally && tally.standings.length > 0
       ? Math.max(...tally.standings.map((item) => item.votes))
       : 0;
+  const winnerCandidate =
+    tally?.outcome === "elected" && tally.winnerName
+      ? candidatesList.find(
+          (candidate) =>
+            candidate.id === tally.winnerId || candidate.displayName === tally.winnerName,
+        )
+      : undefined;
+  const winnerVotes =
+    winnerCandidate !== undefined
+      ? (standingsByCandidate.get(winnerCandidate.id) ?? 0)
+      : tally?.winnerId
+        ? (standingsByCandidate.get(tally.winnerId) ?? 0)
+        : 0;
+  const winnerPercent =
+    tally && tally.totalVotes > 0 ? Math.round((winnerVotes / tally.totalVotes) * 100) : 0;
 
   return (
     <div className="admin-page room-detail-page">
@@ -436,7 +496,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
               type="button"
               className="ghost round-action danger-action"
               disabled={isBusy}
-              onClick={() => void handleDeleteRoom()}
+              onClick={() => setPendingConfirm("delete-room")}
             >
               Excluir
             </button>
@@ -635,6 +695,67 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
         </div>
       </section>
 
+      {isElectedWinner && tally?.winnerName && room.round ? (
+        showWinnerHero ? (
+          <section className="panel voter-winner-hero admin-winner-hero" aria-label="Candidato eleito">
+            <button
+              type="button"
+              className="ghost admin-winner-close-btn"
+              aria-label="Minimizar destaque do eleito"
+              onClick={() => setDismissedWinnerRoundId(room.round!.id)}
+            >
+              × Minimizar
+            </button>
+            <div className="voter-winner-avatar-wrap">
+              <div className="voter-winner-avatar" aria-hidden="true">
+                {winnerCandidate?.photoUrl ? (
+                  <img src={winnerCandidate.photoUrl} alt="" className="voter-avatar-img" />
+                ) : (
+                  candidateInitials(tally.winnerName)
+                )}
+              </div>
+              <span className="voter-winner-badge">Eleito</span>
+            </div>
+            <h2>{tally.winnerName}</h2>
+            <p className="voter-winner-office">
+              {room.round.officeLabel ? `${room.round.officeLabel} Eleito` : `${roomTypeLabel} Eleito`}
+            </p>
+            <div className="voter-majority-box">
+              <div className="voter-majority-header">
+                <span>Maioria absoluta</span>
+                <strong>{winnerPercent}%</strong>
+              </div>
+              <div className="voter-majority-track" aria-hidden="true">
+                <div
+                  className="voter-majority-fill"
+                  style={{ width: `${Math.min(100, winnerPercent)}%` }}
+                />
+                <div className="voter-majority-threshold" />
+              </div>
+              <div className="voter-majority-footer">
+                <span>
+                  Total de votos: <strong>{tally.totalVotes}</strong>
+                </span>
+                <span>Critério: 50% + 1</span>
+              </div>
+            </div>
+          </section>
+        ) : (
+          <div className="admin-winner-restore-bar">
+            <span>
+              Eleito: <strong>{tally.winnerName}</strong>
+            </span>
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setDismissedWinnerRoundId(null)}
+            >
+              Mostrar destaque
+            </button>
+          </div>
+        )
+      ) : null}
+
       <div className="detail-main-grid">
         <section className="panel candidate-results-card" aria-labelledby="scrutiny-heading">
           <div className="candidate-results-header">
@@ -702,7 +823,11 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                     <div className="candidate-detail-top">
                       <div className="candidate-identity">
                         <span className="candidate-avatar" aria-hidden="true">
-                          {candidateInitials(candidate.displayName)}
+                          {candidate.photoUrl ? (
+                            <img src={candidate.photoUrl} alt="" className="voter-avatar-img" />
+                          ) : (
+                            candidateInitials(candidate.displayName)
+                          )}
                         </span>
                         <div>
                           <div className="candidate-name-row">
@@ -856,7 +981,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                     type="button"
                     className="ghost round-action danger-action"
                     disabled={isSimulating || room.presence.presentCount === 0}
-                    onClick={() => void handleSimulateRemove()}
+                    onClick={() => setPendingConfirm("remove-participants")}
                   >
                     Remover participantes
                   </button>
@@ -945,6 +1070,30 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
           })()}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={pendingConfirm !== null}
+        title={
+          pendingConfirm === "delete-room" ? "Excluir sala" : "Remover participantes"
+        }
+        description={
+          pendingConfirm === "delete-room"
+            ? `Tem certeza que deseja excluir a sala "${room.title}"? Essa ação não pode ser desfeita.`
+            : "Tem certeza que deseja remover os participantes presentes da sala?"
+        }
+        confirmLabel={pendingConfirm === "delete-room" ? "Excluir" : "Remover participantes"}
+        busy={isBusy || isSimulating}
+        onCancel={() => setPendingConfirm(null)}
+        onConfirm={() => {
+          const target = pendingConfirm;
+          setPendingConfirm(null);
+          if (target === "delete-room") {
+            void handleDeleteRoom();
+          } else if (target === "remove-participants") {
+            void handleSimulateRemove();
+          }
+        }}
+      />
     </div>
   );
 }

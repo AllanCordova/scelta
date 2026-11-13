@@ -30,29 +30,39 @@ describe("account sessions", () => {
     await db.delete(users);
   });
 
-  it("registers a member, rejects a client role, and keeps rules public", async () => {
+  it("disables self-registration, rejects non-admin access to admin routes, and keeps rules public", async () => {
     const app = await buildApp({ userRepository });
 
-    const created = await app.inject({
+    const registerAttempt = await app.inject({
       method: "POST",
       url: "/v1/auth/register",
       payload: {
         name: "Mia",
-        email: "Mia@Church.test",
+        email: "mia@church.test",
         password: "senha-segura",
       },
     });
+    expect(registerAttempt.statusCode).toBe(404);
 
-    expect(created.statusCode).toBe(201);
-    expect(created.json().user).toMatchObject({
+    const passwordHash = await hashPassword("senha-segura");
+    const member = await userRepository.insertUser({
       name: "Mia",
       email: "mia@church.test",
+      passwordHash,
       role: "member",
     });
-    expect(created.body).not.toContain("scrypt$");
-    expect(created.body).not.toContain("senha-segura");
-    expectSessionFlags(created.headers["set-cookie"]);
-    const cookie = sessionCookie(created.headers["set-cookie"]);
+
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      payload: {
+        email: member.email,
+        password: "senha-segura",
+      },
+    });
+    expect(loginRes.statusCode).toBe(200);
+    expectSessionFlags(loginRes.headers["set-cookie"]);
+    const cookie = sessionCookie(loginRes.headers["set-cookie"]);
     expect(cookie).toContain("scelta_session=");
 
     const me = await app.inject({
@@ -63,24 +73,10 @@ describe("account sessions", () => {
     expect(me.statusCode).toBe(200);
     expect(me.json().user.role).toBe("member");
 
-    const promoted = await app.inject({
-      method: "POST",
-      url: "/v1/auth/register",
-      payload: {
-        name: "Intruso",
-        email: "intruso@church.test",
-        password: "senha-segura",
-        role: "admin",
-      },
-    });
-    expect(promoted.statusCode).toBe(201);
-    expect(promoted.json().user.role).toBe("member");
-    expect(promoted.body).not.toContain("senha-segura");
-
     const intruder = await app.inject({
       method: "POST",
       url: "/v1/admin/rooms",
-      headers: { cookie: sessionCookie(promoted.headers["set-cookie"]) },
+      headers: { cookie },
       payload: {
         title: "Sala indevida",
         roomType: "elder",
