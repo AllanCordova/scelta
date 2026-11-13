@@ -12,6 +12,7 @@ import {
   STATUS_LABELS,
   activeCandidatesLabel,
   describePreset,
+  memberImportSummaryLabel,
   quorumLabel,
   quorumStateLabel,
   roomErrorMessage,
@@ -25,7 +26,9 @@ import {
   RoomRequestError,
   closeRound,
   createRoom,
+  fetchCandidateSuggestions,
   fetchPresets,
+  importMembers,
   listRooms,
   openRound,
   restartRound,
@@ -38,6 +41,7 @@ import type {
   RoomSummary,
   RoomType,
   RulesPreset,
+  SuggestedCandidate,
 } from "./types";
 import { useRoomPresence } from "./use-room-presence";
 
@@ -64,6 +68,12 @@ export function AdminRooms() {
   const [qr, setQr] = useState<{ link: string; dataUrl: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [listVersion, setListVersion] = useState(0);
+  const [memberCsv, setMemberCsv] = useState("");
+  const [isImportingMembers, setIsImportingMembers] = useState(false);
+  const [memberImportSummary, setMemberImportSummary] = useState<string | null>(null);
+  const [memberImportError, setMemberImportError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<SuggestedCandidate[]>([]);
+  const [suggestionsVersion, setSuggestionsVersion] = useState(0);
   const presence = useRoomPresence(rooms);
 
   useEffect(() => {
@@ -105,6 +115,25 @@ export function AdminRooms() {
       cancelled = true;
     };
   }, [listVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchCandidateSuggestions(apiBase, roomType)
+      .then((nextSuggestions) => {
+        if (!cancelled) {
+          setSuggestions(nextSuggestions);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSuggestions([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roomType, suggestionsVersion]);
 
   useEffect(() => {
     if (!inviteLink) {
@@ -228,6 +257,42 @@ export function AdminRooms() {
     }
   }
 
+  async function handleImportMembers() {
+    setMemberImportError(null);
+    setMemberImportSummary(null);
+    if (memberCsv.trim().length === 0) {
+      setMemberImportError("Cole o CSV da lista de membros para importar.");
+      return;
+    }
+    setIsImportingMembers(true);
+    try {
+      const report = await importMembers(apiBase, memberCsv);
+      setMemberImportSummary(
+        memberImportSummaryLabel(report.createdCount, report.updatedCount, report.rejectedCount),
+      );
+      setMemberCsv("");
+      setSuggestionsVersion((current) => current + 1);
+    } catch {
+      setMemberImportError("Não foi possível importar a lista de membros.");
+    } finally {
+      setIsImportingMembers(false);
+    }
+  }
+
+  function handleToggleSuggestedCandidate(fullName: string) {
+    const names = parseCandidateInputNames(candidatesInput);
+    const key = fullName.toLocaleLowerCase();
+    const exists = names.some((name) => name.toLocaleLowerCase() === key);
+    const nextNames = exists
+      ? names.filter((name) => name.toLocaleLowerCase() !== key)
+      : [...names, fullName];
+    setCandidatesInput(nextNames.join(", "));
+  }
+
+  const selectedCandidateKeys = new Set(
+    parseCandidateInputNames(candidatesInput).map((name) => name.toLocaleLowerCase()),
+  );
+
   return (
     <div className="admin-page">
       <header className="page-intro">
@@ -338,6 +403,30 @@ export function AdminRooms() {
             />
           </label>
 
+          {suggestions.length > 0 ? (
+            <fieldset className="choice-field">
+              <legend>Sugestões de candidatos</legend>
+              <div className="choice-row">
+                {suggestions.map((suggestion) => {
+                  const isIncluded = selectedCandidateKeys.has(
+                    suggestion.fullName.toLocaleLowerCase(),
+                  );
+                  return (
+                    <button
+                      key={suggestion.memberId}
+                      type="button"
+                      className={isIncluded ? "choice selected" : "choice"}
+                      aria-pressed={isIncluded}
+                      onClick={() => handleToggleSuggestedCandidate(suggestion.fullName)}
+                    >
+                      {suggestion.fullName}
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+          ) : null}
+
           <fieldset className="choice-field">
             <legend>Situação</legend>
             <div className="choice-row compact">
@@ -379,6 +468,37 @@ export function AdminRooms() {
           {qrDataUrl ? <img data-testid="invite-qr" alt="QR do convite" src={qrDataUrl} /> : null}
         </section>
       ) : null}
+
+      <section className="panel member-import" aria-labelledby="member-import-heading">
+        <h2 id="member-import-heading">Rol de membros</h2>
+        <label>
+          CSV de membros
+          <textarea
+            rows={3}
+            value={memberCsv}
+            placeholder="nome,comungante,sexo,data_nascimento,upa_ativo,upa_ingresso"
+            onChange={(event) => setMemberCsv(event.target.value)}
+          />
+        </label>
+        {memberImportSummary ? (
+          <p className="import-summary" aria-live="polite">
+            {memberImportSummary}
+          </p>
+        ) : null}
+        {memberImportError ? (
+          <p className="form-error" role="alert">
+            {memberImportError}
+          </p>
+        ) : null}
+        <button
+          type="button"
+          className="ghost"
+          disabled={isImportingMembers}
+          onClick={() => void handleImportMembers()}
+        >
+          Importar membros
+        </button>
+      </section>
 
       <section className="room-list" aria-labelledby="rooms-heading">
         <h2 id="rooms-heading">Salas</h2>
@@ -534,6 +654,17 @@ function eligiblePayload(
   }
 
   return { eligibleCount: count };
+}
+
+function parseCandidateInputNames(value: string): string[] {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return [];
+  }
+  return trimmed
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
 }
 
 function candidatesPayload(
