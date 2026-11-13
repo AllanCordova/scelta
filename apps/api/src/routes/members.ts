@@ -1,4 +1,9 @@
-import { parseMemberImportCsv } from "@scelta/domain";
+import {
+  parseIsoDate,
+  parseMemberImportCsv,
+  suggestCandidates,
+  type RoomType,
+} from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
 import { requireAdmin } from "../auth/require-admin.js";
@@ -12,8 +17,33 @@ const ImportMembersBody = Type.Object(
   { additionalProperties: false },
 );
 
+const SuggestionsQuery = Type.Object(
+  {
+    roomType: Type.Union([
+      Type.Literal("pastor"),
+      Type.Literal("elder"),
+      Type.Literal("deacon"),
+      Type.Literal("upa_board"),
+      Type.Literal("custom"),
+    ]),
+    referenceDate: Type.Optional(Type.String({ minLength: 10, maxLength: 10 })),
+    minAgeYears: Type.Optional(Type.Integer({ minimum: 0, maximum: 120 })),
+    minSocietyMonths: Type.Optional(Type.Integer({ minimum: 0, maximum: 600 })),
+    requireMaleForOfficers: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+
 type ImportMembersBodyType = {
   csv: string;
+};
+
+type SuggestionsQueryType = {
+  roomType: RoomType;
+  referenceDate?: string;
+  minAgeYears?: number;
+  minSocietyMonths?: number;
+  requireMaleForOfficers?: boolean;
 };
 
 export type MemberRouteOptions = {
@@ -87,4 +117,42 @@ export const memberRoutes: FastifyPluginAsync<MemberRouteOptions> = async (app, 
       return reply.code(500).send({ error: "persistence_failed" });
     }
   });
+
+  app.get(
+    "/v1/admin/members/suggestions",
+    { schema: { querystring: SuggestionsQuery } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const query = request.query as SuggestionsQueryType;
+      if (query.referenceDate !== undefined && !parseIsoDate(query.referenceDate)) {
+        return reply.code(400).send({ error: "invalid_reference_date" });
+      }
+
+      try {
+        const stored = await options.roomRepository.listMembers();
+        const suggestions = suggestCandidates(stored, {
+          roomType: query.roomType,
+          ...(query.referenceDate !== undefined ? { referenceDate: query.referenceDate } : {}),
+          ...(query.minAgeYears !== undefined ? { minAgeYears: query.minAgeYears } : {}),
+          ...(query.minSocietyMonths !== undefined
+            ? { minSocietyMonths: query.minSocietyMonths }
+            : {}),
+          ...(query.requireMaleForOfficers !== undefined
+            ? { requireMaleForOfficers: query.requireMaleForOfficers }
+            : {}),
+        });
+        return { suggestions };
+      } catch (error) {
+        request.log.error({ err: error }, "Failed to suggest candidates");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
 };

@@ -17,6 +17,18 @@ export type CandidateOption = {
   displayName: string;
 };
 
+export type SuggestedCandidate = {
+  memberId: string;
+  fullName: string;
+};
+
+export type MemberImportReport = {
+  createdCount: number;
+  updatedCount: number;
+  rejectedCount: number;
+  rejectedRows: { line: number; reason: string }[];
+};
+
 export type CandidateStanding = {
   candidateId: string;
   displayName: string;

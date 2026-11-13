@@ -72,3 +72,10 @@ export {
   type RejectedMemberImportRow,
   type ValidMemberImportRow,
 } from "./member-import.js";
+export {
+  isMemberEligibleForRoomType,
+  suggestCandidates,
+  type CandidateFilterOptions,
+  type CandidateMemberRecord,
+  type SuggestedCandidate,
+} from "./candidate-suggestions.js";

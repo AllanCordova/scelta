@@ -1,5 +1,6 @@
 import {
   findPreset,
+  isMemberEligibleForRoomType,
   tallyRoundVotes,
   validateCandidateNames,
   validateCreateRoom,
@@ -99,6 +100,27 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
       }
 
       try {
+        if (candidateNames.length > 0) {
+          const roll = await options.roomRepository.listMembers();
+          if (roll.length > 0) {
+            const memberByName = new Map(
+              roll.map((member) => [member.fullName.toLocaleLowerCase(), member]),
+            );
+            for (const name of candidateNames) {
+              const matched = memberByName.get(name.toLocaleLowerCase());
+              if (
+                matched &&
+                !isMemberEligibleForRoomType(matched, { roomType: validated.value.roomType })
+              ) {
+                return reply.code(400).send({
+                  error: "invalid_room",
+                  details: [{ field: "candidates", code: "invalid" }],
+                });
+              }
+            }
+          }
+        }
+
         const stored = await options.roomRepository.createRoom({
           title: validated.value.title,
           roomType: validated.value.roomType,

@@ -146,16 +146,16 @@
 
 ### B2.2 — Candidate suggestions by room type
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Depending on room type, suggest eligible candidates (e.g. communicant men ≥ 18 for elder/deacon; UPA members meeting seniority rules).
 
 **Acceptance criteria:**
 
-- [ ] Elder/deacon room suggests candidates matching CI/IPB office filters (configurable)
-- [ ] UPA-style room applies society eligibility (e.g. active + 6 months) when data is available
-- [ ] Admin can include/exclude suggested names before opening the ballot
-- [ ] Ineligible people cannot appear as selectable candidates once filters are applied
-- [ ] Unit tests for filter rules; browser test for suggestion list on create-room flow
+- [x] Elder/deacon room suggests candidates matching CI/IPB office filters (configurable)
+- [x] UPA-style room applies society eligibility (e.g. active + 6 months) when data is available
+- [x] Admin can include/exclude suggested names before opening the ballot
+- [x] Ineligible people cannot appear as selectable candidates once filters are applied
+- [x] Unit tests for filter rules; browser test for suggestion list on create-room flow
 
 ---
 

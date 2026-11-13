@@ -79,6 +79,14 @@ export function activeCandidatesLabel(roundNumber: number, names: readonly strin
   return `${roundNumber}º escrutínio — Candidatos: ${names.join(", ")}`;
 }
 
+export function memberImportSummaryLabel(
+  createdCount: number,
+  updatedCount: number,
+  rejectedCount: number,
+): string {
+  return `Importação concluída: ${createdCount} criados, ${updatedCount} atualizados, ${rejectedCount} rejeitados.`;
+}
+
 const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   title: "Informe um título.",
   roomType: "Escolha o tipo da sala.",

@@ -412,6 +412,56 @@ describe("AdminRooms", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("A API está sem banco de dados.");
     expect(screen.queryByRole("list", { name: "Salas" })).not.toBeInTheDocument();
   });
+
+  it("loads candidate suggestions by room type and allows toggling names before creating a room", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/rules/presets")) {
+          return json({ presets });
+        }
+        if (url.includes("/v1/admin/members/suggestions?roomType=elder")) {
+          return json({
+            suggestions: [
+              { memberId: "m-1", fullName: "Paulo Apóstolo" },
+              { memberId: "m-2", fullName: "Silas Companheiro" },
+            ],
+          });
+        }
+        if (url.includes("/v1/admin/members/suggestions?roomType=upa_board")) {
+          return json({
+            suggestions: [{ memberId: "m-3", fullName: "Lídia de Tiatira" }],
+          });
+        }
+        return handleFetch(input, init);
+      }),
+    );
+
+    render(<AdminRooms />);
+    await screen.findByDisplayValue("34");
+
+    const suggestionsGroup = await screen.findByRole("group", {
+      name: "Sugestões de candidatos",
+    });
+    const pauloButton = within(suggestionsGroup).getByRole("button", { name: "Paulo Apóstolo" });
+    const silasButton = within(suggestionsGroup).getByRole("button", { name: "Silas Companheiro" });
+
+    fireEvent.click(pauloButton);
+    fireEvent.click(silasButton);
+    expect(screen.getByLabelText("Candidatos")).toHaveValue("Paulo Apóstolo, Silas Companheiro");
+
+    // Exclude Paulo before creating the room
+    fireEvent.click(pauloButton);
+    expect(screen.getByLabelText("Candidatos")).toHaveValue("Silas Companheiro");
+
+    // Switch room type to Diretoria UPA and verify UPA suggestions load
+    const typeGroup = screen.getByRole("group", { name: "Tipo" });
+    fireEvent.click(within(typeGroup).getByRole("button", { name: "Diretoria UPA" }));
+    expect(
+      await within(suggestionsGroup).findByRole("button", { name: "Lídia de Tiatira" }),
+    ).toBeInTheDocument();
+  });
 });
 
 function rulesGroup() {
@@ -425,6 +475,10 @@ function handleFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
 
   if (url.endsWith("/v1/rules/presets")) {
     return json({ presets });
+  }
+
+  if (url.includes("/v1/admin/members/suggestions")) {
+    return json({ suggestions: [] });
   }
 
   if (url.endsWith("/v1/admin/rooms") && init?.method === "POST") {

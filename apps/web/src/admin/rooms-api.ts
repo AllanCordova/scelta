@@ -2,12 +2,14 @@ import { readQuorumPresence, type QuorumPresence } from "./presence-event";
 import type {
   CreatableRoomStatus,
   FieldError,
+  MemberImportReport,
   PresetDefinition,
   QuorumUnit,
   RoomRound,
   RoomSummary,
   RoomType,
   RulesPreset,
+  SuggestedCandidate,
 } from "./types";
 
 export class RoomRequestError extends Error {
@@ -115,6 +117,47 @@ export async function restartRound(
   return postRound(
     `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds/${encodeURIComponent(roundId)}/restart`,
   );
+}
+
+export async function importMembers(
+  apiBase: string,
+  csv: string,
+): Promise<MemberImportReport> {
+  const response = await fetch(`${apiBase}/v1/admin/members/import`, {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ csv }),
+  });
+
+  const body = (await response.json().catch(() => ({}))) as {
+    report?: MemberImportReport;
+    error?: string;
+  };
+  if (!response.ok || !body.report) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+
+  return body.report;
+}
+
+export async function fetchCandidateSuggestions(
+  apiBase: string,
+  roomType: RoomType,
+): Promise<SuggestedCandidate[]> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/members/suggestions?roomType=${encodeURIComponent(roomType)}`,
+    { credentials: "include" },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const body = (await response.json().catch(() => ({}))) as {
+    suggestions?: SuggestedCandidate[];
+  };
+  return Array.isArray(body.suggestions) ? body.suggestions : [];
 }
 
 async function postRound(url: string): Promise<RoomRound> {
