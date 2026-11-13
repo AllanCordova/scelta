@@ -48,18 +48,18 @@
 
 ### B1.1 — Create and configure a room
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Admin creates a voting room with title, type, quorum, and a rules preset (IPB local officers / society board / custom).
 
 **Acceptance criteria:**
 
-- [ ] Admin can create a room with title and `room_type`
-- [ ] Admin can set quorum as absolute number or percentage of eligible list
-- [ ] Admin can pick a rules preset that pre-fills majority and round behavior
-- [ ] Room receives a unique invite token suitable for QR / link
-- [ ] Room appears in admin list with status `draft` / `open`
-- [ ] Unit + feature tests cover validation (invalid quorum rejected)
-- [ ] Browser test: admin creates a room and sees invite QR/link
+- [x] Admin can create a room with title and `room_type`
+- [x] Admin can set quorum as absolute number or percentage of eligible list
+- [x] Admin can pick a rules preset that pre-fills majority and round behavior
+- [x] Room receives a unique invite token suitable for QR / link
+- [x] Room appears in admin list with status `draft` / `open`
+- [x] Unit + feature tests cover validation (invalid quorum rejected)
+- [x] Browser test: admin creates a room and sees invite QR/link
 
 ### B1.2 — Join room via QR / link
 

@@ -29,12 +29,47 @@ export const roundStatusEnum = pgEnum("round_status", [
   "closed",
   "restarted",
 ]);
+export const userRoleEnum = pgEnum("user_role", ["admin", "member"]);
 
-export const churches = pgTable("churches", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  name: text("name").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const churches = pgTable(
+  "churches",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("churches_name_uidx").on(table.name)],
+);
+
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    churchId: uuid("church_id")
+      .notNull()
+      .references(() => churches.id),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    role: userRoleEnum("role").notNull().default("member"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("users_email_uidx").on(table.email)],
+);
+
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("sessions_token_hash_uidx").on(table.tokenHash)],
+);
 
 export const members = pgTable("members", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -49,20 +84,24 @@ export const members = pgTable("members", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
-export const rooms = pgTable("rooms", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  churchId: uuid("church_id")
-    .notNull()
-    .references(() => churches.id),
-  title: text("title").notNull(),
-  roomType: text("room_type").notNull(),
-  rulesPreset: rulesPresetEnum("rules_preset").notNull().default("custom"),
-  quorumValue: integer("quorum_value").notNull(),
-  quorumUnit: quorumUnitEnum("quorum_unit").notNull().default("absolute"),
-  inviteToken: text("invite_token").notNull(),
-  status: roomStatusEnum("status").notNull().default("draft"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const rooms = pgTable(
+  "rooms",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    churchId: uuid("church_id")
+      .notNull()
+      .references(() => churches.id),
+    title: text("title").notNull(),
+    roomType: text("room_type").notNull(),
+    rulesPreset: rulesPresetEnum("rules_preset").notNull().default("custom"),
+    quorumValue: integer("quorum_value").notNull(),
+    quorumUnit: quorumUnitEnum("quorum_unit").notNull().default("absolute"),
+    inviteToken: text("invite_token").notNull(),
+    status: roomStatusEnum("status").notNull().default("draft"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("rooms_invite_token_uidx").on(table.inviteToken)],
+);
 
 export const participants = pgTable(
   "participants",

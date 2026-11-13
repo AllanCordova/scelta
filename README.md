@@ -54,12 +54,16 @@ pnpm install
 pnpm --filter @scelta/domain build
 pnpm --filter @scelta/db build
 
-# optional database
+# optional database. Host port 5433, so it can run beside another Postgres on 5432.
 docker compose up -d postgres
 
-# API + web
+# API + web. This compiles @scelta/domain and @scelta/db first.
 pnpm dev
 ```
+
+`pnpm dev` compiles those two packages because the API imports their built JavaScript, not the TypeScript source. Run the same two `build` commands yourself only when you change them without restarting `pnpm dev`. The dev server and the Compose web server proxy `/v1` to the API, so the browser stays on one origin and the session cookie is first-party.
+
+Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env`. On startup the API creates that user as an admin when the email is not registered yet. The example password is for local development only: production refuses to start with it, or with a password shorter than 12 characters. An existing account is not promoted or given a new password on restart. Room administration requires role `admin`. Home, invite, and future voting pages stay usable without a login. The API creates the database tables on startup when `DATABASE_URL` is set. Without Postgres, `SCELTA_DB=pglite` starts an in-process database for local smoke tests.
 
 - Web: http://localhost:5173  
 - API health: http://localhost:3333/health  

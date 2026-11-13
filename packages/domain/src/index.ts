@@ -16,3 +16,17 @@ export {
   type RoundOutcome,
   type NextRoundPlan,
 } from "./rounds.js";
+export {
+  CREATE_ROOM_STATUSES,
+  PRESET_DEFINITIONS,
+  ROOM_TYPES,
+  findPreset,
+  validateCreateRoom,
+  type CreateRoomDraft,
+  type CreateRoomStatus,
+  type MajorityRule,
+  type PresetDefinition,
+  type RoomFieldError,
+  type RoomType,
+  type ValidRoomConfig,
+} from "./room.js";

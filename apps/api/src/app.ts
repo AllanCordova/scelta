@@ -1,20 +1,43 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
+import { env } from "./env.js";
+import type { UserRepository } from "./users/user-repository.js";
+import { authRoutes } from "./routes/auth.js";
 import { healthRoutes } from "./routes/health.js";
+import { roomRoutes, type RoomRouteOptions } from "./routes/rooms.js";
 import { rulesRoutes } from "./routes/rules.js";
 
-export async function buildApp() {
+export type AppDependencies = {
+  roomRepository?: RoomRouteOptions["roomRepository"];
+  userRepository?: UserRepository;
+};
+
+export async function buildApp(dependencies: AppDependencies = {}) {
   const app = Fastify({
-    logger: true,
+    // Trust forwarded headers only from loopback and private addresses (the Compose
+    // nginx). A client on the published API port cannot forge its address.
+    trustProxy: "loopback, uniquelocal",
+    logger: {
+      redact: ["req.headers.authorization", "req.headers.cookie", "res.headers.set-cookie"],
+    },
   });
 
   await app.register(cors, {
-    origin: true,
+    origin: env.corsOrigin,
+    credentials: true,
+    allowedHeaders: ["Content-Type"],
   });
   await app.register(sensible);
   await app.register(healthRoutes);
   await app.register(rulesRoutes);
+  await app.register(authRoutes, {
+    userRepository: dependencies.userRepository,
+  });
+  await app.register(roomRoutes, {
+    roomRepository: dependencies.roomRepository,
+    userRepository: dependencies.userRepository,
+  });
 
   return app;
 }
