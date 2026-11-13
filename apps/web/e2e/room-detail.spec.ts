@@ -54,11 +54,17 @@ test("admin clicks a room card to open the room detail view and manages the scru
     voterPage.getByText("Comprovante: seu voto foi registrado com sigilo neste escrutínio."),
   ).toBeVisible();
 
-  await page.reload();
+  // Live reactivity: admin detail page updates automatically without reloading
   await expect(page.getByText("Cédula recebida e assinada digitalmente")).toBeVisible();
 
+  // Simulator: admin can simulate additional participants joining and casting random votes
+  await page.getByLabel("Participantes").fill("2");
+  await page.getByRole("button", { name: "Simular votos" }).click();
+  await expect(page.getByText("2 votos aleatórios computados.")).toBeVisible();
+  await expect(page.getByText("Cédula recebida e assinada digitalmente")).toHaveCount(3);
+
   await page.getByRole("button", { name: "Encerrar escrutínio" }).click();
-  await expect(page.getByText(/Eleito por maioria absoluta: Paulo Apóstolo/i)).toBeVisible();
+  await expect(page.getByText(/Eleito por maioria absoluta: (Paulo Apóstolo|Silas)/i)).toBeVisible();
   await expect(page.getByText("Eleito", { exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: /Voltar para Painel de Salas/i }).click();

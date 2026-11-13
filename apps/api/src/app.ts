@@ -59,6 +59,7 @@ export async function buildApp(dependencies: AppDependencies = {}) {
   });
   await app.register(ballotRoutes, {
     roomRepository: dependencies.roomRepository,
+    presencePublisher: dependencies.presencePublisher,
   });
 
   return app;

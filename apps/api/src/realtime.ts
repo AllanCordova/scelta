@@ -18,6 +18,7 @@ export type RoundStateSnapshot = {
 export type PresencePublisher = {
   publishPresence(roomId: string, presence: PresenceSnapshot): void;
   publishRoundState?(roomId: string, roundState: RoundStateSnapshot): void;
+  publishBallotActivity?(roomId: string, roundId: string): void;
 };
 
 export type PresenceUpdate = PresenceSnapshot & {
@@ -41,6 +42,9 @@ export function createSocketPresencePublisher(io: Server): PresencePublisher {
     publishRoundState(roomId, roundState) {
       const update: RoundStateUpdate = { roomId, ...roundState };
       io.to(`room:${roomId}`).emit("round:state", update);
+    },
+    publishBallotActivity(roomId, roundId) {
+      io.to(`room:${roomId}`).emit("ballot:activity", { roomId, roundId });
     },
   };
 }

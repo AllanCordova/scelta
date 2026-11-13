@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { apiUrl } from "../api-url";
+import { submitBallot, submitJoin } from "../join/join-api";
+import { createJoinKey } from "../join/join-identity";
 import {
   CLOSE_ROUND_LABEL,
   FAILED_QUORUM_MESSAGE,
@@ -21,47 +23,32 @@ import {
   RoomRequestError,
   closeRound,
   deleteRoom,
-  fetchRoomDetail,
   openRound,
   restartRound,
 } from "./rooms-api";
-import type { RoomDetail } from "./types";
+import { useRoomDetail } from "./use-room-detail";
 
 const apiBase = apiUrl("");
 
+type SimulatedVoter = {
+  joinKey: string;
+  displayName: string;
+  votedRoundIds: Set<string>;
+};
+
 export function AdminRoomDetail({ roomId }: { roomId: string }) {
-  const [room, setRoom] = useState<RoomDetail | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [isQrVisible, setIsQrVisible] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [simCountInput, setSimCountInput] = useState("5");
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [simProgress, setSimProgress] = useState<string | null>(null);
+  const simulatedVotersRef = useRef<SimulatedVoter[]>([]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void fetchRoomDetail(apiBase, roomId)
-      .then((detail) => {
-        if (!cancelled) {
-          setRoom(detail);
-          setLoadError(null);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          if (error instanceof RoomRequestError && error.status === 404) {
-            setLoadError("Sala não encontrada.");
-          } else {
-            setLoadError("Não foi possível carregar os detalhes da sala.");
-          }
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [roomId, refreshTick]);
+  const { room, loadError, lastSyncedAt } = useRoomDetail(roomId, refreshTick);
 
   const invitePath = room ? (room.invitePath ?? `/join/${room.inviteToken}`) : null;
   const fullInviteUrl = invitePath ? inviteUrl(window.location.origin, invitePath) : null;
@@ -162,6 +149,104 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
+  function parseSimulationCount(): number {
+    const parsed = Number.parseInt(simCountInput, 10);
+    if (Number.isNaN(parsed) || parsed < 1) {
+      return 1;
+    }
+    return Math.min(parsed, 50);
+  }
+
+  async function handleSimulateJoin() {
+    if (!room || isSimulating) {
+      return;
+    }
+    const targetCount = parseSimulationCount();
+    setActionError(null);
+    setIsSimulating(true);
+    try {
+      const startIndex = simulatedVotersRef.current.length + 1;
+      for (let i = 0; i < targetCount; i += 1) {
+        const displayName = `Simulado ${startIndex + i}`;
+        const joinKey = createJoinKey();
+        setSimProgress(`Entrando ${i + 1} / ${targetCount}…`);
+        await submitJoin(apiBase, room.inviteToken, { displayName, joinKey });
+        simulatedVotersRef.current.push({
+          joinKey,
+          displayName,
+          votedRoundIds: new Set(),
+        });
+        setRefreshTick((current) => current + 1);
+      }
+      setSimProgress(`${targetCount} participantes simulados entraram na sala.`);
+    } catch {
+      setActionError("Não foi possível simular a entrada de participantes.");
+      setSimProgress(null);
+    } finally {
+      setIsSimulating(false);
+    }
+  }
+
+  async function handleSimulateVotes() {
+    if (!room || isSimulating) {
+      return;
+    }
+    const currentRound = room.round;
+    const roomCandidates = room.candidates ?? [];
+    if (!currentRound || currentRound.status !== "open" || roomCandidates.length === 0) {
+      return;
+    }
+
+    const roundInstanceId = `${currentRound.id}:${currentRound.restartCount ?? 0}`;
+    const targetCount = parseSimulationCount();
+    setActionError(null);
+    setIsSimulating(true);
+    try {
+      let pendingVoters = simulatedVotersRef.current.filter(
+        (voter) => !voter.votedRoundIds.has(roundInstanceId),
+      );
+
+      if (pendingVoters.length === 0) {
+        const startIndex = simulatedVotersRef.current.length + 1;
+        const created: SimulatedVoter[] = [];
+        for (let i = 0; i < targetCount; i += 1) {
+          const displayName = `Simulado ${startIndex + i}`;
+          const joinKey = createJoinKey();
+          setSimProgress(`Preparando fila ${i + 1} / ${targetCount}…`);
+          await submitJoin(apiBase, room.inviteToken, { displayName, joinKey });
+          const voter: SimulatedVoter = {
+            joinKey,
+            displayName,
+            votedRoundIds: new Set(),
+          };
+          simulatedVotersRef.current.push(voter);
+          created.push(voter);
+        }
+        pendingVoters = created;
+      }
+
+      const votersToCast = pendingVoters.slice(0, targetCount);
+      for (let i = 0; i < votersToCast.length; i += 1) {
+        const voter = votersToCast[i]!;
+        const randomCandidate =
+          roomCandidates[Math.floor(Math.random() * roomCandidates.length)]!;
+        setSimProgress(`Votando ${i + 1} / ${votersToCast.length}…`);
+        await submitBallot(apiBase, room.inviteToken, {
+          joinKey: voter.joinKey,
+          candidateId: randomCandidate.id,
+        });
+        voter.votedRoundIds.add(roundInstanceId);
+        setRefreshTick((current) => current + 1);
+      }
+      setSimProgress(`${votersToCast.length} votos aleatórios computados.`);
+    } catch {
+      setActionError("Não foi possível simular os votos.");
+      setSimProgress(null);
+    } finally {
+      setIsSimulating(false);
+    }
+  }
+
   if (loadError) {
     return (
       <div className="admin-page room-detail-page">
@@ -227,9 +312,11 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
         <a className="detail-back-link" href="/admin">
           ← Voltar para Painel de Salas
         </a>
-        <span className="detail-sync-badge">
+        <span className="detail-sync-badge" aria-live="polite">
           <span className="status-dot" aria-hidden="true" />
-          Sincronizado com ata digital
+          {lastSyncedAt
+            ? `Ao vivo • Atualizado às ${formatSyncTime(lastSyncedAt)}`
+            : "Sincronizando…"}
         </span>
       </div>
 
@@ -595,6 +682,53 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
               O sistema desacopla a identificação do membro do voto registrado.
             </p>
           </section>
+
+          {isActive ? (
+            <section className="panel simulator-card" aria-labelledby="simulator-heading">
+              <div className="simulator-header">
+                <h2 id="simulator-heading">Simulador de Assembleia (Teste)</h2>
+                <p className="muted">
+                  Simula participantes entrando na fila e votando aleatoriamente em candidatos.
+                </p>
+              </div>
+              <div className="simulator-controls">
+                <label className="simulator-count-label">
+                  Participantes
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={simCountInput}
+                    disabled={isSimulating}
+                    onChange={(event) => setSimCountInput(event.target.value)}
+                  />
+                </label>
+                <div className="simulator-buttons">
+                  <button
+                    type="button"
+                    className="ghost round-action"
+                    disabled={isSimulating}
+                    onClick={() => void handleSimulateJoin()}
+                  >
+                    Simular entrada
+                  </button>
+                  <button
+                    type="button"
+                    className="round-action"
+                    disabled={isSimulating || !openRoundId || candidatesList.length === 0}
+                    onClick={() => void handleSimulateVotes()}
+                  >
+                    Simular votos
+                  </button>
+                </div>
+              </div>
+              {simProgress ? (
+                <p className="simulator-status" role="status">
+                  {simProgress}
+                </p>
+              ) : null}
+            </section>
+          ) : null}
         </div>
       </div>
     </div>
@@ -632,6 +766,14 @@ function formatReceiptTime(iso: string): string {
   return date.toLocaleTimeString("pt-BR", {
     hour: "2-digit",
     minute: "2-digit",
+  });
+}
+
+function formatSyncTime(date: Date): string {
+  return date.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
   });
 }
 

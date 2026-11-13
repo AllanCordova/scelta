@@ -1,7 +1,24 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminRoomDetail } from "./AdminRoomDetail";
 import type { RoomDetail } from "./types";
+
+const socketHandlers = new Map<string, Set<(payload: unknown) => void>>();
+
+vi.mock("socket.io-client", () => ({
+  io: () => ({
+    on: (event: string, handler: (payload: unknown) => void) => {
+      const set = socketHandlers.get(event) ?? new Set();
+      set.add(handler);
+      socketHandlers.set(event, set);
+    },
+    off: (event: string, handler: (payload: unknown) => void) => {
+      socketHandlers.get(event)?.delete(handler);
+    },
+    emit: () => undefined,
+    disconnect: () => undefined,
+  }),
+}));
 
 vi.mock("qrcode", () => ({
   default: {
@@ -46,6 +63,7 @@ const sampleRoom: RoomDetail = {
 describe("AdminRoomDetail", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    socketHandlers.clear();
   });
 
   it("renders room detail KPIs, regimental rules, candidates, and anonymous receipts", async () => {
@@ -163,6 +181,100 @@ describe("AdminRoomDetail", () => {
     expect(
       await screen.findByText("Escrutínio reiniciado — os votos anteriores foram limpos."),
     ).toBeInTheDocument();
+  });
+
+  it("updates live on socket ballot/presence events and simulates participants joining and voting", async () => {
+    let currentRoom: RoomDetail = {
+      ...sampleRoom,
+      presence: {
+        presentCount: 0,
+        eligibleCount: 4,
+        requiredCount: 1,
+        quorumMet: false,
+      },
+      votedCount: 0,
+      receiptTimestamps: [],
+    };
+    let joinedCount = 0;
+    let castCount = 0;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: currentRoom });
+        }
+        if (url.endsWith(`/v1/join/${sampleRoom.inviteToken}`) && method === "POST") {
+          joinedCount += 1;
+          currentRoom = {
+            ...currentRoom,
+            presence: {
+              presentCount: joinedCount,
+              eligibleCount: 4,
+              requiredCount: 1,
+              quorumMet: joinedCount >= 1,
+            },
+          };
+          return json({
+            title: sampleRoom.title,
+            status: "open",
+            displayName: `Simulado ${joinedCount}`,
+            presentCount: joinedCount,
+            alreadyJoined: false,
+          });
+        }
+        if (url.endsWith(`/v1/join/${sampleRoom.inviteToken}/ballot`) && method === "POST") {
+          castCount += 1;
+          currentRoom = {
+            ...currentRoom,
+            votedCount: castCount,
+            receiptTimestamps: [
+              ...currentRoom.receiptTimestamps,
+              "2026-11-13T12:10:00.000Z",
+            ],
+          };
+          return json({
+            receipt: { roundId: "round-1", roundNumber: 1, voted: true },
+          });
+        }
+        return json({ error: "not_found" }, 404);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    expect(await screen.findByText("0 / 1 (presentes / mínimo)")).toBeInTheDocument();
+
+    // Simulate 2 participants joining
+    fireEvent.change(screen.getByLabelText("Participantes"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Simular entrada" }));
+
+    expect(
+      await screen.findByText("2 participantes simulados entraram na sala."),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("2 / 1 (presentes / mínimo)")).toBeInTheDocument();
+    expect(screen.getByText("2 Membros Aguardando")).toBeInTheDocument();
+
+    // Simulate randomized votes for the 2 waiting participants
+    fireEvent.click(screen.getByRole("button", { name: "Simular votos" }));
+    expect(await screen.findByText("2 votos aleatórios computados.")).toBeInTheDocument();
+    expect(await screen.findAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(2);
+    expect(screen.getByText("0 Membros Aguardando")).toBeInTheDocument();
+
+    // Emit a socket ballot:activity event and verify live refresh
+    currentRoom = {
+      ...currentRoom,
+      votedCount: 3,
+      receiptTimestamps: [...currentRoom.receiptTimestamps, "2026-11-13T12:11:00.000Z"],
+    };
+    for (const handler of socketHandlers.get("ballot:activity") ?? []) {
+      handler({ roomId: sampleRoom.id, roundId: "round-1" });
+    }
+    await waitFor(() => {
+      expect(screen.getAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(3);
+    });
   });
 });
 
