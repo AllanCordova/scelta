@@ -40,7 +40,9 @@ Before pushing or opening a PR, run the **same checks** [`.github/workflows/ci.y
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm --filter @scelta/domain test
 pnpm --filter @scelta/domain build
+pnpm --filter @scelta/db build
 pnpm --filter @scelta/api lint
 pnpm --filter @scelta/api test
 pnpm --filter @scelta/api test:feature

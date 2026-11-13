@@ -33,8 +33,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Domain tests
+        run: pnpm --filter @scelta/domain test
+
       - name: Build domain
         run: pnpm --filter @scelta/domain build
+
+      - name: Build database package
+        run: pnpm --filter @scelta/db build
 
       - name: Lint
         run: pnpm --filter @scelta/api lint

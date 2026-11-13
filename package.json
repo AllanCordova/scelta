@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "scripts": {
-    "dev": "pnpm -r --parallel --filter @scelta/api --filter @scelta/web dev",
+    "dev": "pnpm --filter @scelta/domain build && pnpm --filter @scelta/db build && pnpm -r --parallel --filter @scelta/api --filter @scelta/web dev",
     "dev:api": "pnpm --filter @scelta/api dev",
     "dev:web": "pnpm --filter @scelta/web dev",
     "build": "pnpm -r --filter @scelta/domain --filter @scelta/db --filter @scelta/api --filter @scelta/web build",

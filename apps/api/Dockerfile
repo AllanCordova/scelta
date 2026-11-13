@@ -18,12 +18,11 @@ RUN pnpm --filter @scelta/domain build \
   && pnpm --filter @scelta/db build \
   && pnpm --filter @scelta/api build
 
-FROM node:22-alpine AS runner
-WORKDIR /app
+# Keep the build tree. pnpm links dependencies with relative symlinks
+# (apps/api/node_modules -> ../../node_modules/.pnpm). Copying only dist
+# and the root node_modules breaks those links, so Node cannot find dotenv.
+FROM build AS runner
+WORKDIR /app/apps/api
 ENV NODE_ENV=production
-COPY --from=build /app/apps/api/dist ./dist
-COPY --from=build /app/apps/api/package.json ./package.json
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages ./packages
 EXPOSE 3333
 CMD ["node", "dist/index.js"]

@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { Type } from "@sinclair/typebox";
 import {
   hasReachedQuorum,
+  PRESET_DEFINITIONS,
   nextRoundPlan,
   type RulesPreset,
   type TallyEntry,
@@ -31,6 +32,10 @@ const RoundPlanBody = Type.Object({
 });
 
 export const rulesRoutes: FastifyPluginAsync = async (app) => {
+  app.get("/v1/rules/presets", async () => {
+    return { presets: PRESET_DEFINITIONS };
+  });
+
   app.post(
     "/v1/rules/quorum",
     {

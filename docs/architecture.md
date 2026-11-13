@@ -120,9 +120,11 @@ sequenceDiagram
 | --- | --- | --- | --- |
 | 2026-03-26 | Product = church voting rooms (IPB-first) | Stakeholder description | Accepted |
 | 2026-03-26 | Fastify + React + PostgreSQL + Socket.io + Docker | Serious schema-validated API, TS end-to-end, self-host | Accepted |
+| 2026-11-12 | Admin routes use a server-side bearer token (`ADMIN_TOKEN`) until an auth provider is chosen | Fail closed on room create/list; voters do not receive this token | Superseded |
+| 2026-11-12 | Admin access is a user role (`admin` or `member`) with an httpOnly session cookie. Invite and ballot routes stay anonymous | A shared bearer token cannot tell admins from members, and a login must not be required to cast an anonymous vote. Passwords are scrypt hashes. OIDC can replace the password check later without changing the role model | Accepted |
 
 ## Open questions
 
-- Admin auth provider details (session cookies vs OIDC)
+- Whether a later OIDC provider replaces the email/password check
 - Exact voter identity claim UX at QR join
 - Multi-tenant SaaS vs single-church deploy defaults

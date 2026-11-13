@@ -7,6 +7,8 @@
 
 ```mermaid
 erDiagram
+    CHURCH ||--o{ USER : accounts
+    USER ||--o{ SESSION : authenticates
     CHURCH ||--o{ MEMBER : enrolls
     CHURCH ||--o{ ROOM : hosts
     MEMBER ||--o{ ROOM_ELIGIBILITY : may_join
@@ -23,6 +25,20 @@ erDiagram
     CHURCH {
         uuid id PK
         string name
+    }
+    USER {
+        uuid id PK
+        uuid church_id FK
+        string name
+        string email
+        string password_hash
+        string role
+    }
+    SESSION {
+        uuid id PK
+        uuid user_id FK
+        string token_hash
+        datetime expires_at
     }
     MEMBER {
         uuid id PK
@@ -101,11 +117,25 @@ erDiagram
 
 ### Church
 
-Tenant / congregation using Scelta.
+Tenant / congregation using Scelta. `name` is unique: one row per church name, so concurrent room creation cannot split the admin list.
+
+### User
+
+Login account for the console. This is not the member roll and is never stored on a ballot.
+
+| Field | Notes |
+| --- | --- |
+| `email` | Unique, stored lowercase |
+| `password_hash` | scrypt hash. The raw password is never stored or returned |
+| `role` | `admin` manages rooms. `member` can sign in and still cannot open the admin console. Self-registration always creates `member` |
+
+### Session
+
+Server-side login session. The cookie holds a random token; the database stores only its hash. Logout deletes the row. Expired rows are rejected.
 
 ### Member
 
-Person on a church (or society) roll. Used for eligibility and candidate suggestions.
+Person on a church (or society) roll. Used for eligibility and candidate suggestions. Not the same as a `User`.
 
 | Field | Notes |
 | --- | --- |
@@ -119,10 +149,10 @@ A single election session created by an admin (QR join target).
 
 | Field | Notes |
 | --- | --- |
-| `room_type` | e.g. `elder`, `deacon`, `upa_board`, `custom` |
-| `rules_preset` | e.g. `ipb_local_officers`, `ipb_society_board`, `custom` |
+| `room_type` | `pastor`, `elder`, `deacon`, `upa_board`, or `custom` |
+| `rules_preset` | `ipb_local_officers`, `ipb_society_board`, or `custom`. Majority and round behavior are derived from the preset, not stored as separate columns |
 | `quorum_value` + `quorum_unit` | Absolute count or percent of eligible list |
-| `invite_token` | Backing the QR / short link |
+| `invite_token` | Unguessable, unique capability behind the QR / short link (`/join/{token}`) |
 | `status` | `draft` · `open` · `voting` · `closed` · `cancelled` |
 
 ### Participant
