@@ -6,7 +6,9 @@ import {
   FAILED_QUORUM_MESSAGE,
   OPEN_ROUND_LABEL,
   PRESET_OPTIONS,
+  RESTART_ROUND_LABEL,
   ROOM_TYPE_OPTIONS,
+  ROUND_RESTARTED_MESSAGE,
   STATUS_LABELS,
   activeCandidatesLabel,
   describePreset,
@@ -26,6 +28,7 @@ import {
   fetchPresets,
   listRooms,
   openRound,
+  restartRound,
 } from "./rooms-api";
 import type { QuorumPresence } from "./presence-event";
 import type {
@@ -211,6 +214,20 @@ export function AdminRooms() {
     }
   }
 
+  async function handleRestartRound(roomId: string, roundId: string) {
+    setRoundError(null);
+    setBusyRoomId(roomId);
+    try {
+      const round = await restartRound(apiBase, roomId, roundId);
+      setRooms((current) => current.map((item) => (item.id === roomId ? { ...item, round } : item)));
+      setListVersion((current) => current + 1);
+    } catch (error) {
+      setRoundError({ roomId, message: messageFromRoundError(error) });
+    } finally {
+      setBusyRoomId(null);
+    }
+  }
+
   return (
     <div className="admin-page">
       <header className="page-intro">
@@ -382,6 +399,7 @@ export function AdminRooms() {
                 error={roundError?.roomId === room.id ? roundError.message : null}
                 onOpen={() => void handleOpenRound(room.id)}
                 onClose={(roundId) => void handleCloseRound(room.id, roundId)}
+                onRestart={(roundId) => void handleRestartRound(room.id, roundId)}
               />
             ))}
           </ul>
@@ -398,6 +416,7 @@ function RoomRow({
   error,
   onOpen,
   onClose,
+  onRestart,
 }: {
   room: RoomSummary;
   presence: QuorumPresence | undefined;
@@ -405,6 +424,7 @@ function RoomRow({
   error: string | null;
   onOpen: () => void;
   onClose: (roundId: string) => void;
+  onRestart: (roundId: string) => void;
 }) {
   const openRoundId = room.round?.status === "open" ? room.round.id : null;
 
@@ -419,6 +439,9 @@ function RoomRow({
               room.candidates.map((item) => item.displayName),
             )}
           </p>
+        ) : null}
+        {room.round?.status === "open" && (room.round.restartCount ?? 0) > 0 ? (
+          <p className="round-restarted">{ROUND_RESTARTED_MESSAGE}</p>
         ) : null}
         {room.round?.outcome === "failed_quorum" ? (
           <p className="quorum-failed" role="status">
@@ -464,6 +487,16 @@ function RoomRow({
             >
               {openRoundId ? CLOSE_ROUND_LABEL : OPEN_ROUND_LABEL}
             </button>
+            {openRoundId ? (
+              <button
+                type="button"
+                className="ghost round-action"
+                disabled={isBusy}
+                onClick={() => onRestart(openRoundId)}
+              >
+                {RESTART_ROUND_LABEL}
+              </button>
+            ) : null}
           </>
         ) : null}
         <span className="status">{STATUS_LABELS[room.status]}</span>

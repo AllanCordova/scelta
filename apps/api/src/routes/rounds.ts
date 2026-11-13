@@ -1,6 +1,7 @@
 import {
   canOpenRound,
   canPublishWinner,
+  canRestartRound,
   closeRoundOutcome,
   resolveNextRoundCandidateIds,
   tallyRoundVotes,
@@ -10,6 +11,7 @@ import {
 import { Type } from "@sinclair/typebox";
 import type { FastifyPluginAsync } from "fastify";
 import { requireAdmin } from "../auth/require-admin.js";
+import type { PresencePublisher } from "../realtime.js";
 import { quorumStatus } from "../rooms/quorum-status.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
 import { toRoundSummary } from "../rooms/round-summary.js";
@@ -26,6 +28,7 @@ const Uuid = Type.String({
 export type RoundRouteOptions = {
   roomRepository?: RoomRepository;
   userRepository?: UserRepository;
+  presencePublisher?: PresencePublisher;
 };
 
 export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, options) => {
@@ -104,6 +107,12 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: opened.reason });
         }
 
+        options.presencePublisher?.publishRoundState?.(room.id, {
+          roundId: opened.round.id,
+          roundNumber: opened.round.number,
+          state: "open",
+        });
+
         const activeSet = new Set(resolved.candidateIds);
         const activeCandidates = roomCandidates.filter((candidate) => activeSet.has(candidate.id));
 
@@ -168,9 +177,60 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "round_not_open" });
         }
 
+        options.presencePublisher?.publishRoundState?.(room.id, {
+          roundId: closed.id,
+          roundNumber: closed.number,
+          state: "closed",
+        });
+
         return { round: toRoundSummary(closed, tally), quorum };
       } catch (error) {
         request.log.error({ err: error, roomId, roundId }, "Failed to close round");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/rounds/:roundId/restart",
+    { schema: { params: Type.Object({ roomId: Uuid, roundId: Uuid }) } },
+    async (request, reply) => {
+      const repository = await adminRepository(request, reply, options);
+      if (!repository) {
+        return;
+      }
+
+      const { roomId, roundId } = request.params as { roomId: string; roundId: string };
+      try {
+        const room = await repository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const round = await repository.findRound(roomId, roundId);
+        if (!round) {
+          return reply.code(404).send({ error: "round_not_found" });
+        }
+
+        const check = canRestartRound(room.status, round.status, round.outcome);
+        if (!check.ok) {
+          return reply.code(409).send({ error: check.reason });
+        }
+
+        const restarted = await repository.restartRound(roomId, roundId);
+        if (!restarted) {
+          return reply.code(409).send({ error: "round_not_open" });
+        }
+
+        options.presencePublisher?.publishRoundState?.(room.id, {
+          roundId: restarted.id,
+          roundNumber: restarted.number,
+          state: "restarted",
+        });
+
+        return { round: toRoundSummary(restarted) };
+      } catch (error) {
+        request.log.error({ err: error, roomId, roundId }, "Failed to restart round");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },

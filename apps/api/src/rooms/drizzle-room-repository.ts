@@ -1,4 +1,5 @@
 import {
+  auditEvents,
   ballots,
   candidates,
   participants,
@@ -23,6 +24,7 @@ import { createInviteToken } from "./invite-token.js";
 import type {
   JoinedParticipant,
   RoomRepository,
+  StoredAuditEvent,
   StoredCandidate,
   StoredRound,
   StoredRoundStatus,
@@ -257,7 +259,56 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId), eq(rounds.status, "open")))
         .returning();
       const row = updated[0];
-      return row ? toStoredRound(row) : null;
+      if (!row) {
+        return null;
+      }
+      const restartCounts = await loadRestartCountsByRoom(db, [roomId]);
+      return toStoredRound(row, restartCounts.get(row.id) ?? 0);
+    },
+
+    async restartRound(roomId, roundId) {
+      return db.transaction(async (tx) => {
+        const existingRows = await tx
+          .select()
+          .from(rounds)
+          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId), eq(rounds.status, "open")))
+          .limit(1);
+        const existing = existingRows[0];
+        if (!existing) {
+          return null;
+        }
+
+        await tx.delete(ballots).where(eq(ballots.roundId, roundId));
+        await tx.delete(voteReceipts).where(eq(voteReceipts.roundId, roundId));
+
+        const updated = await tx
+          .update(rounds)
+          .set({
+            status: "open",
+            outcome: null,
+            closedAt: null,
+            openedAt: new Date(),
+          })
+          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId), eq(rounds.status, "open")))
+          .returning();
+        const row = updated[0];
+        if (!row) {
+          return null;
+        }
+
+        await tx.insert(auditEvents).values({
+          roomId,
+          actorRole: "admin",
+          action: "round_restarted",
+          payload: {
+            roundId: row.id,
+            roundNumber: row.number,
+          },
+        });
+
+        const restartCounts = await loadRestartCountsByRoom(tx, [roomId]);
+        return toStoredRound(row, restartCounts.get(row.id) ?? 1);
+      });
     },
 
     async findRound(roomId, roundId) {
@@ -267,7 +318,11 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId)))
         .limit(1);
       const row = rows[0];
-      return row ? toStoredRound(row) : null;
+      if (!row) {
+        return null;
+      }
+      const restartCounts = await loadRestartCountsByRoom(db, [roomId]);
+      return toStoredRound(row, restartCounts.get(row.id) ?? 0);
     },
 
     async latestRounds(roomIds) {
@@ -275,11 +330,14 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         return [];
       }
 
-      const rows = await db
-        .select()
-        .from(rounds)
-        .where(inArray(rounds.roomId, roomIds))
-        .orderBy(desc(rounds.number));
+      const [rows, restartCounts] = await Promise.all([
+        db
+          .select()
+          .from(rounds)
+          .where(inArray(rounds.roomId, roomIds))
+          .orderBy(desc(rounds.number)),
+        loadRestartCountsByRoom(db, roomIds),
+      ]);
       const seen = new Set<string>();
       const latest: StoredRound[] = [];
       for (const row of rows) {
@@ -287,7 +345,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           continue;
         }
         seen.add(row.roomId);
-        latest.push(toStoredRound(row));
+        latest.push(toStoredRound(row, restartCounts.get(row.id) ?? 0));
       }
       return latest;
     },
@@ -300,7 +358,20 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .orderBy(desc(rounds.number))
         .limit(1);
       const row = rows[0];
-      return row ? toStoredRound(row) : null;
+      if (!row) {
+        return null;
+      }
+      const restartCounts = await loadRestartCountsByRoom(db, [roomId]);
+      return toStoredRound(row, restartCounts.get(row.id) ?? 0);
+    },
+
+    async listAuditEvents(roomId) {
+      const rows = await db
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.roomId, roomId))
+        .orderBy(asc(auditEvents.createdAt));
+      return rows.map(toStoredAuditEvent);
     },
 
     async castBallot(input) {
@@ -464,15 +535,18 @@ function toStoredRoom(row: {
   };
 }
 
-function toStoredRound(row: {
-  id: string;
-  roomId: string;
-  number: number;
-  status: StoredRoundStatus;
-  outcome: string | null;
-  openedAt: Date | null;
-  closedAt: Date | null;
-}): StoredRound {
+function toStoredRound(
+  row: {
+    id: string;
+    roomId: string;
+    number: number;
+    status: StoredRoundStatus;
+    outcome: string | null;
+    openedAt: Date | null;
+    closedAt: Date | null;
+  },
+  restartCount = 0,
+): StoredRound {
   return {
     id: row.id,
     roomId: row.roomId,
@@ -481,7 +555,49 @@ function toStoredRound(row: {
     outcome: toRoundResult(row.outcome),
     openedAt: row.openedAt,
     closedAt: row.closedAt,
+    ...(restartCount > 0 ? { restartCount } : {}),
   };
+}
+
+function toStoredAuditEvent(row: {
+  id: string;
+  roomId: string;
+  actorRole: string;
+  action: string;
+  payload: Record<string, unknown> | null;
+  createdAt: Date;
+}): StoredAuditEvent {
+  return {
+    id: row.id,
+    roomId: row.roomId,
+    actorRole: row.actorRole,
+    action: row.action,
+    payload: row.payload ?? {},
+    createdAt: row.createdAt,
+  };
+}
+
+async function loadRestartCountsByRoom(
+  db: Pick<Db, "select">,
+  roomIds: string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (roomIds.length === 0) {
+    return counts;
+  }
+
+  const rows = await db
+    .select({ payload: auditEvents.payload })
+    .from(auditEvents)
+    .where(and(inArray(auditEvents.roomId, roomIds), eq(auditEvents.action, "round_restarted")));
+
+  for (const row of rows) {
+    const roundId = row.payload?.roundId;
+    if (typeof roundId === "string") {
+      counts.set(roundId, (counts.get(roundId) ?? 0) + 1);
+    }
+  }
+  return counts;
 }
 
 function toRoundResult(value: string | null): RoundResult | null {

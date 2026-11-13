@@ -4,11 +4,34 @@ import {
   type TallyEntry,
 } from "./majority.js";
 import type { RoundResult } from "./quorum.js";
+import { canOpenRound, type RoomStatus } from "./room.js";
 
 export type RulesPreset =
   | "ipb_local_officers"
   | "ipb_society_board"
   | "custom";
+
+export type RestartRoundRejectionReason =
+  | "room_not_open"
+  | "round_not_open"
+  | "winner_already_elected";
+
+export function canRestartRound(
+  roomStatus: RoomStatus,
+  roundStatus: string,
+  roundOutcome: RoundResult | null,
+): { ok: true } | { ok: false; reason: RestartRoundRejectionReason } {
+  if (!canOpenRound(roomStatus)) {
+    return { ok: false, reason: "room_not_open" };
+  }
+  if (roundOutcome === "elected") {
+    return { ok: false, reason: "winner_already_elected" };
+  }
+  if (roundStatus !== "open") {
+    return { ok: false, reason: "round_not_open" };
+  }
+  return { ok: true };
+}
 
 export type RoundOutcome =
   | { kind: "winners"; winnerIds: string[] }

@@ -40,7 +40,7 @@
 - [x] API health + rules feature tests
 - [x] Web unit test + Playwright home smoke
 - [x] `docker-compose.yml` for postgres/api/web
-- [ ] Full room voting persistence wired end-to-end (Epic 1)
+- [x] Full room voting persistence wired end-to-end (Epic 1)
 
 ---
 
@@ -118,15 +118,15 @@
 
 ### B1.6 — Start, pause, and restart voting
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Admin controls the lifecycle of rounds; restart is allowed when something goes wrong, with audit trail.
 
 **Acceptance criteria:**
 
-- [ ] Admin can start, pause/close, and restart the current round
-- [ ] Restart clears ballots/receipts for that round and writes an audit event
-- [ ] Participants are notified of state changes (open / closed / restarted)
-- [ ] Feature tests for restart clearing votes; browser test for admin restart flow
+- [x] Admin can start, pause/close, and restart the current round
+- [x] Restart clears ballots/receipts for that round and writes an audit event
+- [x] Participants are notified of state changes (open / closed / restarted)
+- [x] Feature tests for restart clearing votes; browser test for admin restart flow
 
 ---
 

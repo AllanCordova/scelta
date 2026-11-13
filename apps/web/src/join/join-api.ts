@@ -37,6 +37,7 @@ export type BallotRoundState = {
   number: number;
   status: string;
   outcome: string | null;
+  restartCount?: number;
   tally?: BallotTally;
 };
 

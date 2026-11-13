@@ -322,6 +322,58 @@ describe("AdminRooms", () => {
     expect(within(item).getByText("Silas: 0 votos")).toBeInTheDocument();
   });
 
+  it("restarts an open round and displays the restarted notice", async () => {
+    const room = {
+      id: "room-1",
+      title: "Assembleia em votação",
+      status: "open",
+      round: {
+        id: "round-1",
+        number: 1,
+        status: "open",
+        outcome: null as string | null,
+        restartCount: undefined as number | undefined,
+      },
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/rules/presets")) {
+          return json({ presets });
+        }
+        if (url.endsWith("/presence")) {
+          return json({
+            presentCount: 2,
+            eligibleCount: 2,
+            requiredCount: 2,
+            quorumMet: true,
+          });
+        }
+        if (url.endsWith("/restart") && init?.method === "POST") {
+          room.round = {
+            id: "round-1",
+            number: 1,
+            status: "open",
+            outcome: null,
+            restartCount: 1,
+          };
+          return json({ round: room.round });
+        }
+        return json({ rooms: [{ ...room }] });
+      }),
+    );
+
+    render(<AdminRooms />);
+    const item = await screen.findByRole("listitem");
+    fireEvent.click(await within(item).findByRole("button", { name: "Reiniciar escrutínio" }));
+
+    expect(
+      await within(item).findByText("Escrutínio reiniciado — os votos anteriores foram limpos."),
+    ).toBeInTheDocument();
+  });
+
   it("sends the eligible count when the admin sets it and rejects a bad one", async () => {
     render(<AdminRooms />);
     await screen.findByDisplayValue("34");

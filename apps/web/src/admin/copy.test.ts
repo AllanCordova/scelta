@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   FAILED_QUORUM_MESSAGE,
+  RESTART_ROUND_LABEL,
+  ROUND_RESTARTED_MESSAGE,
   activeCandidatesLabel,
   quorumLabel,
   quorumStateLabel,
@@ -33,5 +35,9 @@ describe("presence copy", () => {
     );
     expect(roundErrorMessage("failed_quorum")).toBe("Não foi possível atualizar o escrutínio.");
     expect(activeCandidatesLabel(3, ["Ana", "Bia"])).toBe("3º escrutínio — Candidatos: Ana, Bia");
+    expect(RESTART_ROUND_LABEL).toBe("Reiniciar escrutínio");
+    expect(ROUND_RESTARTED_MESSAGE).toBe(
+      "Escrutínio reiniciado — os votos anteriores foram limpos.",
+    );
   });
 });

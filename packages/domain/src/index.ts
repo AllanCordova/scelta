@@ -28,6 +28,7 @@ export {
   type CandidateValidationError,
 } from "./ballot.js";
 export {
+  canRestartRound,
   nextRoundPlan,
   resolveNextRoundCandidateIds,
   type RulesPreset,
@@ -36,6 +37,7 @@ export {
   type NextRoundRejectionReason,
   type ResolveNextRoundInput,
   type ResolveNextRoundResult,
+  type RestartRoundRejectionReason,
 } from "./rounds.js";
 export {
   canOpenRound,

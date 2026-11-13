@@ -33,5 +33,18 @@ describe("createSocketPresencePublisher", () => {
       requiredCount: 4,
       quorumMet: false,
     });
+
+    publisher.publishRoundState?.(roomId, {
+      roundId: "22222222-2222-4222-8222-222222222222",
+      roundNumber: 1,
+      state: "restarted",
+    });
+
+    expect(emit).toHaveBeenCalledWith("round:state", {
+      roomId,
+      roundId: "22222222-2222-4222-8222-222222222222",
+      roundNumber: 1,
+      state: "restarted",
+    });
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextRoundPlan, resolveNextRoundCandidateIds } from "./rounds.js";
+import { canRestartRound, nextRoundPlan, resolveNextRoundCandidateIds } from "./rounds.js";
 
 const tallies = [
   { candidateId: "a", votes: 4 },
@@ -193,5 +193,27 @@ describe("resolveNextRoundCandidateIds", () => {
         ],
       }),
     ).toEqual({ ok: false, reason: "winner_already_elected" });
+  });
+});
+
+describe("canRestartRound", () => {
+  it("allows restarting an open round in an open or voting room", () => {
+    expect(canRestartRound("open", "open", null)).toEqual({ ok: true });
+    expect(canRestartRound("voting", "open", null)).toEqual({ ok: true });
+  });
+
+  it("rejects restarting when room is not open, round is closed, or winner is elected", () => {
+    expect(canRestartRound("draft", "open", null)).toEqual({
+      ok: false,
+      reason: "room_not_open",
+    });
+    expect(canRestartRound("open", "closed", "no_majority")).toEqual({
+      ok: false,
+      reason: "round_not_open",
+    });
+    expect(canRestartRound("open", "closed", "elected")).toEqual({
+      ok: false,
+      reason: "winner_already_elected",
+    });
   });
 });
