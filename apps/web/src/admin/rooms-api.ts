@@ -9,6 +9,7 @@ import type {
   RoomSummary,
   RoomType,
   RulesPreset,
+  StoredMemberItem,
   SuggestedCandidate,
 } from "./types";
 
@@ -158,6 +159,30 @@ export async function fetchCandidateSuggestions(
     suggestions?: SuggestedCandidate[];
   };
   return Array.isArray(body.suggestions) ? body.suggestions : [];
+}
+
+export async function listMembers(apiBase: string): Promise<StoredMemberItem[]> {
+  const response = await fetch(`${apiBase}/v1/admin/members`, {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const body = (await response.json().catch(() => ({}))) as {
+    members?: StoredMemberItem[];
+  };
+  return Array.isArray(body.members) ? body.members : [];
+}
+
+export async function deleteRoom(apiBase: string, roomId: string): Promise<void> {
+  const response = await fetch(`${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
 }
 
 async function postRound(url: string): Promise<RoomRound> {

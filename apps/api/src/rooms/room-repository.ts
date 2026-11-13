@@ -96,6 +96,7 @@ export type RoomRepository = {
   listRooms(): Promise<StoredRoom[]>;
   findRoomByInviteToken(inviteToken: string): Promise<StoredRoom | null>;
   findRoomById(roomId: string): Promise<StoredRoom | null>;
+  deleteRoom(roomId: string): Promise<boolean>;
   joinRoom(roomId: string, displayName: string, joinKeyHash: string): Promise<JoinedParticipant>;
   countPresent(roomId: string): Promise<number>;
   listCandidates(roomId: string): Promise<StoredCandidate[]>;

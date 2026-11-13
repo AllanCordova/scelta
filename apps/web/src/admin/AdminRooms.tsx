@@ -12,7 +12,6 @@ import {
   STATUS_LABELS,
   activeCandidatesLabel,
   describePreset,
-  memberImportSummaryLabel,
   quorumLabel,
   quorumStateLabel,
   roomErrorMessage,
@@ -26,9 +25,9 @@ import {
   RoomRequestError,
   closeRound,
   createRoom,
+  deleteRoom,
   fetchCandidateSuggestions,
   fetchPresets,
-  importMembers,
   listRooms,
   openRound,
   restartRound,
@@ -46,6 +45,14 @@ import type {
 import { useRoomPresence } from "./use-room-presence";
 
 const apiBase = apiUrl("");
+
+const ROOM_TYPE_LABELS: Record<RoomType, string> = {
+  pastor: "Pastor",
+  elder: "Presbítero",
+  deacon: "Diácono",
+  upa_board: "Diretoria UPA",
+  custom: "Sessão Geral",
+};
 
 export function AdminRooms() {
   const [presets, setPresets] = useState<PresetDefinition[]>([]);
@@ -68,12 +75,7 @@ export function AdminRooms() {
   const [qr, setQr] = useState<{ link: string; dataUrl: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [listVersion, setListVersion] = useState(0);
-  const [memberCsv, setMemberCsv] = useState("");
-  const [isImportingMembers, setIsImportingMembers] = useState(false);
-  const [memberImportSummary, setMemberImportSummary] = useState<string | null>(null);
-  const [memberImportError, setMemberImportError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<SuggestedCandidate[]>([]);
-  const [suggestionsVersion, setSuggestionsVersion] = useState(0);
   const presence = useRoomPresence(rooms);
 
   useEffect(() => {
@@ -133,7 +135,7 @@ export function AdminRooms() {
     return () => {
       cancelled = true;
     };
-  }, [roomType, suggestionsVersion]);
+  }, [roomType]);
 
   useEffect(() => {
     if (!inviteLink) {
@@ -257,26 +259,27 @@ export function AdminRooms() {
     }
   }
 
-  async function handleImportMembers() {
-    setMemberImportError(null);
-    setMemberImportSummary(null);
-    if (memberCsv.trim().length === 0) {
-      setMemberImportError("Cole o CSV da lista de membros para importar.");
+  async function handleDeleteRoom(roomId: string) {
+    setRoundError(null);
+    setBusyRoomId(roomId);
+    try {
+      await deleteRoom(apiBase, roomId);
+      setRooms((current) => current.filter((item) => item.id !== roomId));
+      setListVersion((current) => current + 1);
+    } catch {
+      setRoundError({ roomId, message: "Não foi possível excluir a sala." });
+    } finally {
+      setBusyRoomId(null);
+    }
+  }
+
+  function handleShowRoomQr(room: RoomSummary) {
+    const path = room.invitePath ?? (room.inviteToken ? `/join/${room.inviteToken}` : null);
+    if (!path) {
       return;
     }
-    setIsImportingMembers(true);
-    try {
-      const report = await importMembers(apiBase, memberCsv);
-      setMemberImportSummary(
-        memberImportSummaryLabel(report.createdCount, report.updatedCount, report.rejectedCount),
-      );
-      setMemberCsv("");
-      setSuggestionsVersion((current) => current + 1);
-    } catch {
-      setMemberImportError("Não foi possível importar a lista de membros.");
-    } finally {
-      setIsImportingMembers(false);
-    }
+    const link = inviteUrl(window.location.origin, path);
+    setInviteLink(link);
   }
 
   function handleToggleSuggestedCandidate(fullName: string) {
@@ -463,45 +466,24 @@ export function AdminRooms() {
 
       {inviteLink ? (
         <section className="invite panel" aria-label="Convite">
-          <h2>Convite</h2>
+          <div className="invite-header">
+            <h2>Convite</h2>
+            <button type="button" className="ghost round-action" onClick={() => setInviteLink(null)}>
+              Fechar
+            </button>
+          </div>
           <a href={inviteLink}>{inviteLink}</a>
           {qrDataUrl ? <img data-testid="invite-qr" alt="QR do convite" src={qrDataUrl} /> : null}
         </section>
       ) : null}
 
-      <section className="panel member-import" aria-labelledby="member-import-heading">
-        <h2 id="member-import-heading">Rol de membros</h2>
-        <label>
-          CSV de membros
-          <textarea
-            rows={3}
-            value={memberCsv}
-            placeholder="nome,comungante,sexo,data_nascimento,upa_ativo,upa_ingresso"
-            onChange={(event) => setMemberCsv(event.target.value)}
-          />
-        </label>
-        {memberImportSummary ? (
-          <p className="import-summary" aria-live="polite">
-            {memberImportSummary}
-          </p>
-        ) : null}
-        {memberImportError ? (
-          <p className="form-error" role="alert">
-            {memberImportError}
-          </p>
-        ) : null}
-        <button
-          type="button"
-          className="ghost"
-          disabled={isImportingMembers}
-          onClick={() => void handleImportMembers()}
-        >
-          Importar membros
-        </button>
-      </section>
-
       <section className="room-list" aria-labelledby="rooms-heading">
-        <h2 id="rooms-heading">Salas</h2>
+        <div className="room-list-header">
+          <div>
+            <h2 id="rooms-heading">Salas de Escrutínio</h2>
+            <p className="muted">Controle de quórum, apuração e status das deliberações</p>
+          </div>
+        </div>
         {listError ? (
           <p className="form-error" role="alert">
             {listError}
@@ -509,17 +491,20 @@ export function AdminRooms() {
         ) : rooms.length === 0 ? (
           <p className="empty">Nenhuma sala ainda.</p>
         ) : (
-          <ul aria-label="Salas">
-            {rooms.map((room) => (
+          <ul className="room-cards-grid" aria-label="Salas">
+            {rooms.map((room, index) => (
               <RoomRow
                 key={room.id}
                 room={room}
+                index={index + 1}
                 presence={presence[room.id]}
                 isBusy={busyRoomId === room.id}
                 error={roundError?.roomId === room.id ? roundError.message : null}
                 onOpen={() => void handleOpenRound(room.id)}
                 onClose={(roundId) => void handleCloseRound(room.id, roundId)}
                 onRestart={(roundId) => void handleRestartRound(room.id, roundId)}
+                onShowQr={() => handleShowRoomQr(room)}
+                onDelete={() => void handleDeleteRoom(room.id)}
               />
             ))}
           </ul>
@@ -531,82 +516,191 @@ export function AdminRooms() {
 
 function RoomRow({
   room,
+  index,
   presence,
   isBusy,
   error,
   onOpen,
   onClose,
   onRestart,
+  onShowQr,
+  onDelete,
 }: {
   room: RoomSummary;
+  index: number;
   presence: QuorumPresence | undefined;
   isBusy: boolean;
   error: string | null;
   onOpen: () => void;
   onClose: (roundId: string) => void;
   onRestart: (roundId: string) => void;
+  onShowQr: () => void;
+  onDelete: () => void;
 }) {
+  const [isCopied, setIsCopied] = useState(false);
   const openRoundId = room.round?.status === "open" ? room.round.id : null;
+  const isActive = showsPresence(room.status);
+  const roomCode = `SALA-${String(index).padStart(3, "0")}`;
+  const roomTypeLabel = room.roomType ? ROOM_TYPE_LABELS[room.roomType] : "Sessão";
+  const invitePath = room.invitePath ?? (room.inviteToken ? `/join/${room.inviteToken}` : null);
+
+  const progressPercent =
+    presence && presence.requiredCount > 0
+      ? Math.min(100, Math.round((presence.presentCount / presence.requiredCount) * 100))
+      : presence && presence.presentCount > 0
+        ? 100
+        : 4;
+
+  async function handleCopyLink() {
+    if (!invitePath) {
+      return;
+    }
+    const fullUrl = inviteUrl(window.location.origin, invitePath);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(fullUrl).catch(() => undefined);
+    }
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 1800);
+  }
 
   return (
-    <li>
+    <li className={isActive ? "card-room active" : "card-room draft"}>
       <div className="room-main">
-        <span className="room-title">{room.title}</span>
-        {room.round?.status === "open" && room.candidates && room.candidates.length > 0 ? (
-          <p className="round-candidates">
-            {activeCandidatesLabel(
-              room.round.number,
-              room.candidates.map((item) => item.displayName),
-            )}
-          </p>
-        ) : null}
-        {room.round?.status === "open" && (room.round.restartCount ?? 0) > 0 ? (
-          <p className="round-restarted">{ROUND_RESTARTED_MESSAGE}</p>
-        ) : null}
-        {room.round?.outcome === "failed_quorum" ? (
-          <p className="quorum-failed" role="status">
-            {FAILED_QUORUM_MESSAGE}
-          </p>
-        ) : null}
-        {room.round?.tally ? (
-          <div className="round-tally" role="status">
-            <p className="tally-outcome">{tallySummaryLabel(room.round.tally)}</p>
-            <ul className="tally-standings" aria-label="Apuração">
-              {room.round.tally.standings.map((item) => (
-                <li key={item.candidateId}>{standingLabel(item.displayName, item.votes)}</li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-        {error ? (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        ) : null}
-      </div>
-      <div className="room-meta">
-        {showsPresence(room.status) ? (
-          <>
-            <span className="presence" aria-live="polite">
-              {presence === undefined ? (
-                "…"
-              ) : (
-                <>
-                  <span className="presence-count">
-                    {quorumLabel(presence.presentCount, presence.requiredCount)}
-                  </span>
-                  <span className="quorum-state">{quorumStateLabel(presence.quorumMet)}</span>
-                </>
-              )}
+        <div className="card-room-header">
+          <div className="card-room-title-group">
+            <span className="room-title">{room.title}</span>
+            <span className="card-room-subtitle">
+              {roomCode} • {roomTypeLabel}
             </span>
-            <button
-              type="button"
-              className="ghost round-action"
-              disabled={isBusy}
-              onClick={() => (openRoundId ? onClose(openRoundId) : onOpen())}
-            >
-              {openRoundId ? CLOSE_ROUND_LABEL : OPEN_ROUND_LABEL}
-            </button>
+          </div>
+          <span className={isActive ? "status status-badge active" : "status status-badge"}>
+            {isActive ? <span className="status-dot" aria-hidden="true" /> : null}
+            {STATUS_LABELS[room.status]}
+          </span>
+        </div>
+
+        <div className="card-room-body">
+          {room.round?.status === "open" && (room.round.restartCount ?? 0) > 0 ? (
+            <p className="round-restarted">{ROUND_RESTARTED_MESSAGE}</p>
+          ) : null}
+
+          {isActive ? (
+            <div className="quorum-block" aria-live="polite">
+              <div className="quorum-block-top">
+                <span className="quorum-block-label">Presença &amp; Votação</span>
+                {presence !== undefined ? (
+                  <span
+                    className={
+                      presence.quorumMet ? "quorum-state badge-met" : "quorum-state badge-below"
+                    }
+                  >
+                    {quorumStateLabel(presence.quorumMet)}
+                  </span>
+                ) : null}
+              </div>
+              <div className="presence">
+                {presence === undefined ? (
+                  "…"
+                ) : (
+                  <>
+                    <span className="presence-count">
+                      {quorumLabel(presence.presentCount, presence.requiredCount)}
+                    </span>
+                    <span className="presence-caption">presentes / mínimo</span>
+                  </>
+                )}
+              </div>
+              <div className="quorum-progress-track" aria-hidden="true">
+                <div
+                  className={
+                    presence?.quorumMet ? "quorum-progress-bar met" : "quorum-progress-bar below"
+                  }
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="draft-room-summary">
+              <p className="draft-room-description">
+                Aguardando abertura formal de assembleia. Parâmetros regimentais configurados.
+              </p>
+              <div className="draft-room-meta">
+                <span>Candidatos: {room.candidates?.length ?? 0}</span>
+                {room.quorumValue !== undefined ? (
+                  <>
+                    <span>•</span>
+                    <span>
+                      Quórum: {room.quorumValue}
+                      {room.quorumUnit === "percent" ? "%" : ""}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          )}
+
+          {room.round?.status === "open" && room.candidates && room.candidates.length > 0 ? (
+            <p className="round-candidates">
+              {activeCandidatesLabel(
+                room.round.number,
+                room.candidates.map((item) => item.displayName),
+              )}
+            </p>
+          ) : null}
+
+          {room.round?.outcome === "failed_quorum" ? (
+            <p className="quorum-failed" role="status">
+              {FAILED_QUORUM_MESSAGE}
+            </p>
+          ) : null}
+
+          {room.round?.tally ? (
+            <div className="round-tally" role="status">
+              <p className="tally-outcome">{tallySummaryLabel(room.round.tally)}</p>
+              <ul className="tally-standings" aria-label="Apuração">
+                {room.round.tally.standings.map((item) => (
+                  <li key={item.candidateId}>{standingLabel(item.displayName, item.votes)}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {error ? (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="room-meta card-room-footer">
+        <div className="room-utility-actions">
+          {invitePath ? (
+            <>
+              <button type="button" className="ghost round-action" onClick={onShowQr}>
+                QR Code
+              </button>
+              <button
+                type="button"
+                className="ghost round-action"
+                onClick={() => void handleCopyLink()}
+              >
+                {isCopied ? "Link copiado" : "Copiar link"}
+              </button>
+            </>
+          ) : null}
+          <button
+            type="button"
+            className="ghost round-action danger-action"
+            disabled={isBusy}
+            onClick={onDelete}
+          >
+            Excluir
+          </button>
+        </div>
+
+        {isActive ? (
+          <div className="room-round-actions">
             {openRoundId ? (
               <button
                 type="button"
@@ -617,9 +711,16 @@ function RoomRow({
                 {RESTART_ROUND_LABEL}
               </button>
             ) : null}
-          </>
+            <button
+              type="button"
+              className="ghost round-action"
+              disabled={isBusy}
+              onClick={() => (openRoundId ? onClose(openRoundId) : onOpen())}
+            >
+              {openRoundId ? CLOSE_ROUND_LABEL : OPEN_ROUND_LABEL}
+            </button>
+          </div>
         ) : null}
-        <span className="status">{STATUS_LABELS[room.status]}</span>
       </div>
     </li>
   );

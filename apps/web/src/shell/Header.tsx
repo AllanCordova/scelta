@@ -24,6 +24,13 @@ export function Header() {
         <a className="nav-link" href="/admin" aria-current={path === "/admin" ? "page" : undefined}>
           Salas
         </a>
+        <a
+          className="nav-link"
+          href="/admin/membros"
+          aria-current={path === "/admin/membros" ? "page" : undefined}
+        >
+          Membros
+        </a>
       </nav>
       <div className="account">
         <ThemeToggle />
