@@ -312,6 +312,9 @@ describe("admin rooms", () => {
         async listRoundBallotCandidateIds() {
           return [];
         },
+        async listRoundReceiptTimestamps() {
+          return [];
+        },
         async importMembers() {
           return { createdCount: 0, updatedCount: 0 };
         },
@@ -400,6 +403,140 @@ describe("admin rooms", () => {
       headers: { cookie: adminCookie },
     });
     expect(listed.json().rooms).toEqual([]);
+
+    await app.close();
+  });
+
+  it("returns room detail with candidates, presence, and anonymous vote receipts while enforcing admin auth", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Eleição de Presbíteros 2026",
+        roomType: "elder",
+        rulesPreset: "ipb_local_officers",
+        quorumValue: 1,
+        quorumUnit: "absolute",
+        eligibleCount: 4,
+        status: "open",
+        candidates: ["Paulo Apóstolo", "Silas"],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const room = created.json().room as {
+      id: string;
+      inviteToken: string;
+      candidates: { id: string; displayName: string }[];
+    };
+
+    const unauth = await app.inject({
+      method: "GET",
+      url: `/v1/admin/rooms/${room.id}`,
+    });
+    expect(unauth.statusCode).toBe(401);
+
+    const forbidden = await app.inject({
+      method: "GET",
+      url: `/v1/admin/rooms/${room.id}`,
+      headers: { cookie: memberCookie },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    const notFound = await app.inject({
+      method: "GET",
+      url: "/v1/admin/rooms/00000000-0000-4000-8000-000000000000",
+      headers: { cookie: adminCookie },
+    });
+    expect(notFound.statusCode).toBe(404);
+    expect(notFound.json()).toEqual({ error: "room_not_found" });
+
+    const joinRes = await app.inject({
+      method: "POST",
+      url: `/v1/join/${room.inviteToken}`,
+      payload: { displayName: "Ana", joinKey: "join-key-ana-0001" },
+    });
+    expect(joinRes.statusCode).toBe(200);
+
+    const openRoundRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/rounds`,
+      headers: { cookie: adminCookie },
+    });
+    expect(openRoundRes.statusCode).toBe(201);
+    const roundId = openRoundRes.json().round.id as string;
+
+    const firstCandidateId = room.candidates[0]!.id;
+    const ballotRes = await app.inject({
+      method: "POST",
+      url: `/v1/join/${room.inviteToken}/ballot`,
+      payload: {
+        joinKey: "join-key-ana-0001",
+        candidateId: firstCandidateId,
+      },
+    });
+    expect(ballotRes.statusCode).toBe(201);
+
+    const detailOpen = await app.inject({
+      method: "GET",
+      url: `/v1/admin/rooms/${room.id}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(detailOpen.statusCode).toBe(200);
+    const openRoomDetail = detailOpen.json().room;
+    expect(openRoomDetail).toMatchObject({
+      id: room.id,
+      title: "Eleição de Presbíteros 2026",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      quorumValue: 1,
+      quorumUnit: "absolute",
+      eligibleCount: 4,
+      inviteToken: room.inviteToken,
+      invitePath: `/join/${room.inviteToken}`,
+      presence: {
+        presentCount: 1,
+        eligibleCount: 4,
+        requiredCount: 1,
+        quorumMet: true,
+      },
+      votedCount: 1,
+      round: {
+        id: roundId,
+        number: 1,
+        status: "open",
+        outcome: null,
+      },
+    });
+    expect(openRoomDetail.round.tally).toBeUndefined();
+    expect(openRoomDetail.receiptTimestamps).toHaveLength(1);
+    expect(detailOpen.body).not.toContain("Ana");
+    expect(detailOpen.body).not.toContain("join-key-ana-0001");
+
+    const closeRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/rounds/${roundId}/close`,
+      headers: { cookie: adminCookie },
+    });
+    expect(closeRes.statusCode).toBe(200);
+
+    const detailClosed = await app.inject({
+      method: "GET",
+      url: `/v1/admin/rooms/${room.id}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(detailClosed.statusCode).toBe(200);
+    expect(detailClosed.json().room.round).toMatchObject({
+      id: roundId,
+      status: "closed",
+      outcome: "elected",
+      tally: {
+        totalVotes: 1,
+        winnerId: firstCandidateId,
+      },
+    });
 
     await app.close();
   });

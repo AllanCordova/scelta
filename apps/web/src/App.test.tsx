@@ -96,6 +96,16 @@ describe("App access", () => {
     expect(await screen.findByRole("heading", { name: "Rol de membros" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Baixar template CSV" })).toBeInTheDocument();
   });
+
+  it("shows room detail page on /admin/salas/:roomId to an admin", async () => {
+    window.history.pushState(null, "", "/admin/salas/11111111-2222-4333-8444-555555555555");
+    installSession(admin);
+    render(<App />);
+
+    expect(
+      await screen.findByRole("link", { name: /Voltar para Painel de Salas/i }),
+    ).toBeInTheDocument();
+  });
 });
 
 function installSession(user: SessionUser | null) {

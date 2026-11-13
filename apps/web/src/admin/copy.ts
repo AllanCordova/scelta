@@ -8,6 +8,14 @@ export const ROOM_TYPE_OPTIONS: { value: RoomType; label: string }[] = [
   { value: "custom", label: "Outro" },
 ];
 
+export const ROOM_TYPE_LABELS: Record<RoomType, string> = {
+  pastor: "Pastor",
+  elder: "Presbítero",
+  deacon: "Diácono",
+  upa_board: "Diretoria UPA",
+  custom: "Sessão Geral",
+};
+
 export const PRESET_OPTIONS: { value: RulesPreset; label: string }[] = [
   { value: "ipb_local_officers", label: "Oficiais da igreja local" },
   { value: "ipb_society_board", label: "Diretoria de sociedade" },

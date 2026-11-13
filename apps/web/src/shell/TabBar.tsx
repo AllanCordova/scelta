@@ -13,7 +13,11 @@ export function TabBar() {
       <TabLink href="/" label="Início" current={path === "/"}>
         <HomeIcon />
       </TabLink>
-      <TabLink href="/admin" label="Salas" current={path === "/admin"}>
+      <TabLink
+        href="/admin"
+        label="Salas"
+        current={path === "/admin" || path.startsWith("/admin/salas/")}
+      >
         <RoomsIcon />
       </TabLink>
       <TabLink href="/admin/membros" label="Membros" current={path === "/admin/membros"}>

@@ -120,6 +120,7 @@ export type RoomRepository = {
   }): Promise<CastBallotResult>;
   hasVotedInRound(roomId: string, roundId: string, joinKeyHash: string): Promise<boolean>;
   listRoundBallotCandidateIds(roundId: string): Promise<string[]>;
+  listRoundReceiptTimestamps(roundId: string): Promise<Date[]>;
   importMembers(
     rows: readonly ValidMemberImportRow[],
   ): Promise<{ createdCount: number; updatedCount: number }>;

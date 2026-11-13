@@ -5,6 +5,7 @@ import type {
   MemberImportReport,
   PresetDefinition,
   QuorumUnit,
+  RoomDetail,
   RoomRound,
   RoomSummary,
   RoomType,
@@ -58,6 +59,20 @@ export async function listRooms(apiUrl: string): Promise<RoomSummary[]> {
 
   const body = (await response.json()) as { rooms: RoomSummary[] };
   return body.rooms;
+}
+
+export async function fetchRoomDetail(apiBase: string, roomId: string): Promise<RoomDetail> {
+  const response = await fetch(`${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}`, {
+    credentials: "include",
+  });
+  const body = (await response.json().catch(() => ({}))) as {
+    room?: RoomDetail;
+    error?: string;
+  };
+  if (!response.ok || !body.room) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.room;
 }
 
 export async function createRoom(apiUrl: string, payload: CreateRoomPayload): Promise<RoomSummary> {

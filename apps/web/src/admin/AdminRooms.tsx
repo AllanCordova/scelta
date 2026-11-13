@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
 import QRCode from "qrcode";
 import { apiUrl } from "../api-url";
 import {
@@ -7,6 +7,7 @@ import {
   OPEN_ROUND_LABEL,
   PRESET_OPTIONS,
   RESTART_ROUND_LABEL,
+  ROOM_TYPE_LABELS,
   ROOM_TYPE_OPTIONS,
   ROUND_RESTARTED_MESSAGE,
   STATUS_LABELS,
@@ -45,14 +46,6 @@ import type {
 import { useRoomPresence } from "./use-room-presence";
 
 const apiBase = apiUrl("");
-
-const ROOM_TYPE_LABELS: Record<RoomType, string> = {
-  pastor: "Pastor",
-  elder: "Presbítero",
-  deacon: "Diácono",
-  upa_board: "Diretoria UPA",
-  custom: "Sessão Geral",
-};
 
 export function AdminRooms() {
   const [presets, setPresets] = useState<PresetDefinition[]>([]);
@@ -163,7 +156,15 @@ export function AdminRooms() {
   const selectedPreset = presets.find((item) => item.preset === rulesPreset);
   const presetDraft = selectedPreset
     ? quorumDraftFromPreset(selectedPreset)
-    : { quorumValue: "", quorumUnit: "percent" as const };
+    : {
+        quorumValue:
+          rulesPreset === "ipb_local_officers"
+            ? "34"
+            : rulesPreset === "ipb_society_board"
+              ? "51"
+              : "",
+        quorumUnit: "percent" as const,
+      };
   const quorumValue = quorumOverride?.quorumValue ?? presetDraft.quorumValue;
   const quorumUnit = quorumOverride?.quorumUnit ?? presetDraft.quorumUnit;
   const qrDataUrl = inviteLink && qr?.link === inviteLink ? qr.dataUrl : null;
@@ -563,12 +564,27 @@ function RoomRow({
     setTimeout(() => setIsCopied(false), 1800);
   }
 
+  const detailHref = `/admin/salas/${encodeURIComponent(room.id)}`;
+
+  function handleCardClick(event: MouseEvent<HTMLLIElement>) {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("button, a")) {
+      return;
+    }
+    window.location.assign(detailHref);
+  }
+
   return (
-    <li className={isActive ? "card-room active" : "card-room draft"}>
+    <li
+      className={isActive ? "card-room active clickable" : "card-room draft clickable"}
+      onClick={handleCardClick}
+    >
       <div className="room-main">
         <div className="card-room-header">
           <div className="card-room-title-group">
-            <span className="room-title">{room.title}</span>
+            <a className="room-title room-title-link" href={detailHref}>
+              {room.title}
+            </a>
             <span className="card-room-subtitle">
               {roomCode} • {roomTypeLabel}
             </span>

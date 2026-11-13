@@ -507,6 +507,15 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       return rows.map((row) => row.candidateId);
     },
 
+    async listRoundReceiptTimestamps(roundId) {
+      const rows = await db
+        .select({ castAt: voteReceipts.castAt })
+        .from(voteReceipts)
+        .where(eq(voteReceipts.roundId, roundId))
+        .orderBy(desc(voteReceipts.castAt));
+      return rows.map((row) => row.castAt);
+    },
+
     async importMembers(rows) {
       if (rows.length === 0) {
         return { createdCount: 0, updatedCount: 0 };

@@ -286,6 +286,9 @@ describe("join room", () => {
         async listRoundBallotCandidateIds() {
           return [];
         },
+        async listRoundReceiptTimestamps() {
+          return [];
+        },
         async importMembers() {
           return { createdCount: 0, updatedCount: 0 };
         },

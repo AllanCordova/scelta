@@ -201,6 +201,61 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
   });
 
   app.get(
+    "/v1/admin/rooms/:roomId",
+    {
+      schema: {
+        params: RoomIdParams,
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const [roomCandidates, latest, presentCount] = await Promise.all([
+          options.roomRepository.listCandidates(roomId),
+          options.roomRepository.latestRounds([roomId]),
+          options.roomRepository.countPresent(roomId),
+        ]);
+        const round = latest[0] ?? null;
+        const candidatesByRoom = new Map([[roomId, roomCandidates]]);
+        const tallyByRound = await loadTalliesForClosedRounds(
+          options.roomRepository,
+          round ? [round] : [],
+          candidatesByRoom,
+        );
+        const receiptDates = round
+          ? await options.roomRepository.listRoundReceiptTimestamps(round.id)
+          : [];
+
+        return {
+          room: {
+            ...toRoomResponse(room, { includeInvite: true, candidates: roomCandidates }),
+            presence: quorumStatus(room, presentCount),
+            votedCount: receiptDates.length,
+            receiptTimestamps: receiptDates.map((date) => date.toISOString()),
+            round: toRoundSummary(round, round ? (tallyByRound.get(round.id) ?? null) : null),
+          },
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to read room detail");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.get(
     "/v1/admin/rooms/:roomId/presence",
     {
       schema: {
