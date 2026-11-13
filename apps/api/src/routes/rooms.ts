@@ -55,6 +55,15 @@ type CreateRoomBodyType = {
   candidates?: string[];
 };
 
+const RoomIdParams = Type.Object({
+  roomId: Type.String({
+    minLength: 36,
+    maxLength: 36,
+    pattern:
+      "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+  }),
+});
+
 export type RoomRouteOptions = {
   roomRepository?: RoomRepository;
   userRepository?: UserRepository;
@@ -180,7 +189,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           const round = roundByRoom.get(room.id) ?? null;
           const roomCandidates = candidatesByRoom.get(room.id) ?? [];
           return {
-            ...toRoomResponse(room, { includeInvite: false, candidates: roomCandidates }),
+            ...toRoomResponse(room, { includeInvite: true, candidates: roomCandidates }),
             round: toRoundSummary(round, round ? (tallyByRound.get(round.id) ?? null) : null),
           };
         }),
@@ -195,14 +204,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
     "/v1/admin/rooms/:roomId/presence",
     {
       schema: {
-        params: Type.Object({
-          roomId: Type.String({
-            minLength: 36,
-            maxLength: 36,
-            pattern:
-              "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-          }),
-        }),
+        params: RoomIdParams,
       },
     },
     async (request, reply) => {
@@ -225,6 +227,36 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         return quorumStatus(room, presentCount);
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to read presence");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.delete(
+    "/v1/admin/rooms/:roomId",
+    {
+      schema: {
+        params: RoomIdParams,
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const deleted = await options.roomRepository.deleteRoom(roomId);
+        if (!deleted) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        return reply.code(204).send();
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to delete room");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },

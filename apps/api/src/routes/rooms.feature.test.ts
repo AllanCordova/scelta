@@ -100,11 +100,11 @@ describe("admin rooms", () => {
         quorumValue: 34,
         quorumUnit: "percent",
         eligibleCount: 0,
+        inviteToken: body.room.inviteToken,
+        invitePath: body.room.invitePath,
         round: null,
       }),
     ]);
-    expect(listed.json().rooms[0]).not.toHaveProperty("inviteToken");
-    expect(listed.json().rooms[0]).not.toHaveProperty("invitePath");
 
     await app.close();
   });
@@ -267,16 +267,28 @@ describe("admin rooms", () => {
         async findRoomById() {
           return null;
         },
+        async deleteRoom() {
+          return false;
+        },
         async joinRoom() {
           throw new Error("not implemented");
         },
         async countPresent() {
           return 0;
         },
+        async listCandidates() {
+          return [];
+        },
+        async listCandidatesByRooms() {
+          return [];
+        },
         async openRound() {
           throw new Error("not implemented");
         },
         async closeRound() {
+          return null;
+        },
+        async restartRound() {
           return null;
         },
         async findRound() {
@@ -287,6 +299,24 @@ describe("admin rooms", () => {
         },
         async latestClosedRound() {
           return null;
+        },
+        async listAuditEvents() {
+          return [];
+        },
+        async castBallot() {
+          return { ok: false, reason: "round_not_open" };
+        },
+        async hasVotedInRound() {
+          return false;
+        },
+        async listRoundBallotCandidateIds() {
+          return [];
+        },
+        async importMembers() {
+          return { createdCount: 0, updatedCount: 0 };
+        },
+        async listMembers() {
+          return [];
         },
       },
     });
@@ -315,6 +345,61 @@ describe("admin rooms", () => {
     const second = await createRoom(app, "Segunda");
 
     expect(first.inviteToken).not.toBe(second.inviteToken);
+
+    await app.close();
+  });
+
+  it("deletes a room and enforces admin authorization", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Sala para excluir",
+        roomType: "deacon",
+        rulesPreset: "ipb_local_officers",
+        candidates: ["Paulo", "Silas"],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const roomId = created.json().room.id as string;
+
+    const anonymousDelete = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/rooms/${roomId}`,
+    });
+    expect(anonymousDelete.statusCode).toBe(401);
+
+    const memberDelete = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/rooms/${roomId}`,
+      headers: { cookie: memberCookie },
+    });
+    expect(memberDelete.statusCode).toBe(403);
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/rooms/${roomId}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(deleted.statusCode).toBe(204);
+
+    const missing = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/rooms/${roomId}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toEqual({ error: "room_not_found" });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+    });
+    expect(listed.json().rooms).toEqual([]);
 
     await app.close();
   });

@@ -4,6 +4,7 @@ import {
   candidates,
   members,
   participants,
+  reactions,
   rooms,
   rounds,
   voteReceipts,
@@ -124,6 +125,45 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .limit(1);
       const row = rows[0];
       return row ? toStoredRoom(row) : null;
+    },
+
+    async deleteRoom(roomId) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return false;
+      }
+
+      return db.transaction(async (tx) => {
+        const existingRows = await tx
+          .select({ id: rooms.id })
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .limit(1);
+        if (!existingRows[0]) {
+          return false;
+        }
+
+        const roomRoundRows = await tx
+          .select({ id: rounds.id })
+          .from(rounds)
+          .where(eq(rounds.roomId, roomId));
+        const roundIds = roomRoundRows.map((round) => round.id);
+        if (roundIds.length > 0) {
+          await tx.delete(ballots).where(inArray(ballots.roundId, roundIds));
+          await tx.delete(voteReceipts).where(inArray(voteReceipts.roundId, roundIds));
+        }
+
+        await tx.delete(reactions).where(eq(reactions.roomId, roomId));
+        await tx.delete(auditEvents).where(eq(auditEvents.roomId, roomId));
+        await tx.delete(rounds).where(eq(rounds.roomId, roomId));
+        await tx.delete(candidates).where(eq(candidates.roomId, roomId));
+        await tx.delete(participants).where(eq(participants.roomId, roomId));
+        const deleted = await tx
+          .delete(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .returning({ id: rooms.id });
+        return Boolean(deleted[0]);
+      });
     },
 
     async joinRoom(roomId, displayName, joinKeyHash) {

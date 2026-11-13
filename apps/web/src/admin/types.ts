@@ -29,6 +29,18 @@ export type MemberImportReport = {
   rejectedRows: { line: number; reason: string }[];
 };
 
+export type StoredMemberItem = {
+  id: string;
+  fullName: string;
+  isCommunicant: boolean;
+  isMale: boolean | null;
+  birthDate: string | null;
+  societyFlags: {
+    upaActive?: boolean;
+    upaEnrolledAt?: string;
+  };
+};
+
 export type CandidateStanding = {
   candidateId: string;
   displayName: string;

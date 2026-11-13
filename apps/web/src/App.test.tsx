@@ -87,6 +87,15 @@ describe("App access", () => {
     expect(await screen.findByRole("button", { name: "Criar sala" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Token de administrador")).not.toBeInTheDocument();
   });
+
+  it("shows member roll import on /admin/membros to an admin", async () => {
+    window.history.pushState(null, "", "/admin/membros");
+    installSession(admin);
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Rol de membros" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Baixar template CSV" })).toBeInTheDocument();
+  });
 });
 
 function installSession(user: SessionUser | null) {
@@ -102,6 +111,12 @@ function installSession(user: SessionUser | null) {
       }
       if (url.endsWith("/v1/admin/rooms")) {
         return json({ rooms: [] });
+      }
+      if (url.includes("/v1/admin/members/suggestions")) {
+        return json({ suggestions: [] });
+      }
+      if (url.endsWith("/v1/admin/members")) {
+        return json({ members: [] });
       }
       if (url.includes("/v1/join/")) {
         return json({ error: "invite_not_found" }, 404);

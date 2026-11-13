@@ -241,16 +241,28 @@ describe("join room", () => {
         async findRoomById() {
           return null;
         },
+        async deleteRoom() {
+          return false;
+        },
         async joinRoom() {
           throw new Error("not implemented");
         },
         async countPresent() {
           return 0;
         },
+        async listCandidates() {
+          return [];
+        },
+        async listCandidatesByRooms() {
+          return [];
+        },
         async openRound() {
           throw new Error("not implemented");
         },
         async closeRound() {
+          return null;
+        },
+        async restartRound() {
           return null;
         },
         async findRound() {
@@ -261,6 +273,24 @@ describe("join room", () => {
         },
         async latestClosedRound() {
           return null;
+        },
+        async listAuditEvents() {
+          return [];
+        },
+        async castBallot() {
+          return { ok: false, reason: "round_not_open" };
+        },
+        async hasVotedInRound() {
+          return false;
+        },
+        async listRoundBallotCandidateIds() {
+          return [];
+        },
+        async importMembers() {
+          return { createdCount: 0, updatedCount: 0 };
+        },
+        async listMembers() {
+          return [];
         },
       },
     });

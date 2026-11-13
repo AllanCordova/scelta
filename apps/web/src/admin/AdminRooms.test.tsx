@@ -462,6 +462,62 @@ describe("AdminRooms", () => {
       await within(suggestionsGroup).findByRole("button", { name: "Lídia de Tiatira" }),
     ).toBeInTheDocument();
   });
+
+  it("opens the QR code, copies the link, and deletes an existing room from the list", async () => {
+    const roomsList = [
+      {
+        id: "room-1",
+        title: "Sala existente",
+        status: "open",
+        inviteToken: "token-existente",
+        invitePath: "/join/token-existente",
+        round: null,
+      },
+    ];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/rules/presets")) {
+          return json({ presets });
+        }
+        if (url.includes("/v1/admin/members/suggestions")) {
+          return json({ suggestions: [] });
+        }
+        if (url.endsWith("/presence")) {
+          return json({
+            presentCount: 1,
+            eligibleCount: 2,
+            requiredCount: 1,
+            quorumMet: true,
+          });
+        }
+        if (url.endsWith("/v1/admin/rooms/room-1") && init?.method === "DELETE") {
+          roomsList.splice(0, roomsList.length);
+          return new Response(null, { status: 204 });
+        }
+        return json({ rooms: [...roomsList] });
+      }),
+    );
+
+    render(<AdminRooms />);
+    const item = await screen.findByRole("listitem");
+    expect(item).toHaveTextContent("Sala existente");
+
+    // Open QR Code for the existing room
+    fireEvent.click(within(item).getByRole("button", { name: "QR Code" }));
+    expect(await screen.findByRole("link", { name: /\/join\/token-existente/ })).toBeInTheDocument();
+    expect(await screen.findByTestId("invite-qr")).toBeInTheDocument();
+
+    // Copy link for the existing room
+    fireEvent.click(within(item).getByRole("button", { name: "Copiar link" }));
+    expect(await within(item).findByRole("button", { name: "Link copiado" })).toBeInTheDocument();
+
+    // Delete the existing room
+    fireEvent.click(within(item).getByRole("button", { name: "Excluir" }));
+    expect(await screen.findByText("Nenhuma sala ainda.")).toBeInTheDocument();
+  });
 });
 
 function rulesGroup() {

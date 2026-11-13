@@ -5,6 +5,7 @@ import {
   closeRoundOutcome,
   resolveNextRoundCandidateIds,
   tallyRoundVotes,
+  type RoundResult,
   type RoundTally,
   type TallyEntry,
 } from "@scelta/domain";
@@ -161,7 +162,7 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         const presentCount = await repository.countPresent(roomId);
         const quorum = quorumStatus(room, presentCount);
         let tally: RoundTally | null = null;
-        let outcome = closeRoundOutcome(quorum.quorumMet);
+        let outcome: RoundResult | null = closeRoundOutcome(quorum.quorumMet);
 
         if (quorum.quorumMet) {
           const candidates = await repository.listCandidates(roomId);

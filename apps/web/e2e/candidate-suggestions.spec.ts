@@ -3,7 +3,7 @@ import { expect, type Page, test } from "@playwright/test";
 const adminEmail = "e2e-admin@scelta.test";
 const adminPassword = "e2e-admin-password";
 
-test("admin imports members, sees room-type candidate suggestions, includes/excludes names, and opens ballot", async ({
+test("admin imports members via CSV file on /admin/membros, sees room-type candidate suggestions, includes/excludes names, opens ballot, and can open QR/delete rooms", async ({
   page,
 }) => {
   const title = `Sugestão de candidatos ${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -17,9 +17,24 @@ test("admin imports members, sees room-type candidate suggestions, includes/excl
     "Lídia de Tiatira,sim,F,1995-03-20,sim,2023-05-01",
   ].join("\n");
 
-  await page.getByLabel("CSV de membros").fill(csv);
+  // Navigate to dedicated /admin/membros route
+  await page.getByRole("link", { name: "Membros" }).first().click();
+  await expect(page).toHaveURL(/\/admin\/membros$/);
+  await expect(page.getByRole("heading", { name: "Rol de membros" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Baixar template CSV" })).toBeVisible();
+
+  await page.getByLabel("Arquivo CSV de membros").setInputFiles({
+    name: "membros.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv, "utf-8"),
+  });
+  await expect(page.getByText(/membros\.csv/)).toBeVisible();
   await page.getByRole("button", { name: "Importar membros" }).click();
   await expect(page.getByText(/Importação concluída:/)).toBeVisible();
+
+  // Navigate back to /admin (Salas)
+  await page.getByRole("link", { name: "Salas" }).first().click();
+  await expect(page).toHaveURL(/\/admin$/);
 
   const suggestionsGroup = page.getByRole("group", { name: "Sugestões de candidatos" });
   await expect(suggestionsGroup).toBeVisible();
@@ -37,7 +52,7 @@ test("admin imports members, sees room-type candidate suggestions, includes/excl
   await expect(suggestionsGroup.getByRole("button", { name: "Paulo Apóstolo" })).toHaveCount(0);
   await expect(suggestionsGroup.getByRole("button", { name: "Timóteo Menor" })).toHaveCount(0);
 
-  // Switch back to Presbítero, include both Paulo and Silas, then exclude Silas and re-include Silas
+  // Switch back to Presbítero, include both Paulo and Silas, then exclude Paulo and re-include Paulo
   await page.getByRole("group", { name: "Tipo" }).getByRole("button", { name: "Presbítero" }).click();
   await expect(suggestionsGroup.getByRole("button", { name: "Paulo Apóstolo" })).toBeVisible();
 
@@ -45,7 +60,6 @@ test("admin imports members, sees room-type candidate suggestions, includes/excl
   await suggestionsGroup.getByRole("button", { name: "Silas Companheiro" }).click();
   await expect(page.getByLabel("Candidatos")).toHaveValue("Paulo Apóstolo, Silas Companheiro");
 
-  // Exclude Paulo and then re-include Paulo so admin exercises include/exclude before opening the ballot
   await suggestionsGroup.getByRole("button", { name: "Paulo Apóstolo" }).click();
   await expect(page.getByLabel("Candidatos")).toHaveValue("Silas Companheiro");
   await suggestionsGroup.getByRole("button", { name: "Paulo Apóstolo" }).click();
@@ -63,6 +77,16 @@ test("admin imports members, sees room-type candidate suggestions, includes/excl
   await expect(
     item.getByText("1º escrutínio — Candidatos: Paulo Apóstolo, Silas Companheiro"),
   ).toBeVisible();
+
+  // Verify QR Code, Copiar link, and Excluir actions on the room card
+  await item.getByRole("button", { name: "Copiar link" }).click();
+  await expect(item.getByRole("button", { name: "Link copiado" })).toBeVisible();
+
+  await item.getByRole("button", { name: "QR Code" }).click();
+  await expect(page.getByTestId("invite-qr")).toBeVisible();
+
+  await item.getByRole("button", { name: "Excluir" }).click();
+  await expect(page.getByRole("listitem").filter({ hasText: title })).toHaveCount(0);
 });
 
 async function loginAsAdmin(page: Page) {
