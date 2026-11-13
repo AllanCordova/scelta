@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
+import { z } from "zod";
 import { apiUrl } from "../api-url";
+import { validateWithZod } from "../forms/validation";
 import { submitBallot, submitJoin } from "../join/join-api";
 import { createJoinKey } from "../join/join-identity";
 import {
@@ -45,6 +47,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
   const [simCountInput, setSimCountInput] = useState("5");
+  const [simCountError, setSimCountError] = useState<string | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [simProgress, setSimProgress] = useState<string | null>(null);
   const simulatedVotersRef = useRef<SimulatedVoter[]>([]);
@@ -150,19 +153,25 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
-  function parseSimulationCount(): number {
-    const parsed = Number.parseInt(simCountInput, 10);
-    if (Number.isNaN(parsed) || parsed < 1) {
-      return 1;
+  function validateSimulationCount(): number | null {
+    const validation = validateWithZod(simCountSchema, { simCount: simCountInput });
+    if (!validation.ok) {
+      setSimCountError(validation.firstError);
+      setActionError(validation.firstError);
+      return null;
     }
-    return Math.min(parsed, 50);
+    setSimCountError(null);
+    return Number.parseInt(validation.data.simCount, 10);
   }
 
   async function handleSimulateJoin() {
     if (!room || isSimulating) {
       return;
     }
-    const targetCount = parseSimulationCount();
+    const targetCount = validateSimulationCount();
+    if (targetCount === null) {
+      return;
+    }
     setActionError(null);
     setIsSimulating(true);
     try {
@@ -192,7 +201,10 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     if (!room || isSimulating) {
       return;
     }
-    const targetCount = parseSimulationCount();
+    const targetCount = validateSimulationCount();
+    if (targetCount === null) {
+      return;
+    }
     setActionError(null);
     setIsSimulating(true);
     try {
@@ -230,7 +242,10 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
 
     const roundInstanceId = `${currentRound.id}:${currentRound.restartCount ?? 0}`;
-    const targetCount = parseSimulationCount();
+    const targetCount = validateSimulationCount();
+    if (targetCount === null) {
+      return;
+    }
     setActionError(null);
     setIsSimulating(true);
     try {
@@ -728,17 +743,23 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                 </p>
               </div>
               <div className="simulator-controls">
-                <label className="simulator-count-label">
-                  Participantes
-                  <input
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={simCountInput}
-                    disabled={isSimulating}
-                    onChange={(event) => setSimCountInput(event.target.value)}
-                  />
-                </label>
+                <div className="field">
+                  <label className="simulator-count-label">
+                    Participantes
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={simCountInput}
+                      aria-invalid={Boolean(simCountError)}
+                      disabled={isSimulating}
+                      onChange={(event) => {
+                        setSimCountInput(event.target.value);
+                        setSimCountError(null);
+                      }}
+                    />
+                  </label>
+                  {simCountError ? <span className="field-error">{simCountError}</span> : null}
+                </div>
                 <div className="simulator-buttons">
                   <button
                     type="button"
@@ -820,6 +841,16 @@ function formatSyncTime(date: Date): string {
     second: "2-digit",
   });
 }
+
+const simCountSchema = z.object({
+  simCount: z
+    .string()
+    .trim()
+    .refine(
+      (val) => /^\d+$/.test(val) && Number(val) >= 1 && Number(val) <= 50,
+      "Informe um número entre 1 e 50.",
+    ),
+});
 
 function messageFromRoundError(error: unknown): string {
   if (error instanceof RoomRequestError) {

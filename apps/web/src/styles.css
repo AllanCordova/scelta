@@ -393,6 +393,27 @@ button:disabled {
   color: var(--danger);
 }
 
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+textarea[aria-invalid="true"],
+.upload-zone[aria-invalid="true"] {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 5%, var(--surface, #ffffff));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field-error {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--danger);
+}
+
 .invite {
   display: grid;
   gap: 0.65rem;
