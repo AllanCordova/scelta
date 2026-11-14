@@ -277,6 +277,30 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       throw new Error("Could not store a unique invite token");
     },
 
+    async setOfficeBanner(roomId, officeKey, bannerUrl) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return null;
+      }
+      const existing = await this.findRoomById(roomId);
+      if (!existing) {
+        return null;
+      }
+      const nextBanners = { ...(existing.officeBanners ?? {}) };
+      if (bannerUrl === null) {
+        delete nextBanners[officeKey];
+      } else {
+        nextBanners[officeKey] = bannerUrl;
+      }
+
+      const [updated] = await db
+        .update(rooms)
+        .set({ officeBanners: nextBanners })
+        .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+        .returning();
+      return updated ? toStoredRoom(updated) : null;
+    },
+
     async deleteRoom(roomId) {
       const church = await findChurchByName(db, churchName);
       if (!church) {
@@ -1379,6 +1403,7 @@ function toStoredRoom(row: {
   quorumValue: number;
   quorumUnit: QuorumUnit;
   eligibleCount: number;
+  officeBanners?: Record<string, string> | null;
   inviteToken: string;
   status: string;
   reactionsEnabled: boolean;
@@ -1392,6 +1417,7 @@ function toStoredRoom(row: {
     quorumValue: row.quorumValue,
     quorumUnit: row.quorumUnit,
     eligibleCount: row.eligibleCount,
+    officeBanners: row.officeBanners ?? {},
     inviteToken: row.inviteToken,
     status: row.status as RoomStatus,
     reactionsEnabled: row.reactionsEnabled,

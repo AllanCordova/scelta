@@ -8,6 +8,7 @@ import { submitBallot, submitJoin } from "../join/join-api";
 import { createJoinKey } from "../join/join-identity";
 import { startTwoSidedConfettiLoop } from "../shell/confetti";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
+import { ImageDropzone } from "../shell/ImageDropzone";
 import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
 import { PaginationBar, paginateItems } from "../shell/PaginationBar";
 import { EditRoomModal } from "./EditRoomModal";
@@ -39,6 +40,7 @@ import {
   openRound,
   removeParticipants,
   restartRound,
+  setRoomOfficeBanner,
   rotateRoomInvite,
   updateRoom,
 } from "./rooms-api";
@@ -65,6 +67,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   const [simProgress, setSimProgress] = useState<string | null>(null);
   const simulatedVotersRef = useRef<SimulatedVoter[]>([]);
   const [selectedOffice, setSelectedOffice] = useState<string>("");
+  const [bannerOfficeLabel, setBannerOfficeLabel] = useState<string>("");
+  const [bannerError, setBannerError] = useState<string | null>(null);
   const [candidatePage, setCandidatePage] = useState(1);
   const [receiptPage, setReceiptPage] = useState(1);
   const [dismissedWinnerRoundId, setDismissedWinnerRoundId] = useState<string | null>(null);
@@ -472,6 +476,38 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   });
   const roomTypeLabel = ROOM_TYPE_LABELS[room.roomType] ?? "Sessão";
   const roomCode = `SALA-${room.id.slice(0, 6).toUpperCase()}`;
+  const effectiveBannerOffice =
+    offices.length > 0
+      ? offices.some((item) => item.officeLabel === bannerOfficeLabel)
+        ? bannerOfficeLabel
+        : offices[0]!.officeLabel
+      : null;
+  const activeBannerUrl =
+    offices.length > 0 && effectiveBannerOffice
+      ? (room.officeBanners?.[effectiveBannerOffice] ?? null)
+      : (room.officeBanners?.default ?? null);
+
+  async function handleOfficeBannerChange(nextUrl: string | null) {
+    if (!room) {
+      return;
+    }
+    setBannerError(null);
+    setIsBusy(true);
+    try {
+      await setRoomOfficeBanner(apiBase, room.id, {
+        officeLabel: effectiveBannerOffice,
+        bannerUrl: nextUrl,
+      });
+      toast.success(nextUrl ? "Banner do cargo atualizado." : "Banner do cargo removido.");
+      setRefreshTick((tick) => tick + 1);
+    } catch (error) {
+      const msg = messageFromRoundError(error);
+      setBannerError(msg);
+      toast.error(msg);
+    } finally {
+      setIsBusy(false);
+    }
+  }
 
   const voterDenominator =
     room.eligibleCount > 0
@@ -728,6 +764,69 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
           <OfficeProgressGrid offices={resolvedOffices} />
         </section>
       ) : null}
+
+      <section className="panel office-banner-admin-panel" aria-label="Banner do cargo">
+        <div className="section-header-row">
+          <div>
+            <h2>Banner do Cargo na Cédula</h2>
+            <p className="muted">
+              {offices.length > 0
+                ? "Adicione um banner por cargo para destacar cada eleição na seção Cédula Eleitoral."
+                : "Adicione um banner para destacar este cargo na seção Cédula Eleitoral."}
+            </p>
+          </div>
+          {offices.length > 0 && effectiveBannerOffice ? (
+            <label className="office-banner-select-label">
+              <span>Cargo</span>
+              <select
+                aria-label="Cargo do banner"
+                value={effectiveBannerOffice}
+                onChange={(event) => setBannerOfficeLabel(event.target.value)}
+                disabled={isBusy}
+              >
+                {offices.map((office) => {
+                  const hasBanner = Boolean(room.officeBanners?.[office.officeLabel]);
+                  return (
+                    <option key={office.officeLabel} value={office.officeLabel}>
+                      {office.officeLabel} {hasBanner ? "✓" : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+          ) : null}
+        </div>
+        {activeBannerUrl ? (
+          <div className="voter-office-banner">
+            <img
+              src={activeBannerUrl}
+              alt={
+                effectiveBannerOffice
+                  ? `Banner do cargo ${effectiveBannerOffice}`
+                  : `Banner da sala ${room.title}`
+              }
+              className="voter-office-banner-img"
+            />
+          </div>
+        ) : null}
+        <ImageDropzone
+          id="office-banner-dropzone"
+          label={
+            effectiveBannerOffice
+              ? `Imagem de banner — ${effectiveBannerOffice}`
+              : "Imagem de banner do cargo (opcional)"
+          }
+          value={activeBannerUrl}
+          fallbackName={candidateInitials(effectiveBannerOffice ?? roomTypeLabel)}
+          onChange={(nextUrl) => void handleOfficeBannerChange(nextUrl)}
+          onError={(msg) => setBannerError(msg)}
+        />
+        {bannerError ? (
+          <p className="field-error" role="alert">
+            {bannerError}
+          </p>
+        ) : null}
+      </section>
 
       <section className="detail-kpi-grid" aria-label="Resumo de métricas">
         <div className="detail-kpi-card">

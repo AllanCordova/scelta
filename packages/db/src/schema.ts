@@ -101,6 +101,7 @@ export const rooms = pgTable(
     quorumUnit: quorumUnitEnum("quorum_unit").notNull().default("absolute"),
     /** Denominator for percent quorum. Zero cannot meet a percent rule. */
     eligibleCount: integer("eligible_count").notNull().default(0),
+    officeBanners: jsonb("office_banners").$type<Record<string, string>>().notNull().default({}),
     inviteToken: text("invite_token").notNull(),
     status: roomStatusEnum("status").notNull().default("draft"),
     reactionsEnabled: boolean("reactions_enabled").notNull().default(true),

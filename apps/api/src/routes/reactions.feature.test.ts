@@ -1,4 +1,5 @@
 import {
+  auditEvents,
   candidates,
   createPgliteDatabase,
   participants,
@@ -63,6 +64,7 @@ describe("controlled reactions", () => {
 
   beforeEach(async () => {
     resetAuthAttempts();
+    await db.delete(auditEvents);
     await db.delete(reactions);
     await db.delete(candidates);
     await db.delete(participants);

@@ -18,6 +18,7 @@ export type StoredRoom = {
   quorumValue: number;
   quorumUnit: QuorumUnit;
   eligibleCount: number;
+  officeBanners?: Record<string, string>;
   inviteToken: string;
   status: RoomStatus;
   reactionsEnabled: boolean;
@@ -127,6 +128,7 @@ export type SendReactionResult =
 export type RoomRepository = {
   createRoom(room: NewRoom): Promise<StoredRoom>;
   updateRoom(roomId: string, input: UpdateRoomInput): Promise<StoredRoom | null>;
+  setOfficeBanner(roomId: string, officeKey: string, bannerUrl: string | null): Promise<StoredRoom | null>;
   rotateInviteToken(roomId: string): Promise<StoredRoom | null>;
   listRooms(): Promise<StoredRoom[]>;
   findRoomByInviteToken(inviteToken: string): Promise<StoredRoom | null>;

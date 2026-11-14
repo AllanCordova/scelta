@@ -51,12 +51,15 @@ export type BallotOfficeSummary = {
   status: string;
   winnerName: string | null;
   winnerPhotoUrl?: string | null;
+  bannerUrl?: string | null;
 };
 
 export type BallotState = {
   roomId?: string;
   roomStatus: string;
   roomType?: string;
+  officeBanners?: Record<string, string>;
+  activeBannerUrl?: string | null;
   reactionsEnabled?: boolean;
   allowedReactions?: string[];
   candidates: BallotCandidate[];
@@ -130,6 +133,11 @@ export async function fetchBallotState(
     roomId: typeof body.roomId === "string" ? body.roomId : undefined,
     roomStatus: typeof body.roomStatus === "string" ? body.roomStatus : "open",
     roomType: typeof body.roomType === "string" ? body.roomType : undefined,
+    officeBanners:
+      body.officeBanners && typeof body.officeBanners === "object"
+        ? body.officeBanners
+        : undefined,
+    activeBannerUrl: typeof body.activeBannerUrl === "string" ? body.activeBannerUrl : null,
     reactionsEnabled: typeof body.reactionsEnabled === "boolean" ? body.reactionsEnabled : true,
     allowedReactions: Array.isArray(body.allowedReactions) ? body.allowedReactions : undefined,
     candidates: body.candidates,

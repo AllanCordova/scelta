@@ -2,6 +2,9 @@ import {
   countOfficeRoundNumber,
   findPreset,
   isMemberEligibleForRoomType,
+  isMultiOfficeRoomType,
+  isValidOfficeForRoomType,
+  parsePhotoUrl,
   tallyRoundVotes,
   validateCandidateNames,
   validateCreateRoom,
@@ -331,6 +334,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
               return {
                 ...office,
                 winnerPhotoUrl: winnerCandidate?.photoUrl ?? null,
+                bannerUrl: room.officeBanners?.[office.officeLabel] ?? null,
               };
             }),
             recommendedOffice: officeState.recommendedOffice,
@@ -488,6 +492,77 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         return { room: toRoomResponse(updated, { includeInvite: true, candidates }) };
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to update room");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.put(
+    "/v1/admin/rooms/:roomId/office-banner",
+    {
+      schema: {
+        params: RoomIdParams,
+        body: Type.Object(
+          {
+            officeLabel: Type.Optional(
+              Type.Union([Type.String({ minLength: 1, maxLength: 120 }), Type.Null()]),
+            ),
+            bannerUrl: Type.Union([Type.String({ maxLength: 12_000_000 }), Type.Null()]),
+          },
+          { additionalProperties: false },
+        ),
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      const body = request.body as {
+        officeLabel?: string | null;
+        bannerUrl: string | null;
+      };
+
+      const parsedBanner = parsePhotoUrl(body.bannerUrl);
+      if (!parsedBanner.ok) {
+        return reply.code(400).send({ error: "invalid_banner_url" });
+      }
+
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        let officeKey = "default";
+        if (isMultiOfficeRoomType(room.roomType)) {
+          if (!body.officeLabel || !isValidOfficeForRoomType(room.roomType, body.officeLabel)) {
+            return reply.code(400).send({ error: "invalid_office" });
+          }
+          officeKey = body.officeLabel;
+        } else if (body.officeLabel !== undefined && body.officeLabel !== null) {
+          return reply.code(400).send({ error: "invalid_office" });
+        }
+
+        const updated = await options.roomRepository.setOfficeBanner(
+          roomId,
+          officeKey,
+          parsedBanner.value,
+        );
+        if (!updated) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        return {
+          room: toRoomResponse(updated, { includeInvite: true }),
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to update office banner");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },
@@ -771,6 +846,7 @@ function toRoomResponse(
     quorumValue: room.quorumValue,
     quorumUnit: room.quorumUnit,
     eligibleCount: room.eligibleCount,
+    officeBanners: room.officeBanners ?? {},
     status: room.status,
     reactionsEnabled: room.reactionsEnabled,
     ...(candidates.length > 0
