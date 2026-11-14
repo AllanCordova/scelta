@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { apiUrl } from "../api-url";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import {
+  deleteAccessCode,
   generateAccessCodes,
   listAccessCodes,
   revokeAccessCode,
@@ -32,8 +33,11 @@ export function AccessCodesPanel({
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [pendingRevoke, setPendingRevoke] = useState<
-    { type: "single"; code: MemberAccessCodeItem } | { type: "all" } | null
+  const [pendingAction, setPendingAction] = useState<
+    | { type: "revoke-single"; code: MemberAccessCodeItem }
+    | { type: "revoke-all" }
+    | { type: "delete-single"; code: MemberAccessCodeItem }
+    | null
   >(null);
 
   useEffect(() => {
@@ -76,6 +80,13 @@ export function AccessCodesPanel({
       await navigator.clipboard.writeText(url).catch(() => undefined);
     }
     toast.success("Link de acesso copiado.");
+  }
+
+  async function handleCopyCode(code: string) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(code).catch(() => undefined);
+    }
+    toast.success("Código de acesso copiado.");
   }
 
   async function handleGenerate() {
@@ -153,6 +164,25 @@ export function AccessCodesPanel({
     }
   }
 
+  async function handleDeleteSingle(codeId: string) {
+    if (isBusy) {
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setIsBusy(true);
+    try {
+      await deleteAccessCode(apiBase, roomId, codeId);
+      setAccessCodes((current) => current.filter((item) => item.id !== codeId));
+      toast.success("Código de acesso removido.");
+      onCodesChanged?.();
+    } catch {
+      setError("Não foi possível remover o código.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   return (
     <section className="panel access-codes-card" aria-labelledby="access-codes-heading">
       <div className="audit-feed-header">
@@ -186,7 +216,7 @@ export function AccessCodesPanel({
           type="button"
           className="ghost danger-text round-action"
           disabled={isBusy || activeCodes.length === 0}
-          onClick={() => setPendingRevoke({ type: "all" })}
+          onClick={() => setPendingAction({ type: "revoke-all" })}
         >
           Revogar todos
         </button>
@@ -236,16 +266,6 @@ export function AccessCodesPanel({
                     <div className="access-code-info">
                       <span className="access-code-name">{item.displayName}</span>
                       <span className="access-code-pin">{item.code}</span>
-                      {directUrl ? (
-                        <a
-                          href={directUrl}
-                          className="access-code-url"
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          {directUrl}
-                        </a>
-                      ) : null}
                     </div>
                     <div className="access-code-meta">
                       <span
@@ -255,6 +275,13 @@ export function AccessCodesPanel({
                       >
                         {isRevoked ? "Revogado" : "Ativo"}
                       </span>
+                      <button
+                        type="button"
+                        className="ghost access-code-copy-btn"
+                        onClick={() => void handleCopyCode(item.code)}
+                      >
+                        Copiar código
+                      </button>
                       {directUrl ? (
                         <button
                           type="button"
@@ -269,11 +296,19 @@ export function AccessCodesPanel({
                           type="button"
                           className="ghost danger-text access-code-revoke-btn"
                           disabled={isBusy}
-                          onClick={() => setPendingRevoke({ type: "single", code: item })}
+                          onClick={() => setPendingAction({ type: "revoke-single", code: item })}
                         >
                           Revogar
                         </button>
                       ) : null}
+                      <button
+                        type="button"
+                        className="ghost danger-text access-code-delete-btn"
+                        disabled={isBusy}
+                        onClick={() => setPendingAction({ type: "delete-single", code: item })}
+                      >
+                        Remover
+                      </button>
                     </div>
                   </li>
                 );
@@ -305,30 +340,42 @@ export function AccessCodesPanel({
       ) : null}
 
       <ConfirmDialog
-        open={pendingRevoke !== null}
+        open={pendingAction !== null}
         title={
-          pendingRevoke?.type === "all"
+          pendingAction?.type === "revoke-all"
             ? "Revogar todos os códigos"
-            : "Revogar código de acesso"
+            : pendingAction?.type === "delete-single"
+              ? "Remover código de acesso"
+              : "Revogar código de acesso"
         }
         description={
-          pendingRevoke?.type === "all"
+          pendingAction?.type === "revoke-all"
             ? `Tem certeza que deseja revogar todos os ${activeCodes.length} códigos ativos desta sala?`
-            : pendingRevoke
-              ? `Tem certeza que deseja revogar o código de "${pendingRevoke.code.displayName}"?`
-              : ""
+            : pendingAction?.type === "delete-single"
+              ? `Tem certeza que deseja remover permanentemente o código de "${pendingAction.code.displayName}"?`
+              : pendingAction
+                ? `Tem certeza que deseja revogar o código de "${pendingAction.code.displayName}"?`
+                : ""
         }
-        confirmLabel={pendingRevoke?.type === "all" ? "Revogar todos" : "Revogar"}
+        confirmLabel={
+          pendingAction?.type === "revoke-all"
+            ? "Revogar todos"
+            : pendingAction?.type === "delete-single"
+              ? "Remover"
+              : "Revogar"
+        }
         busy={isBusy}
-        onCancel={() => setPendingRevoke(null)}
+        onCancel={() => setPendingAction(null)}
         onConfirm={() => {
-          const target = pendingRevoke;
-          setPendingRevoke(null);
+          const target = pendingAction;
+          setPendingAction(null);
           if (!target) {
             return;
           }
-          if (target.type === "all") {
+          if (target.type === "revoke-all") {
             void handleRevokeAll();
+          } else if (target.type === "delete-single") {
+            void handleDeleteSingle(target.code.id);
           } else {
             void handleRevokeSingle(target.code.id);
           }

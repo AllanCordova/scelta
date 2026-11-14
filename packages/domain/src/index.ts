@@ -115,3 +115,11 @@ export {
   isReactionRateLimited,
   type AllowedReactionEmoji,
 } from "./reactions.js";
+export {
+  CHAT_MESSAGE_MAX_LENGTH,
+  CHAT_RATE_LIMIT_MAX,
+  CHAT_RATE_LIMIT_WINDOW_MS,
+  isChatRateLimited,
+  validateChatMessage,
+  type ValidateChatMessageResult,
+} from "./chat.js";
