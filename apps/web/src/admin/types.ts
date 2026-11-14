@@ -115,6 +115,14 @@ export type OfficeProgressItem = {
   winnerPhotoUrl?: string | null;
 };
 
+export type AuditEventItem = {
+  id: string;
+  actorRole: string;
+  action: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
 export type RoomDetail = RoomSummary & {
   presence: {
     presentCount: number;
@@ -126,6 +134,7 @@ export type RoomDetail = RoomSummary & {
   receiptTimestamps: string[];
   offices?: OfficeProgressItem[];
   recommendedOffice?: string | null;
+  auditEvents?: AuditEventItem[];
 };
 
 export type FieldErrorCode = "required" | "invalid" | "out_of_range" | "incomplete";

@@ -1,4 +1,5 @@
 import {
+  auditEvents,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -68,6 +69,7 @@ describe("admin rooms", () => {
     await db.delete(candidates);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
+    await db.delete(auditEvents);
     await db.delete(rooms);
   });
 

@@ -1,4 +1,5 @@
 import {
+  auditEvents,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -62,6 +63,7 @@ describe("multi-round and runoff elections", () => {
     await db.delete(rounds);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
+    await db.delete(auditEvents);
     await db.delete(rooms);
   });
 

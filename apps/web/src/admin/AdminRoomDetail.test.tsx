@@ -742,6 +742,48 @@ describe("AdminRoomDetail", () => {
     });
     expect(await screen.findByText("Completa")).toBeInTheDocument();
   });
+
+  it("renders the room audit log section when auditEvents are returned", async () => {
+    const auditedRoom: RoomDetail = {
+      ...sampleRoom,
+      auditEvents: [
+        {
+          id: "evt-1",
+          actorRole: "admin",
+          action: "room_created",
+          payload: {},
+          createdAt: "2026-11-13T21:00:00.000Z",
+        },
+        {
+          id: "evt-2",
+          actorRole: "admin",
+          action: "quorum_changed",
+          payload: {},
+          createdAt: "2026-11-13T21:01:00.000Z",
+        },
+      ],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: auditedRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+    expect(await screen.findByRole("heading", { name: "Auditoria da sala" })).toBeInTheDocument();
+    expect(screen.getByText("Sala criada")).toBeInTheDocument();
+    expect(screen.getByText("Quórum alterado")).toBeInTheDocument();
+  });
 });
 
 function json(body: unknown, status = 200) {
