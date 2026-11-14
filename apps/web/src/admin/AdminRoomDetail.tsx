@@ -136,6 +136,26 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
+  async function handleToggleReactions() {
+    if (!room) {
+      return;
+    }
+    setIsBusy(true);
+    setActionError(null);
+    try {
+      const nextEnabled = room.reactionsEnabled === false;
+      await updateRoom(apiBase, room.id, { reactionsEnabled: nextEnabled });
+      toast.success(nextEnabled ? "Reações ativadas." : "Reações desativadas.");
+      setRefreshTick((tick) => tick + 1);
+    } catch (error) {
+      const msg = messageFromRoundError(error);
+      setActionError(msg);
+      toast.error(msg);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleCopyInvite() {
     if (!fullInviteUrl) {
       return;
@@ -557,6 +577,15 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                 </button>
               </>
             ) : null}
+
+            <button
+              type="button"
+              className="ghost round-action"
+              disabled={isBusy}
+              onClick={() => void handleToggleReactions()}
+            >
+              {room.reactionsEnabled !== false ? "Reações: Ativadas" : "Reações: Desativadas"}
+            </button>
 
             <button
               type="button"
@@ -1151,6 +1180,28 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
               </section>
             );
           })()}
+
+          {room.auditEvents && room.auditEvents.length > 0 ? (
+            <section className="panel audit-feed-card" aria-labelledby="room-audit-log-heading">
+              <div className="audit-feed-header">
+                <h2 id="room-audit-log-heading">Auditoria da sala</h2>
+                <span className="detail-kpi-pill">{room.auditEvents.length}</span>
+              </div>
+              <div className="audit-feed-list">
+                {room.auditEvents.map((event) => (
+                  <div key={event.id} className="audit-receipt-item">
+                    <span className="audit-receipt-dot" aria-hidden="true" />
+                    <div>
+                      <p className="audit-receipt-title">{formatAuditActionLabel(event.action)}</p>
+                      <p className="audit-receipt-meta">
+                        {event.actorRole} • {formatReceiptTime(event.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </div>
       </div>
 
@@ -1305,4 +1356,19 @@ function messageFromRoundError(error: unknown): string {
     return roundErrorMessage(error.errorCode);
   }
   return roundErrorMessage("unknown");
+}
+
+const AUDIT_ACTION_LABELS: Record<string, string> = {
+  room_created: "Sala criada",
+  quorum_changed: "Quórum alterado",
+  room_status_changed: "Situação da sala alterada",
+  round_opened: "Escrutínio iniciado",
+  round_closed: "Escrutínio encerrado",
+  round_restarted: "Escrutínio reiniciado",
+  office_declined: "Cargo declinado",
+  result_published: "Resultado publicado",
+};
+
+function formatAuditActionLabel(action: string): string {
+  return AUDIT_ACTION_LABELS[action] ?? action;
 }

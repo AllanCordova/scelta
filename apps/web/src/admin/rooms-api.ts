@@ -306,6 +306,7 @@ export type UpdateRoomPayload = {
   quorumUnit?: QuorumUnit;
   eligibleCount?: number;
   status?: "draft" | "open" | "closed";
+  reactionsEnabled?: boolean;
 };
 
 export async function updateRoom(

@@ -114,6 +114,12 @@ test("admin clicks a room card to open the room detail view and manages the scru
     page.getByText(/Eleito por maioria absoluta:|Sem maioria absoluta neste escrutínio\./i),
   ).toBeVisible();
 
+  const auditSection = page.getByRole("region", { name: "Auditoria da sala" });
+  await expect(auditSection).toBeVisible();
+  await expect(auditSection.getByText("Sala criada", { exact: true })).toBeVisible();
+  await expect(auditSection.getByText("Escrutínio iniciado", { exact: true })).toBeVisible();
+  await expect(auditSection.getByText("Escrutínio encerrado", { exact: true })).toBeVisible();
+
   await page.getByRole("link", { name: /Voltar para Painel de Salas/i }).click();
   await expect(page).toHaveURL(/\/admin\/salas$/);
 
