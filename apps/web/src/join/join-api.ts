@@ -54,8 +54,11 @@ export type BallotOfficeSummary = {
 };
 
 export type BallotState = {
+  roomId?: string;
   roomStatus: string;
   roomType?: string;
+  reactionsEnabled?: boolean;
+  allowedReactions?: string[];
   candidates: BallotCandidate[];
   offices?: BallotOfficeSummary[];
   round: BallotRoundState | null;
@@ -124,11 +127,35 @@ export async function fetchBallotState(
   }
 
   return {
+    roomId: typeof body.roomId === "string" ? body.roomId : undefined,
     roomStatus: typeof body.roomStatus === "string" ? body.roomStatus : "open",
     roomType: typeof body.roomType === "string" ? body.roomType : undefined,
+    reactionsEnabled: typeof body.reactionsEnabled === "boolean" ? body.reactionsEnabled : true,
+    allowedReactions: Array.isArray(body.allowedReactions) ? body.allowedReactions : undefined,
     candidates: body.candidates,
     offices: Array.isArray(body.offices) ? body.offices : undefined,
     round: body.round ?? null,
+  };
+}
+
+export async function sendReaction(
+  apiBase: string,
+  token: string,
+  payload: { joinKey: string; emoji: string },
+): Promise<{ emoji: string; at: string }> {
+  const response = await fetch(`${apiBase}/v1/join/${encodeURIComponent(token)}/reactions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw await readError(response);
+  }
+
+  const body = (await response.json()) as { emoji?: string; at?: string };
+  return {
+    emoji: typeof body.emoji === "string" ? body.emoji : payload.emoji,
+    at: typeof body.at === "string" ? body.at : new Date().toISOString(),
   };
 }
 

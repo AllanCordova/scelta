@@ -572,6 +572,70 @@ describe("JoinRoom", () => {
     expect(await screen.findAllByText("Página 1 de 2")).not.toHaveLength(0);
     unmount();
   });
+
+  it("sends allowlisted reactions, shows rate-limit notice, and hides buttons when disabled", async () => {
+    let callCount = 0;
+    let reactionsEnabled = true;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/join/react-token") && !init) {
+          return json({ title: "Assembleia", status: "open", canJoin: true });
+        }
+        if (url.endsWith("/v1/join/react-token") && init?.method === "POST") {
+          return json({
+            title: "Assembleia",
+            status: "open",
+            displayName: "Ana",
+            presentCount: 1,
+            alreadyJoined: false,
+          });
+        }
+        if (url.endsWith("/v1/join/react-token/ballot")) {
+          return json({
+            roomStatus: "open",
+            reactionsEnabled,
+            allowedReactions: ["👏", "🙏"],
+            candidates: [],
+            round: null,
+          });
+        }
+        if (url.endsWith("/v1/join/react-token/reactions") && init?.method === "POST") {
+          callCount += 1;
+          if (callCount === 2) {
+            return json({ error: "reaction_rate_limited" }, 429);
+          }
+          return json({ ok: true, emoji: "👏", at: "2026-11-13T21:00:00.000Z" }, 201);
+        }
+        return json({});
+      }),
+    );
+
+    const { unmount } = render(<JoinRoom token="react-token" />);
+    fireEvent.change(await screen.findByLabelText("Código de acesso"), {
+      target: { value: "A7K9M2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar na sala" }));
+
+    const clapBtn = await screen.findByRole("button", { name: "Reagir com 👏" });
+    fireEvent.click(clapBtn);
+    expect(await screen.findByText("👏", { selector: ".voter-reaction-chip" })).toBeInTheDocument();
+
+    fireEvent.click(clapBtn);
+    expect(
+      await screen.findByText("Muitas reações em sequência. Aguarde alguns segundos."),
+    ).toBeInTheDocument();
+    unmount();
+
+    reactionsEnabled = false;
+    render(<JoinRoom token="react-token" />);
+    expect(
+      await screen.findByText("Reações desativadas pelo administrador."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reagir com 👏" })).not.toBeInTheDocument();
+  });
 });
 
 function json(body: unknown, status = 200) {

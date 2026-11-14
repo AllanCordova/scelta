@@ -163,15 +163,15 @@
 
 ### B3.1 — Controlled reactions (emojis)
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Participants can send moderated emoji reactions during the meeting for a lighter atmosphere, without affecting or leaking votes.
 
 **Acceptance criteria:**
 
-- [ ] Participant can send an emoji from an allowlist while in the room
-- [ ] Reactions are rate-limited and can be disabled by admin
-- [ ] Reactions never appear tied to ballot choices
-- [ ] Feature + browser tests for send / rate-limit / admin disable
+- [x] Participant can send an emoji from an allowlist while in the room
+- [x] Reactions are rate-limited and can be disabled by admin
+- [x] Reactions never appear tied to ballot choices
+- [x] Feature + browser tests for send / rate-limit / admin disable
 
 ---
 

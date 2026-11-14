@@ -1,5 +1,6 @@
 import {
   boolean,
+  index,
   integer,
   jsonb,
   pgEnum,
@@ -102,6 +103,7 @@ export const rooms = pgTable(
     eligibleCount: integer("eligible_count").notNull().default(0),
     inviteToken: text("invite_token").notNull(),
     status: roomStatusEnum("status").notNull().default("draft"),
+    reactionsEnabled: boolean("reactions_enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [uniqueIndex("rooms_invite_token_uidx").on(table.inviteToken)],
@@ -211,17 +213,27 @@ export const voteReceipts = pgTable(
   ],
 );
 
-export const reactions = pgTable("reactions", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  roomId: uuid("room_id")
-    .notNull()
-    .references(() => rooms.id),
-  participantId: uuid("participant_id")
-    .notNull()
-    .references(() => participants.id),
-  emoji: text("emoji").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const reactions = pgTable(
+  "reactions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id),
+    participantId: uuid("participant_id")
+      .notNull()
+      .references(() => participants.id),
+    emoji: text("emoji").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("reactions_room_participant_created_idx").on(
+      table.roomId,
+      table.participantId,
+      table.createdAt,
+    ),
+  ],
+);
 
 export const auditEvents = pgTable("audit_events", {
   id: uuid("id").defaultRandom().primaryKey(),
