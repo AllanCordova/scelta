@@ -447,6 +447,38 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
     },
   );
 
+  app.post(
+    "/v1/admin/rooms/:roomId/invite/rotate",
+    {
+      schema: {
+        params: RoomIdParams,
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const updated = await options.roomRepository.rotateInviteToken(roomId);
+        if (!updated) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const candidates = await options.roomRepository.listCandidates(roomId);
+        return { room: toRoomResponse(updated, { includeInvite: true, candidates }) };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to rotate invite token");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
   app.delete(
     "/v1/admin/rooms/:roomId",
     {
