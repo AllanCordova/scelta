@@ -163,6 +163,11 @@ export type RoomRepository = {
   latestRounds(roomIds: string[]): Promise<StoredRound[]>;
   latestClosedRound(roomId: string): Promise<StoredRound | null>;
   listAuditEvents(roomId: string): Promise<StoredAuditEvent[]>;
+  recordAuditEvent?(
+    roomId: string,
+    action: string,
+    payload?: Record<string, unknown>,
+  ): Promise<StoredAuditEvent>;
   castBallot(input: {
     roomId: string;
     roundId: string;

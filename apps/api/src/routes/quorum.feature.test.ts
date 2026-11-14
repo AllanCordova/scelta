@@ -1,4 +1,5 @@
 import {
+  auditEvents,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -70,6 +71,7 @@ describe("quorum gate", () => {
     await db.delete(candidates);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
+    await db.delete(auditEvents);
     await db.delete(rooms);
   });
 

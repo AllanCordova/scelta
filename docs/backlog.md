@@ -179,14 +179,14 @@
 
 ### B4.1 — Admin audit log
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Sensitive admin actions are append-only logged for the room.
 
 **Acceptance criteria:**
 
-- [ ] Create room, change quorum, start/restart/close, publish result are audited
-- [ ] Audit entries are visible to admin and immutable via API
-- [ ] Feature tests assert audit rows on restart and quorum change
+- [x] Create room, change quorum, start/restart/close, publish result are audited
+- [x] Audit entries are visible to admin and immutable via API
+- [x] Feature tests assert audit rows on restart and quorum change
 
 ### B4.2 — Security baseline for voting
 

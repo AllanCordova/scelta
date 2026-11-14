@@ -295,12 +295,14 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           return reply.code(404).send({ error: "room_not_found" });
         }
 
-        const [roomCandidates, allCandidates, allRounds, presentCount] = await Promise.all([
-          options.roomRepository.listCandidates(roomId),
-          options.roomRepository.listAllCandidates(roomId),
-          options.roomRepository.listRounds(roomId),
-          options.roomRepository.countPresent(roomId),
-        ]);
+        const [roomCandidates, allCandidates, allRounds, presentCount, auditEvents] =
+          await Promise.all([
+            options.roomRepository.listCandidates(roomId),
+            options.roomRepository.listAllCandidates(roomId),
+            options.roomRepository.listRounds(roomId),
+            options.roomRepository.countPresent(roomId),
+            options.roomRepository.listAuditEvents(roomId),
+          ]);
         const round = allRounds[allRounds.length - 1] ?? null;
         const candidatesByRoom = new Map([[roomId, allCandidates]]);
         const tallyByRound = await loadTalliesForClosedRounds(
@@ -332,6 +334,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
               };
             }),
             recommendedOffice: officeState.recommendedOffice,
+            auditEvents: auditEvents.map(toAuditEventResponse),
             round: toRoundSummary(
               round,
               round ? (tallyByRound.get(round.id) ?? null) : null,
@@ -341,6 +344,43 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         };
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to read room detail");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/v1/admin/rooms/:roomId/audit",
+    {
+      schema: {
+        params: RoomIdParams,
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const events = await options.roomRepository.listAuditEvents(roomId);
+        return {
+          events: events.map((event) => ({
+            roomId: event.roomId,
+            ...toAuditEventResponse(event),
+          })),
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to list audit events");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },
@@ -753,4 +793,20 @@ async function loadTalliesForClosedRounds(
     tallies.set(round.id, tallyRoundVotes(candidates, ballotCandidateIds));
   }
   return tallies;
+}
+
+function toAuditEventResponse(event: {
+  id: string;
+  actorRole: string;
+  action: string;
+  payload: Record<string, unknown>;
+  createdAt: Date;
+}) {
+  return {
+    id: event.id,
+    actorRole: event.actorRole,
+    action: event.action,
+    payload: event.payload,
+    createdAt: event.createdAt.toISOString(),
+  };
 }

@@ -1,4 +1,5 @@
 import {
+  auditEvents,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -61,6 +62,7 @@ describe("anonymous single ballot and automatic tally", () => {
     await db.delete(rounds);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
+    await db.delete(auditEvents);
     await db.delete(rooms);
   });
 
