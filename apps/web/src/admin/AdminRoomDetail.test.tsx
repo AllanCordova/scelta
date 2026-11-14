@@ -636,6 +636,112 @@ describe("AdminRoomDetail", () => {
       "https://example.com/paulo-elder.jpg",
     );
   });
+
+  it("paginates admin candidate tally list 10 per page", async () => {
+    const manyCandidates = Array.from({ length: 12 }, (_, index) => ({
+      id: `cand-${index + 1}`,
+      displayName: `Candidato ${String(index + 1).padStart(2, "0")}`,
+    }));
+    const manyCandidatesRoom: RoomDetail = {
+      ...sampleRoom,
+      candidates: manyCandidates,
+      round: {
+        id: "round-1",
+        number: 1,
+        status: "closed",
+        outcome: "no_majority",
+        tally: {
+          totalVotes: 24,
+          threshold: 13,
+          outcome: "no_majority",
+          winnerId: null,
+          winnerName: null,
+          standings: manyCandidates.map((c, idx) => ({
+            candidateId: c.id,
+            displayName: c.displayName,
+            votes: 12 - idx,
+          })),
+        },
+      },
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: manyCandidatesRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    expect(await screen.findByText("Página 1 de 2")).toBeInTheDocument();
+    expect(screen.getByText("Candidato 01")).toBeInTheDocument();
+    expect(screen.queryByText("Candidato 11")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Próxima" }));
+    expect(screen.getByText("Página 2 de 2")).toBeInTheDocument();
+    expect(screen.getByText("Candidato 11")).toBeInTheDocument();
+    expect(screen.queryByText("Candidato 01")).not.toBeInTheDocument();
+  });
+
+  it("opens the edit modal to update room details and allows closing an open room to Completa", async () => {
+    let currentRoom: RoomDetail = { ...sampleRoom };
+    const patchBodies: unknown[] = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: currentRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "PATCH") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as Partial<RoomDetail>;
+          patchBodies.push(body);
+          currentRoom = { ...currentRoom, ...body };
+          return json({ room: currentRoom });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Editar" }));
+    const editDialog = screen.getByRole("dialog", { name: "Editar sala" });
+    expect(editDialog).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Título da sala"), {
+      target: { value: "Eleição Diáconos Editada" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar alterações" }));
+
+    await waitFor(() => {
+      expect(patchBodies[0]).toMatchObject({ title: "Eleição Diáconos Editada" });
+    });
+    expect(await screen.findByRole("heading", { name: "Eleição Diáconos Editada" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Fechar sala" }));
+    const closeDialog = screen.getByRole("dialog", { name: "Fechar sala" });
+    fireEvent.click(closeDialog.querySelector("button:not(.ghost)")!);
+
+    await waitFor(() => {
+      expect(patchBodies[1]).toEqual({ status: "closed" });
+    });
+    expect(await screen.findByText("Completa")).toBeInTheDocument();
+  });
 });
 
 function json(body: unknown, status = 200) {

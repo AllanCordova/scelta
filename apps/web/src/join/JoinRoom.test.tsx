@@ -407,6 +407,171 @@ describe("JoinRoom", () => {
       "https://example.com/melissa.jpg",
     );
   });
+
+  it("shows the complete new board paper to the voter once all multi-office votes are elected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/join/board-done-token") && !init) {
+          return json({ title: "Assembleia UPA 2026", status: "closed", canJoin: true });
+        }
+        if (url.endsWith("/v1/join/board-done-token") && init?.method === "POST") {
+          return json({
+            title: "Assembleia UPA 2026",
+            status: "closed",
+            displayName: "Ana",
+            presentCount: 15,
+            alreadyJoined: true,
+          });
+        }
+        if (url.endsWith("/v1/join/board-done-token/ballot")) {
+          return json({
+            roomStatus: "closed",
+            roomType: "upa_board",
+            candidates: [],
+            offices: [
+              {
+                officeLabel: "Presidente",
+                order: 1,
+                status: "elected",
+                winnerName: "Melissa Cerconi",
+                winnerPhotoUrl: "https://example.com/melissa.jpg",
+              },
+              {
+                officeLabel: "Vice-Presidente",
+                order: 2,
+                status: "elected",
+                winnerName: "Heloísa Pires",
+                winnerPhotoUrl: null,
+              },
+            ],
+            round: {
+              id: "round-2",
+              number: 2,
+              officeLabel: "Vice-Presidente",
+              officeRoundNumber: 1,
+              status: "closed",
+              outcome: "elected",
+            },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(<JoinRoom token="board-done-token" />);
+
+    fireEvent.change(await screen.findByLabelText("Código de acesso"), {
+      target: { value: "A7K9M2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar na sala" }));
+
+    const boardPaper = await screen.findByRole("article", {
+      name: "Nova Diretoria Eleita — Assembleia UPA 2026",
+    });
+    expect(boardPaper).toHaveTextContent("Diretoria UPA");
+    expect(boardPaper).toHaveTextContent("Nova Diretoria Eleita");
+    expect(boardPaper).toHaveTextContent("Presidente");
+    expect(boardPaper).toHaveTextContent("Melissa Cerconi");
+    expect(boardPaper).toHaveTextContent("Vice-Presidente");
+    expect(boardPaper).toHaveTextContent("Heloísa Pires");
+    expect(boardPaper).toHaveTextContent("HP");
+    expect(boardPaper).toHaveTextContent("1 Pedro 4:10");
+    expect(boardPaper.querySelector("img")).toHaveAttribute(
+      "src",
+      "https://example.com/melissa.jpg",
+    );
+    expect(screen.queryByText("Cargos da Diretoria")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Resultado do escrutínio")).not.toBeInTheDocument();
+    expect(screen.queryByText("Apuração dos votos")).not.toBeInTheDocument();
+  });
+
+  it("paginates voter ballot candidates (12 per page) and closed standings (10 per page)", async () => {
+    const manyCandidates = Array.from({ length: 14 }, (_, index) => ({
+      id: `cand-${index + 1}`,
+      displayName: `Irmão ${String(index + 1).padStart(2, "0")}`,
+    }));
+    let isClosed = false;
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/join/paged-token") && !init) {
+          return json({ title: "Assembleia Geral", status: "voting", canJoin: true });
+        }
+        if (url.endsWith("/v1/join/paged-token") && init?.method === "POST") {
+          return json({
+            title: "Assembleia Geral",
+            status: "voting",
+            displayName: "Ana",
+            presentCount: 20,
+            alreadyJoined: true,
+          });
+        }
+        if (url.endsWith("/v1/join/paged-token/ballot")) {
+          if (!isClosed) {
+            return json({
+              roomStatus: "voting",
+              roomType: "elder",
+              candidates: manyCandidates,
+              round: { id: "round-1", number: 1, status: "open", outcome: null },
+            });
+          }
+          return json({
+            roomStatus: "voting",
+            roomType: "elder",
+            candidates: manyCandidates,
+            round: {
+              id: "round-1",
+              number: 1,
+              status: "closed",
+              outcome: "no_majority",
+              tally: {
+                totalVotes: 20,
+                threshold: 11,
+                outcome: "no_majority",
+                winnerId: null,
+                winnerName: null,
+                standings: manyCandidates.map((c, idx) => ({
+                  candidateId: c.id,
+                  displayName: c.displayName,
+                  votes: idx < 10 ? 2 : 0,
+                })),
+              },
+            },
+          });
+        }
+        if (url.includes("/v1/join/paged-token/ballot/receipt")) {
+          return json({ roundId: "round-1", hasVoted: false });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(<JoinRoom token="paged-token" />);
+
+    fireEvent.change(await screen.findByLabelText("Código de acesso"), {
+      target: { value: "A7K9M2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar na sala" }));
+
+    expect(await screen.findByText("Página 1 de 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Irmão 01" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Irmão 13" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Próxima" }));
+    expect(screen.getByText("Página 2 de 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Irmão 13" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Irmão 01" })).not.toBeInTheDocument();
+
+    // Now test standings pagination in closed round
+    isClosed = true;
+    const { unmount } = render(<JoinRoom token="paged-token" />);
+    expect(await screen.findAllByText("Página 1 de 2")).not.toHaveLength(0);
+    unmount();
+  });
 });
 
 function json(body: unknown, status = 200) {

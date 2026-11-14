@@ -300,6 +300,41 @@ export async function deleteMember(apiBase: string, memberId: string): Promise<v
   }
 }
 
+export type UpdateRoomPayload = {
+  title?: string;
+  quorumValue?: number;
+  quorumUnit?: QuorumUnit;
+  eligibleCount?: number;
+  status?: "draft" | "open" | "closed";
+};
+
+export async function updateRoom(
+  apiBase: string,
+  roomId: string,
+  payload: UpdateRoomPayload,
+): Promise<RoomSummary> {
+  const response = await fetch(`${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const body = (await response.json().catch(() => ({}))) as {
+    room?: RoomSummary;
+    error?: string;
+    details?: FieldError[];
+  };
+
+  if (!response.ok || !body.room) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown", body.details ?? []);
+  }
+
+  return body.room;
+}
+
 export async function deleteRoom(apiBase: string, roomId: string): Promise<void> {
   const response = await fetch(`${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}`, {
     method: "DELETE",

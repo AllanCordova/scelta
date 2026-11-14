@@ -308,6 +308,9 @@ describe("admin rooms", () => {
         async findRoomById() {
           return null;
         },
+        async updateRoom() {
+          return null;
+        },
         async deleteRoom() {
           return false;
         },
@@ -697,6 +700,60 @@ describe("admin rooms", () => {
     });
 
     await app.close();
+  });
+
+  it("updates room details and closes an open room for history", async () => {
+    const app = await buildApp({ userRepository, roomRepository: repository });
+    const createdResponse = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Sala Original",
+        roomType: "deacon",
+        rulesPreset: "ipb_local_officers",
+        status: "open",
+        quorumValue: 10,
+        quorumUnit: "absolute",
+        eligibleCount: 25,
+        candidates: ["Paulo", "Silas"],
+      },
+    });
+    expect(createdResponse.statusCode).toBe(201);
+    const createdRoom = createdResponse.json().room as { id: string };
+
+    const patchResponse = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/rooms/${createdRoom.id}`,
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Sala Atualizada",
+        quorumValue: 50,
+        quorumUnit: "percent",
+        eligibleCount: 30,
+        status: "closed",
+      },
+    });
+    expect(patchResponse.statusCode).toBe(200);
+    expect(patchResponse.json().room).toMatchObject({
+      id: createdRoom.id,
+      title: "Sala Atualizada",
+      quorumValue: 50,
+      quorumUnit: "percent",
+      eligibleCount: 30,
+      status: "closed",
+    });
+
+    const invalidPercent = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/rooms/${createdRoom.id}`,
+      headers: { cookie: adminCookie },
+      payload: {
+        quorumUnit: "percent",
+        quorumValue: 120,
+      },
+    });
+    expect(invalidPercent.statusCode).toBe(400);
   });
 
   async function createRoom(app: Awaited<ReturnType<typeof buildApp>>, title: string) {

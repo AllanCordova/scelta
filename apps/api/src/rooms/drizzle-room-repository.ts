@@ -147,6 +147,41 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       return row ? toStoredRoom(row) : null;
     },
 
+    async updateRoom(roomId, input) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return null;
+      }
+
+      const patch: Partial<typeof rooms.$inferInsert> = {};
+      if (input.title !== undefined) {
+        patch.title = input.title;
+      }
+      if (input.quorumValue !== undefined) {
+        patch.quorumValue = input.quorumValue;
+      }
+      if (input.quorumUnit !== undefined) {
+        patch.quorumUnit = input.quorumUnit;
+      }
+      if (input.eligibleCount !== undefined) {
+        patch.eligibleCount = input.eligibleCount;
+      }
+      if (input.status !== undefined) {
+        patch.status = input.status;
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return this.findRoomById(roomId);
+      }
+
+      const [updated] = await db
+        .update(rooms)
+        .set(patch)
+        .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+        .returning();
+      return updated ? toStoredRoom(updated) : null;
+    },
+
     async deleteRoom(roomId) {
       const church = await findChurchByName(db, churchName);
       if (!church) {

@@ -52,7 +52,7 @@ export const STATUS_LABELS: Record<RoomStatus, string> = {
   draft: "Rascunho",
   open: "Aberta",
   voting: "Em votação",
-  closed: "Encerrada",
+  closed: "Completa",
   cancelled: "Cancelada",
 };
 

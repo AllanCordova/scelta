@@ -60,6 +60,27 @@ type CreateRoomBodyType = {
   candidates?: string[];
 };
 
+const UpdateRoomBody = Type.Object(
+  {
+    title: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
+    quorumValue: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
+    quorumUnit: Type.Optional(Type.Union([Type.Literal("absolute"), Type.Literal("percent")])),
+    eligibleCount: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
+    status: Type.Optional(
+      Type.Union([Type.Literal("draft"), Type.Literal("open"), Type.Literal("closed")]),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+type UpdateRoomBodyType = {
+  title?: string;
+  quorumValue?: number;
+  quorumUnit?: "absolute" | "percent";
+  eligibleCount?: number;
+  status?: "draft" | "open" | "closed";
+};
+
 const RoomIdParams = Type.Object({
   roomId: Type.String({
     minLength: 36,
@@ -350,6 +371,77 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         return quorumStatus(room, presentCount);
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to read presence");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.patch(
+    "/v1/admin/rooms/:roomId",
+    {
+      schema: {
+        params: RoomIdParams,
+        body: UpdateRoomBody,
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      const body = request.body as UpdateRoomBodyType;
+
+      try {
+        const existing = await options.roomRepository.findRoomById(roomId);
+        if (!existing) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const nextTitle = body.title !== undefined ? body.title.trim() : existing.title;
+        if (nextTitle.length === 0) {
+          return reply.code(400).send({
+            error: "invalid_room",
+            details: [{ field: "title", code: "required" }],
+          });
+        }
+
+        const nextQuorumUnit = body.quorumUnit ?? existing.quorumUnit;
+        const nextQuorumValue = body.quorumValue ?? existing.quorumValue;
+        if (
+          nextQuorumValue < 1 ||
+          (nextQuorumUnit === "percent" && nextQuorumValue > 100)
+        ) {
+          return reply.code(400).send({
+            error: "invalid_room",
+            details: [{ field: "quorumValue", code: "out_of_range" }],
+          });
+        }
+
+        const updated = await options.roomRepository.updateRoom(roomId, {
+          title: body.title !== undefined ? nextTitle : undefined,
+          quorumValue: body.quorumValue,
+          quorumUnit: body.quorumUnit,
+          eligibleCount: body.eligibleCount,
+          status: body.status,
+        });
+        if (!updated) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const [candidates, presentCount] = await Promise.all([
+          options.roomRepository.listCandidates(roomId),
+          options.roomRepository.countPresent(roomId),
+        ]);
+        options.presencePublisher?.publishPresence(roomId, quorumStatus(updated, presentCount));
+
+        return { room: toRoomResponse(updated, { includeInvite: true, candidates }) };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to update room");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },
