@@ -75,11 +75,17 @@ describe("RoomChatPanel", () => {
       await screen.findByText("Limite de 2 mensagens a cada 5 segundos. Aguarde um instante."),
     ).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole("button", { name: "Tela cheia" }));
+    expect(screen.getByLabelText("Chat ao vivo da sala")).toHaveClass("is-fullscreen");
+    fireEvent.click(screen.getByRole("button", { name: "Sair da tela cheia" }));
+    expect(screen.getByLabelText("Chat ao vivo da sala")).not.toHaveClass("is-fullscreen");
+    expect(screen.queryByRole("button", { name: "Remover mensagem" })).not.toBeInTheDocument();
+
     fireEvent.click(screen.getByRole("button", { name: "Fechar chat" }));
     expect(screen.getByLabelText("Chat ao vivo da sala")).not.toHaveClass("is-open");
   });
 
-  it("lets admins mute the whole room or individual participants", async () => {
+  it("lets admins mute the whole room or individual participants and delete messages", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -90,7 +96,16 @@ describe("RoomChatPanel", () => {
             roomId: "room-1",
             chatMuted: false,
             allowedEmotes: ["👏"],
-            messages: [],
+            messages: [
+              {
+                id: "msg-1",
+                senderName: "João",
+                senderRole: "voter",
+                senderParticipantId: "part-1",
+                content: "Mensagem de teste",
+                createdAt: "2026-11-13T22:00:00.000Z",
+              },
+            ],
             participants: [
               {
                 id: "part-1",
@@ -101,6 +116,9 @@ describe("RoomChatPanel", () => {
               },
             ],
           });
+        }
+        if (url.endsWith("/v1/admin/rooms/room-1/chat/msg-1") && method === "DELETE") {
+          return json({ deleted: true, messageId: "msg-1" });
         }
         if (url.endsWith("/v1/admin/rooms/room-1") && method === "PATCH") {
           return json({ room: { id: "room-1", chatMuted: true } });
@@ -121,6 +139,12 @@ describe("RoomChatPanel", () => {
     );
 
     render(<RoomChatPanel mode="admin" roomId="room-1" />);
+
+    expect(await screen.findByText("Mensagem de teste")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remover mensagem" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Mensagem de teste")).not.toBeInTheDocument();
+    });
 
     const pessoasBtn = await screen.findByRole("button", { name: "Pessoas (1)" });
     fireEvent.click(pessoasBtn);

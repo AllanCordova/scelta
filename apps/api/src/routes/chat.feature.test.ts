@@ -285,6 +285,31 @@ describe("live room chat and moderation", () => {
     });
     expect(adminWhileMuted.statusCode).toBe(201);
 
+    // Non-admin cannot delete chat messages; admin can delete
+    const msgId = allowedVoter2.json().message.id as string;
+    const memberDelete = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/rooms/${roomId}/chat/${msgId}`,
+      headers: { cookie: memberCookie },
+    });
+    expect(memberDelete.statusCode).toBe(403);
+
+    const adminDelete = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/rooms/${roomId}/chat/${msgId}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(adminDelete.statusCode).toBe(200);
+    expect(adminDelete.json().deleted).toBe(true);
+
+    const afterDelete = await app.inject({
+      method: "GET",
+      url: `/v1/admin/rooms/${roomId}/chat`,
+      headers: { cookie: adminCookie },
+    });
+    const ids = (afterDelete.json().messages as Array<{ id: string }>).map((m) => m.id);
+    expect(ids).not.toContain(msgId);
+
     await app.close();
   });
 });

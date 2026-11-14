@@ -2,6 +2,7 @@ export type ChatMessageItem = {
   id: string;
   senderName: string;
   senderRole: "voter" | "admin";
+  senderParticipantId?: string | null;
   content: string;
   createdAt: string;
 };
@@ -18,6 +19,7 @@ export type VoterChatState = {
   roomId: string;
   chatMuted: boolean;
   participantMuted: boolean;
+  currentParticipantId: string | null;
   allowedEmotes: string[];
   messages: ChatMessageItem[];
 };
@@ -56,6 +58,8 @@ export async function fetchVoterChat(
     roomId: typeof body.roomId === "string" ? body.roomId : "",
     chatMuted: body.chatMuted === true,
     participantMuted: body.participantMuted === true,
+    currentParticipantId:
+      typeof body.currentParticipantId === "string" ? body.currentParticipantId : null,
     allowedEmotes: Array.isArray(body.allowedEmotes) ? body.allowedEmotes : ["👏", "🙏", "❤️", "👍", "🎉"],
     messages: body.messages,
   };
@@ -144,4 +148,22 @@ export async function setParticipantMute(
     throw new ChatRequestError(response.status, body.error ?? "unknown");
   }
   return body.participant;
+}
+
+export async function deleteAdminChatMessage(
+  apiBase: string,
+  roomId: string,
+  messageId: string,
+): Promise<void> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/chat/${encodeURIComponent(messageId)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new ChatRequestError(response.status, body.error ?? "unknown");
+  }
 }

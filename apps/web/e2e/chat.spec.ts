@@ -61,18 +61,36 @@ test("live room chat supports text + emotes, 2 msgs/5s rate limit, and admin mut
       voterChat.getByText("Limite de 2 mensagens a cada 5 segundos. Aguarde um instante."),
     ).toBeVisible({ timeout: 10_000 });
 
-    // Admin sends a message back
+    // Admin sends a message back; voter sees it left-aligned while own message is right-aligned (is-own) and has no delete button
     await adminChat.getByLabel("Mensagem no chat").fill("Bem-vindos à assembleia!");
     await adminChat.getByRole("button", { name: "Enviar", exact: true }).click();
     await expect(voterChat.getByText("Bem-vindos à assembleia!")).toBeVisible({ timeout: 10_000 });
+    await expect(voterChat.locator(".room-chat-message.is-own").filter({ hasText: "Boa noite a todos!" })).toBeVisible();
+    await expect(voterChat.getByRole("button", { name: "Remover mensagem" })).toHaveCount(0);
 
-    // Admin mutes the individual participant
+    // Admin deletes the voter's first message and voter sees it removed live
+    await adminChat
+      .locator(".room-chat-message")
+      .filter({ hasText: "Boa noite a todos!" })
+      .getByRole("button", { name: "Remover mensagem" })
+      .click();
+    await expect(voterChat.getByText("Boa noite a todos!")).toHaveCount(0, { timeout: 10_000 });
+
+    // Fullscreen toggle works on desktop
+    await voterChat.getByRole("button", { name: "Tela cheia" }).click();
+    await expect(voterChat).toHaveClass(/is-fullscreen/);
+    await voterChat.getByRole("button", { name: "Sair da tela cheia" }).click();
+    await expect(voterChat).not.toHaveClass(/is-fullscreen/);
+
+    // Admin mutes the individual participant (shows toast & disables composer)
     await adminChat.getByRole("button", { name: /Pessoas \(/ }).click();
     const moderationList = adminChat.getByLabel("Moderação por participante");
     await expect(moderationList).toBeVisible();
     await moderationList.getByRole("button", { name: "Silenciar" }).first().click();
 
-    await expect(voterChat.getByText("Você está silenciado")).toBeVisible({ timeout: 10_000 });
+    await expect(voter.getByText("Você foi silenciado pelo administrador.")).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(voterChat.getByLabel("Mensagem no chat")).toBeDisabled();
 
     // Admin unmutes participant, then mutes whole room
@@ -80,7 +98,9 @@ test("live room chat supports text + emotes, 2 msgs/5s rate limit, and admin mut
     await expect(voterChat.getByLabel("Mensagem no chat")).toBeEnabled({ timeout: 10_000 });
 
     await adminChat.getByRole("button", { name: "Silenciar sala" }).click();
-    await expect(voterChat.getByText("Sala silenciada pelo admin")).toBeVisible({ timeout: 10_000 });
+    await expect(voter.getByText("Sala silenciada pelo administrador.")).toBeVisible({
+      timeout: 10_000,
+    });
     await expect(voterChat.getByLabel("Mensagem no chat")).toBeDisabled();
 
     // Admin can still post while room is muted, then unmutes room

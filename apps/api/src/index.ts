@@ -50,6 +50,9 @@ async function main() {
     publishChatConfig(roomId, config) {
       presenceSink.current?.publishChatConfig?.(roomId, config);
     },
+    publishChatMessageDeleted(roomId, messageId) {
+      presenceSink.current?.publishChatMessageDeleted?.(roomId, messageId);
+    },
   };
   const app = await buildApp({ roomRepository, userRepository, presencePublisher });
   await app.ready();

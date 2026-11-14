@@ -1519,6 +1519,14 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .limit(1);
       return row ?? null;
     },
+
+    async deleteChatMessage(roomId, messageId) {
+      const deleted = await db
+        .delete(roomChatMessages)
+        .where(and(eq(roomChatMessages.id, messageId), eq(roomChatMessages.roomId, roomId)))
+        .returning({ id: roomChatMessages.id });
+      return deleted.length > 0;
+    },
   };
 }
 

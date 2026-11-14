@@ -26,6 +26,7 @@ export type ChatMessageBroadcast = {
   id: string;
   senderName: string;
   senderRole: "voter" | "admin";
+  senderParticipantId?: string | null;
   content: string;
   createdAt: string;
 };
@@ -45,6 +46,7 @@ export type PresencePublisher = {
   publishReactionsConfig?(roomId: string, reactionsEnabled: boolean): void;
   publishChatMessage?(roomId: string, message: ChatMessageBroadcast): void;
   publishChatConfig?(roomId: string, config: Omit<ChatConfigBroadcast, "roomId">): void;
+  publishChatMessageDeleted?(roomId: string, messageId: string): void;
 };
 
 export type PresenceUpdate = PresenceSnapshot & {
@@ -83,6 +85,9 @@ export function createSocketPresencePublisher(io: Server): PresencePublisher {
     },
     publishChatConfig(roomId, config) {
       io.to(`room:${roomId}`).emit("chat:config", { roomId, ...config });
+    },
+    publishChatMessageDeleted(roomId, messageId) {
+      io.to(`room:${roomId}`).emit("chat:deleted", { roomId, messageId });
     },
   };
 }

@@ -39,6 +39,19 @@ const ParticipantMuteParams = Type.Object({
   }),
 });
 
+const DeleteChatMessageParams = Type.Object({
+  roomId: Type.String({
+    minLength: 36,
+    maxLength: 36,
+    pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+  }),
+  messageId: Type.String({
+    minLength: 36,
+    maxLength: 36,
+    pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+  }),
+});
+
 const VoterChatBody = Type.Object(
   {
     joinKey: Type.String({ minLength: 1, maxLength: 128 }),
@@ -106,11 +119,13 @@ export const chatRoutes: FastifyPluginAsync<ChatRouteOptions> = async (app, opti
           roomId: room.id,
           chatMuted: room.chatMuted ?? false,
           participantMuted: participantStatus?.chatMuted ?? false,
+          currentParticipantId: participantStatus?.id ?? null,
           allowedEmotes: ALLOWED_REACTION_EMOJIS,
           messages: messages.map((msg) => ({
             id: msg.id,
             senderName: msg.senderName,
             senderRole: msg.senderRole,
+            senderParticipantId: msg.participantId ?? null,
             content: msg.content,
             createdAt: msg.createdAt.toISOString(),
           })),
@@ -178,6 +193,7 @@ export const chatRoutes: FastifyPluginAsync<ChatRouteOptions> = async (app, opti
           id: result.message.id,
           senderName: result.message.senderName,
           senderRole: result.message.senderRole,
+          senderParticipantId: result.message.participantId ?? null,
           content: result.message.content,
           createdAt: result.message.createdAt.toISOString(),
         };
@@ -228,6 +244,7 @@ export const chatRoutes: FastifyPluginAsync<ChatRouteOptions> = async (app, opti
             id: msg.id,
             senderName: msg.senderName,
             senderRole: msg.senderRole,
+            senderParticipantId: msg.participantId ?? null,
             content: msg.content,
             createdAt: msg.createdAt.toISOString(),
           })),
@@ -283,6 +300,7 @@ export const chatRoutes: FastifyPluginAsync<ChatRouteOptions> = async (app, opti
           id: message.id,
           senderName: message.senderName,
           senderRole: message.senderRole,
+          senderParticipantId: message.participantId ?? null,
           content: message.content,
           createdAt: message.createdAt.toISOString(),
         };
@@ -354,6 +372,43 @@ export const chatRoutes: FastifyPluginAsync<ChatRouteOptions> = async (app, opti
         };
       } catch (error) {
         request.log.error({ err: error, roomId, participantId }, "Failed to mute participant");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.delete(
+    "/v1/admin/rooms/:roomId/chat/:messageId",
+    { schema: { params: DeleteChatMessageParams } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      const repository = options.roomRepository;
+      if (!repository || !repository.deleteChatMessage) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId, messageId } = request.params as {
+        roomId: string;
+        messageId: string;
+      };
+
+      try {
+        const deleted = await repository.deleteChatMessage(roomId, messageId);
+        if (!deleted) {
+          return reply.code(404).send({ error: "chat_message_not_found" });
+        }
+
+        try {
+          options.presencePublisher?.publishChatMessageDeleted?.(roomId, messageId);
+        } catch (error) {
+          request.log.warn({ err: error, roomId, messageId }, "Chat delete broadcast failed");
+        }
+
+        return { deleted: true, messageId };
+      } catch (error) {
+        request.log.error({ err: error, roomId, messageId }, "Failed to delete chat message");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },

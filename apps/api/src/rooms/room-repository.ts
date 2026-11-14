@@ -178,6 +178,7 @@ export type RoomRepository = {
     roomId: string,
     joinKeyHash: string,
   ): Promise<{ id: string; chatMuted: boolean } | null>;
+  deleteChatMessage?(roomId: string, messageId: string): Promise<boolean>;
   setOfficeBanner(roomId: string, officeKey: string, bannerUrl: string | null): Promise<StoredRoom | null>;
   rotateInviteToken(roomId: string): Promise<StoredRoom | null>;
   listRooms(): Promise<StoredRoom[]>;
