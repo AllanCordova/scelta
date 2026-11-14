@@ -523,6 +523,21 @@ export async function revokeAllAccessCodes(
   return { revokedCount: body.revokedCount };
 }
 
+export async function deleteAccessCode(
+  apiBase: string,
+  roomId: string,
+  codeId: string,
+): Promise<void> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/access-codes/${encodeURIComponent(codeId)}`,
+    { method: "DELETE", credentials: "include" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+}
+
 async function postRound(url: string, payload?: Record<string, unknown>): Promise<RoomRound> {
   const response = await fetch(url, {
     method: "POST",

@@ -42,7 +42,6 @@ import {
   removeParticipants,
   restartRound,
   setRoomOfficeBanner,
-  rotateRoomInvite,
   updateRoom,
 } from "./rooms-api";
 import { useRoomDetail } from "./use-room-detail";
@@ -121,25 +120,6 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       cancelled = true;
     };
   }, [isQrVisible, fullInviteUrl]);
-
-  async function handleRotateInvite() {
-    if (!room) {
-      return;
-    }
-    setIsBusy(true);
-    setActionError(null);
-    try {
-      await rotateRoomInvite(apiBase, room.id);
-      toast.success("Link de convite rotacionado.");
-      setRefreshTick((tick) => tick + 1);
-    } catch (error) {
-      const msg = messageFromRoundError(error);
-      setActionError(msg);
-      toast.error(msg);
-    } finally {
-      setIsBusy(false);
-    }
-  }
 
   async function handleCopyInvite() {
     if (!fullInviteUrl) {
@@ -583,14 +563,6 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                   onClick={() => setIsQrVisible((current) => !current)}
                 >
                   QR Code
-                </button>
-                <button
-                  type="button"
-                  className="ghost round-action"
-                  disabled={isBusy}
-                  onClick={() => void handleRotateInvite()}
-                >
-                  Rotacionar convite
                 </button>
               </>
             ) : null}

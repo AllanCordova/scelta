@@ -815,6 +815,38 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
       }
     },
   );
+
+  app.delete(
+    "/v1/admin/rooms/:roomId/access-codes/:codeId",
+    { schema: { params: CodeIdParams } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId, codeId } = request.params as { roomId: string; codeId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        const deleted = await options.roomRepository.deleteAccessCode(roomId, codeId);
+        if (!deleted) {
+          return reply.code(404).send({ error: "access_code_not_found" });
+        }
+        const presentCount = await options.roomRepository.countPresent(roomId);
+        const presence = quorumStatus(room, presentCount);
+        options.presencePublisher?.publishPresence(roomId, presence);
+        return { deleted: true, presence };
+      } catch (error) {
+        request.log.error({ err: error, roomId, codeId }, "Failed to delete access code");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
 };
 
 function toAccessCodeResponse(row: {

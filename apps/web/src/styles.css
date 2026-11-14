@@ -1574,6 +1574,7 @@ li {
 .access-code-meta {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.45rem;
   flex-shrink: 0;
 }
@@ -1595,7 +1596,8 @@ li {
   color: #ef4444;
 }
 
-.access-code-revoke-btn {
+.access-code-revoke-btn,
+.access-code-delete-btn {
   padding: 0.2rem 0.5rem;
   font-size: 0.75rem;
 }

@@ -590,6 +590,20 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       });
     },
 
+    async deleteAccessCode(roomId, codeId) {
+      return db.transaction(async (tx) => {
+        await tx
+          .update(participants)
+          .set({ accessCodeId: null, isPresent: false })
+          .where(and(eq(participants.roomId, roomId), eq(participants.accessCodeId, codeId)));
+        const deleted = await tx
+          .delete(roomMemberCodes)
+          .where(and(eq(roomMemberCodes.id, codeId), eq(roomMemberCodes.roomId, roomId)))
+          .returning({ id: roomMemberCodes.id });
+        return deleted.length > 0;
+      });
+    },
+
     async removePresentParticipants(roomId, limit) {
       if (limit <= 0) {
         return 0;

@@ -191,6 +191,7 @@ export type RoomRepository = {
   listAccessCodes(roomId: string): Promise<StoredAccessCode[]>;
   revokeAccessCode(roomId: string, codeId: string): Promise<StoredAccessCode | null>;
   revokeAllAccessCodes(roomId: string): Promise<number>;
+  deleteAccessCode(roomId: string, codeId: string): Promise<boolean>;
   removePresentParticipants(roomId: string, limit: number): Promise<number>;
   countPresent(roomId: string): Promise<number>;
   listCandidates(roomId: string): Promise<StoredCandidate[]>;
