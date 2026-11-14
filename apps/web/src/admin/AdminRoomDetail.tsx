@@ -11,6 +11,7 @@ import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { ImageDropzone } from "../shell/ImageDropzone";
 import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
 import { PaginationBar, paginateItems } from "../shell/PaginationBar";
+import { RoomChatPanel } from "../shell/RoomChatPanel";
 import { EditRoomModal } from "./EditRoomModal";
 import { ShareBoardPaper, type ShareBoardEntry } from "./ShareBoardPaper";
 import {
@@ -558,8 +559,9 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     tally && tally.totalVotes > 0 ? Math.round((winnerVotes / tally.totalVotes) * 100) : 0;
 
   return (
-    <div className="admin-page room-detail-page">
-      <div className="detail-breadcrumb-bar">
+    <div className="room-with-chat-layout admin-room-with-chat">
+      <div className="admin-page room-detail-page room-with-chat-main">
+        <div className="detail-breadcrumb-bar">
         <a className="detail-back-link" href="/admin/salas">
           ← Voltar para Painel de Salas
         </a>
@@ -1362,6 +1364,13 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             void handleSimulateRemove();
           }
         }}
+      />
+      </div>
+      <RoomChatPanel
+        mode="admin"
+        roomId={room.id}
+        initialChatMuted={room.chatMuted}
+        onRoomUpdated={() => setRefreshTick((tick) => tick + 1)}
       />
     </div>
   );

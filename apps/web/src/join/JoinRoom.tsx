@@ -8,6 +8,7 @@ import { ShareBoardSheet, ministryLabelForRoomType } from "../admin/ShareBoardPa
 import { connectPresenceSocket } from "../admin/presence-socket";
 import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
 import { PaginationBar, paginateItems } from "../shell/PaginationBar";
+import { RoomChatPanel } from "../shell/RoomChatPanel";
 import { BALLOT_WISDOM_VERSE, officeGuidanceForBallot } from "./ballot-guidance";
 import {
   ballotErrorMessage,
@@ -517,8 +518,9 @@ function JoinedRoomView({
     boardOffices.length > 0 && boardOffices.every((office) => office.status === "elected");
 
   return (
-    <div className="join-page voter-flow">
-      <header className="voter-session-header panel">
+    <div className="room-with-chat-layout voter-room-with-chat">
+      <div className="join-page voter-flow room-with-chat-main">
+        <header className="voter-session-header panel">
         <div className="voter-session-meta">
           <div className="voter-live-pill">
             <span className="voter-live-dot" aria-hidden="true" />
@@ -987,6 +989,16 @@ function JoinedRoomView({
           <h2>Cargos da Diretoria</h2>
           <OfficeProgressGrid offices={boardOffices} />
         </section>
+      ) : null}
+      </div>
+      {ballotState?.roomId ? (
+        <RoomChatPanel
+          mode="voter"
+          roomId={ballotState.roomId}
+          token={token}
+          joinKey={joinKey}
+          initialChatMuted={ballotState.chatMuted}
+        />
       ) : null}
     </div>
   );

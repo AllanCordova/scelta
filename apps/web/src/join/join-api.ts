@@ -61,6 +61,7 @@ export type BallotState = {
   officeBanners?: Record<string, string>;
   activeBannerUrl?: string | null;
   reactionsEnabled?: boolean;
+  chatMuted?: boolean;
   allowedReactions?: string[];
   candidates: BallotCandidate[];
   offices?: BallotOfficeSummary[];
@@ -139,6 +140,7 @@ export async function fetchBallotState(
         : undefined,
     activeBannerUrl: typeof body.activeBannerUrl === "string" ? body.activeBannerUrl : null,
     reactionsEnabled: typeof body.reactionsEnabled === "boolean" ? body.reactionsEnabled : true,
+    chatMuted: body.chatMuted === true,
     allowedReactions: Array.isArray(body.allowedReactions) ? body.allowedReactions : undefined,
     candidates: body.candidates,
     offices: Array.isArray(body.offices) ? body.offices : undefined,

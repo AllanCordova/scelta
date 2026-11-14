@@ -307,6 +307,7 @@ export type UpdateRoomPayload = {
   eligibleCount?: number;
   status?: "draft" | "open" | "closed";
   reactionsEnabled?: boolean;
+  chatMuted?: boolean;
 };
 
 export async function updateRoom(

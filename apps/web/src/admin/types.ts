@@ -127,6 +127,7 @@ export type AuditEventItem = {
 
 export type RoomDetail = RoomSummary & {
   reactionsEnabled?: boolean;
+  chatMuted?: boolean;
   presence: {
     presentCount: number;
     eligibleCount: number;

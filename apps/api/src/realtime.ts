@@ -22,12 +22,29 @@ export type ReactionBroadcast = {
   at: string;
 };
 
+export type ChatMessageBroadcast = {
+  id: string;
+  senderName: string;
+  senderRole: "voter" | "admin";
+  content: string;
+  createdAt: string;
+};
+
+export type ChatConfigBroadcast = {
+  roomId: string;
+  chatMuted: boolean;
+  mutedParticipantId?: string;
+  participantChatMuted?: boolean;
+};
+
 export type PresencePublisher = {
   publishPresence(roomId: string, presence: PresenceSnapshot): void;
   publishRoundState?(roomId: string, roundState: RoundStateSnapshot): void;
   publishBallotActivity?(roomId: string, roundId: string): void;
   publishReaction?(roomId: string, reaction: ReactionBroadcast): void;
   publishReactionsConfig?(roomId: string, reactionsEnabled: boolean): void;
+  publishChatMessage?(roomId: string, message: ChatMessageBroadcast): void;
+  publishChatConfig?(roomId: string, config: Omit<ChatConfigBroadcast, "roomId">): void;
 };
 
 export type PresenceUpdate = PresenceSnapshot & {
@@ -60,6 +77,12 @@ export function createSocketPresencePublisher(io: Server): PresencePublisher {
     },
     publishReactionsConfig(roomId, reactionsEnabled) {
       io.to(`room:${roomId}`).emit("reactions:config", { roomId, reactionsEnabled });
+    },
+    publishChatMessage(roomId, message) {
+      io.to(`room:${roomId}`).emit("chat:message", { roomId, ...message });
+    },
+    publishChatConfig(roomId, config) {
+      io.to(`room:${roomId}`).emit("chat:config", { roomId, ...config });
     },
   };
 }

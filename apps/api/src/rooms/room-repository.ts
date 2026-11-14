@@ -22,6 +22,7 @@ export type StoredRoom = {
   inviteToken: string;
   status: RoomStatus;
   reactionsEnabled: boolean;
+  chatMuted?: boolean;
   createdAt: Date;
 };
 
@@ -119,7 +120,33 @@ export type UpdateRoomInput = {
   eligibleCount?: number;
   status?: RoomStatus;
   reactionsEnabled?: boolean;
+  chatMuted?: boolean;
 };
+
+export type StoredParticipantSummary = {
+  id: string;
+  displayName: string;
+  isPresent: boolean;
+  chatMuted: boolean;
+  joinedAt: Date;
+};
+
+export type StoredChatMessage = {
+  id: string;
+  roomId: string;
+  participantId: string | null;
+  senderName: string;
+  senderRole: "voter" | "admin";
+  content: string;
+  createdAt: Date;
+};
+
+export type SendVoterChatResult =
+  | { ok: true; message: StoredChatMessage }
+  | {
+      ok: false;
+      reason: "participant_not_in_room" | "participant_muted" | "room_chat_muted" | "rate_limited";
+    };
 
 export type SendReactionResult =
   | { ok: true; emoji: string; createdAt: Date }
@@ -128,6 +155,29 @@ export type SendReactionResult =
 export type RoomRepository = {
   createRoom(room: NewRoom): Promise<StoredRoom>;
   updateRoom(roomId: string, input: UpdateRoomInput): Promise<StoredRoom | null>;
+  listChatMessages?(roomId: string, limit?: number): Promise<StoredChatMessage[]>;
+  sendVoterChatMessage?(input: {
+    roomId: string;
+    joinKeyHash: string;
+    content: string;
+    since: Date;
+    maxPerWindow: number;
+  }): Promise<SendVoterChatResult>;
+  sendAdminChatMessage?(input: {
+    roomId: string;
+    senderName: string;
+    content: string;
+  }): Promise<StoredChatMessage | null>;
+  listParticipants?(roomId: string): Promise<StoredParticipantSummary[]>;
+  setParticipantChatMuted?(
+    roomId: string,
+    participantId: string,
+    chatMuted: boolean,
+  ): Promise<StoredParticipantSummary | null>;
+  findParticipantChatStatus?(
+    roomId: string,
+    joinKeyHash: string,
+  ): Promise<{ id: string; chatMuted: boolean } | null>;
   setOfficeBanner(roomId: string, officeKey: string, bannerUrl: string | null): Promise<StoredRoom | null>;
   rotateInviteToken(roomId: string): Promise<StoredRoom | null>;
   listRooms(): Promise<StoredRoom[]>;
