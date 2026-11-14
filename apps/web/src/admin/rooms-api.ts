@@ -306,6 +306,7 @@ export type UpdateRoomPayload = {
   quorumUnit?: QuorumUnit;
   eligibleCount?: number;
   status?: "draft" | "open" | "closed";
+  reactionsEnabled?: boolean;
 };
 
 export async function updateRoom(
@@ -362,6 +363,28 @@ export async function setRoomOfficeBanner(
 
   if (!response.ok || !body.room) {
     throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+
+  return body.room;
+}
+
+export async function rotateRoomInvite(apiBase: string, roomId: string): Promise<RoomSummary> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/invite/rotate`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+
+  const body = (await response.json().catch(() => ({}))) as {
+    room?: RoomSummary;
+    error?: string;
+    details?: FieldError[];
+  };
+
+  if (!response.ok || !body.room) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown", body.details ?? []);
   }
 
   return body.room;

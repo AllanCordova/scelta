@@ -163,15 +163,15 @@
 
 ### B3.1 — Controlled reactions (emojis)
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Participants can send moderated emoji reactions during the meeting for a lighter atmosphere, without affecting or leaking votes.
 
 **Acceptance criteria:**
 
-- [ ] Participant can send an emoji from an allowlist while in the room
-- [ ] Reactions are rate-limited and can be disabled by admin
-- [ ] Reactions never appear tied to ballot choices
-- [ ] Feature + browser tests for send / rate-limit / admin disable
+- [x] Participant can send an emoji from an allowlist while in the room
+- [x] Reactions are rate-limited and can be disabled by admin
+- [x] Reactions never appear tied to ballot choices
+- [x] Feature + browser tests for send / rate-limit / admin disable
 
 ---
 
@@ -179,26 +179,26 @@
 
 ### B4.1 — Admin audit log
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Sensitive admin actions are append-only logged for the room.
 
 **Acceptance criteria:**
 
-- [ ] Create room, change quorum, start/restart/close, publish result are audited
-- [ ] Audit entries are visible to admin and immutable via API
-- [ ] Feature tests assert audit rows on restart and quorum change
+- [x] Create room, change quorum, start/restart/close, publish result are audited
+- [x] Audit entries are visible to admin and immutable via API
+- [x] Feature tests assert audit rows on restart and quorum change
 
 ### B4.2 — Security baseline for voting
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Apply `agents/security.md` to voting surfaces (invite tokens, anonymity, authz).
 
 **Acceptance criteria:**
 
-- [ ] Invite tokens are unguessable and rotatable
-- [ ] Voters cannot access admin controls
-- [ ] Anonymity invariant verified by tests (no API returns voter→choice)
-- [ ] Clean-context security agent review completed for Epic 1
+- [x] Invite tokens are unguessable and rotatable
+- [x] Voters cannot access admin controls
+- [x] Anonymity invariant verified by tests (no API returns voter→choice)
+- [x] Clean-context security agent review completed for Epic 1
 
 ---
 

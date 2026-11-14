@@ -99,6 +99,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS rooms_invite_token_uidx ON rooms (invite_token
 
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS eligible_count integer NOT NULL DEFAULT 0;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS office_banners jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reactions_enabled boolean NOT NULL DEFAULT true;
 
 CREATE TABLE IF NOT EXISTS room_member_codes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -205,6 +206,9 @@ CREATE TABLE IF NOT EXISTS reactions (
   emoji text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS reactions_room_participant_created_idx
+  ON reactions (room_id, participant_id, created_at);
 
 CREATE TABLE IF NOT EXISTS audit_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

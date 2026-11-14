@@ -38,6 +38,11 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await expect(page.getByText("Paulo Apóstolo")).toBeVisible();
   await expect(page.getByText("Silas", { exact: true })).toBeVisible();
 
+  const initialInviteUrl = await page.getByLabel("Token Direto para Votantes").inputValue();
+  expect(initialInviteUrl).toMatch(/\/join\//);
+
+  await page.getByRole("button", { name: "Rotacionar convite" }).click();
+  await expect(page.getByLabel("Token Direto para Votantes")).not.toHaveValue(initialInviteUrl);
   const inviteUrlValue = await page.getByLabel("Token Direto para Votantes").inputValue();
   expect(inviteUrlValue).toMatch(/\/join\//);
 
@@ -108,6 +113,12 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await expect(
     page.getByText(/Eleito por maioria absoluta:|Sem maioria absoluta neste escrutínio\./i),
   ).toBeVisible();
+
+  const auditSection = page.getByRole("region", { name: "Auditoria da sala" });
+  await expect(auditSection).toBeVisible();
+  await expect(auditSection.getByText("Sala criada", { exact: true })).toBeVisible();
+  await expect(auditSection.getByText("Escrutínio iniciado", { exact: true })).toBeVisible();
+  await expect(auditSection.getByText("Escrutínio encerrado", { exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: /Voltar para Painel de Salas/i }).click();
   await expect(page).toHaveURL(/\/admin\/salas$/);

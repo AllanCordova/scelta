@@ -21,6 +21,7 @@ export type StoredRoom = {
   officeBanners?: Record<string, string>;
   inviteToken: string;
   status: RoomStatus;
+  reactionsEnabled: boolean;
   createdAt: Date;
 };
 
@@ -117,12 +118,18 @@ export type UpdateRoomInput = {
   quorumUnit?: "absolute" | "percent";
   eligibleCount?: number;
   status?: RoomStatus;
+  reactionsEnabled?: boolean;
 };
+
+export type SendReactionResult =
+  | { ok: true; emoji: string; createdAt: Date }
+  | { ok: false; reason: "participant_not_in_room" | "rate_limited" };
 
 export type RoomRepository = {
   createRoom(room: NewRoom): Promise<StoredRoom>;
   updateRoom(roomId: string, input: UpdateRoomInput): Promise<StoredRoom | null>;
   setOfficeBanner(roomId: string, officeKey: string, bannerUrl: string | null): Promise<StoredRoom | null>;
+  rotateInviteToken(roomId: string): Promise<StoredRoom | null>;
   listRooms(): Promise<StoredRoom[]>;
   findRoomByInviteToken(inviteToken: string): Promise<StoredRoom | null>;
   findRoomById(roomId: string): Promise<StoredRoom | null>;
@@ -159,6 +166,11 @@ export type RoomRepository = {
   latestRounds(roomIds: string[]): Promise<StoredRound[]>;
   latestClosedRound(roomId: string): Promise<StoredRound | null>;
   listAuditEvents(roomId: string): Promise<StoredAuditEvent[]>;
+  recordAuditEvent?(
+    roomId: string,
+    action: string,
+    payload?: Record<string, unknown>,
+  ): Promise<StoredAuditEvent>;
   castBallot(input: {
     roomId: string;
     roundId: string;
@@ -192,4 +204,11 @@ export type RoomRepository = {
   ): Promise<StoredMember | null>;
   deleteMember(memberId: string): Promise<boolean>;
   listMembers(): Promise<StoredMember[]>;
+  sendReaction(input: {
+    roomId: string;
+    joinKeyHash: string;
+    emoji: string;
+    since: Date;
+    maxPerWindow: number;
+  }): Promise<SendReactionResult>;
 };

@@ -131,8 +131,9 @@ describe("round lifecycle and restart", () => {
 
     // Audit event is written without any voter choice or PII
     const events = await repository.listAuditEvents(room.id);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
+    const restartEvents = events.filter((event) => event.action === "round_restarted");
+    expect(restartEvents).toHaveLength(1);
+    expect(restartEvents[0]).toMatchObject({
       roomId: room.id,
       actorRole: "admin",
       action: "round_restarted",
@@ -296,7 +297,8 @@ describe("round lifecycle and restart", () => {
     expect(restartClosed.statusCode).toBe(409);
     expect(restartClosed.json()).toEqual({ error: "round_not_open" });
 
-    expect(await repository.listAuditEvents(room.id)).toEqual([]);
+    const events = await repository.listAuditEvents(room.id);
+    expect(events.some((event) => event.action === "round_restarted")).toBe(false);
 
     await app.close();
   });

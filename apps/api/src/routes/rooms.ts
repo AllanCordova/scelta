@@ -72,6 +72,7 @@ const UpdateRoomBody = Type.Object(
     status: Type.Optional(
       Type.Union([Type.Literal("draft"), Type.Literal("open"), Type.Literal("closed")]),
     ),
+    reactionsEnabled: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -82,6 +83,7 @@ type UpdateRoomBodyType = {
   quorumUnit?: "absolute" | "percent";
   eligibleCount?: number;
   status?: "draft" | "open" | "closed";
+  reactionsEnabled?: boolean;
 };
 
 const RoomIdParams = Type.Object({
@@ -296,12 +298,14 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           return reply.code(404).send({ error: "room_not_found" });
         }
 
-        const [roomCandidates, allCandidates, allRounds, presentCount] = await Promise.all([
-          options.roomRepository.listCandidates(roomId),
-          options.roomRepository.listAllCandidates(roomId),
-          options.roomRepository.listRounds(roomId),
-          options.roomRepository.countPresent(roomId),
-        ]);
+        const [roomCandidates, allCandidates, allRounds, presentCount, auditEvents] =
+          await Promise.all([
+            options.roomRepository.listCandidates(roomId),
+            options.roomRepository.listAllCandidates(roomId),
+            options.roomRepository.listRounds(roomId),
+            options.roomRepository.countPresent(roomId),
+            options.roomRepository.listAuditEvents(roomId),
+          ]);
         const round = allRounds[allRounds.length - 1] ?? null;
         const candidatesByRoom = new Map([[roomId, allCandidates]]);
         const tallyByRound = await loadTalliesForClosedRounds(
@@ -334,6 +338,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
               };
             }),
             recommendedOffice: officeState.recommendedOffice,
+            auditEvents: auditEvents.map(toAuditEventResponse),
             round: toRoundSummary(
               round,
               round ? (tallyByRound.get(round.id) ?? null) : null,
@@ -343,6 +348,43 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         };
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to read room detail");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/v1/admin/rooms/:roomId/audit",
+    {
+      schema: {
+        params: RoomIdParams,
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const events = await options.roomRepository.listAuditEvents(roomId);
+        return {
+          events: events.map((event) => ({
+            roomId: event.roomId,
+            ...toAuditEventResponse(event),
+          })),
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to list audit events");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },
@@ -432,6 +474,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           quorumUnit: body.quorumUnit,
           eligibleCount: body.eligibleCount,
           status: body.status,
+          reactionsEnabled: body.reactionsEnabled,
         });
         if (!updated) {
           return reply.code(404).send({ error: "room_not_found" });
@@ -442,6 +485,9 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           options.roomRepository.countPresent(roomId),
         ]);
         options.presencePublisher?.publishPresence(roomId, quorumStatus(updated, presentCount));
+        if (body.reactionsEnabled !== undefined) {
+          options.presencePublisher?.publishReactionsConfig?.(roomId, updated.reactionsEnabled);
+        }
 
         return { room: toRoomResponse(updated, { includeInvite: true, candidates }) };
       } catch (error) {
@@ -517,6 +563,38 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         };
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to update office banner");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/invite/rotate",
+    {
+      schema: {
+        params: RoomIdParams,
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const updated = await options.roomRepository.rotateInviteToken(roomId);
+        if (!updated) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const candidates = await options.roomRepository.listCandidates(roomId);
+        return { room: toRoomResponse(updated, { includeInvite: true, candidates }) };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to rotate invite token");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },
@@ -770,6 +848,7 @@ function toRoomResponse(
     eligibleCount: room.eligibleCount,
     officeBanners: room.officeBanners ?? {},
     status: room.status,
+    reactionsEnabled: room.reactionsEnabled,
     ...(candidates.length > 0
       ? {
           candidates: candidates.map((candidate) => ({
@@ -822,4 +901,20 @@ async function loadTalliesForClosedRounds(
     tallies.set(round.id, tallyRoundVotes(candidates, ballotCandidateIds));
   }
   return tallies;
+}
+
+function toAuditEventResponse(event: {
+  id: string;
+  actorRole: string;
+  action: string;
+  payload: Record<string, unknown>;
+  createdAt: Date;
+}) {
+  return {
+    id: event.id,
+    actorRole: event.actorRole,
+    action: event.action,
+    payload: event.payload,
+    createdAt: event.createdAt.toISOString(),
+  };
 }

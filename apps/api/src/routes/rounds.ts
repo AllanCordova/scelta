@@ -433,6 +433,13 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "winner_not_elected" });
         }
 
+        await repository.recordAuditEvent?.(roomId, "result_published", {
+          roundId: latest.id,
+          roundNumber: latest.number,
+          outcome: latest.outcome,
+          ...(latest.officeLabel !== null ? { officeLabel: latest.officeLabel } : {}),
+        });
+
         return { published: true, roundId: latest.id, outcome: latest.outcome };
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to publish round");

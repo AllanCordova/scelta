@@ -801,6 +801,94 @@ describe("AdminRoomDetail", () => {
       "https://example.com/tesoureiro-banner.png",
     );
   });
+
+  it("rotates the invite token and updates the voter invite link", async () => {
+    let currentRoom: RoomDetail = sampleRoom;
+    const rotatedRoom: RoomDetail = {
+      ...sampleRoom,
+      inviteToken: "rotated-token-xyz",
+      invitePath: "/join/rotated-token-xyz",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({
+            room: currentRoom,
+            participantsCount: 0,
+            latestRound: null,
+            candidates: [],
+            results: null,
+            eligibleMembers: [],
+          });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/invite/rotate`) && method === "POST") {
+          currentRoom = rotatedRoom;
+          return json({ room: rotatedRoom });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    const inviteInput = (await screen.findByLabelText("Token Direto para Votantes")) as HTMLInputElement;
+    expect(inviteInput.value).toContain("/join/token-elder-2026");
+
+    fireEvent.click(screen.getByRole("button", { name: "Rotacionar convite" }));
+
+    await waitFor(() => {
+      expect(inviteInput.value).toContain("/join/rotated-token-xyz");
+    });
+  });
+
+  it("renders the room audit log section when auditEvents are returned", async () => {
+    const auditedRoom: RoomDetail = {
+      ...sampleRoom,
+      auditEvents: [
+        {
+          id: "evt-1",
+          actorRole: "admin",
+          action: "room_created",
+          payload: {},
+          createdAt: "2026-11-13T21:00:00.000Z",
+        },
+        {
+          id: "evt-2",
+          actorRole: "admin",
+          action: "quorum_changed",
+          payload: {},
+          createdAt: "2026-11-13T21:01:00.000Z",
+        },
+      ],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: auditedRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+    expect(await screen.findByRole("heading", { name: "Auditoria da sala" })).toBeInTheDocument();
+    expect(screen.getByText("Sala criada")).toBeInTheDocument();
+    expect(screen.getByText("Quórum alterado")).toBeInTheDocument();
+  });
 });
 
 function json(body: unknown, status = 200) {

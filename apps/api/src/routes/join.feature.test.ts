@@ -1,4 +1,4 @@
-import { candidates, createPgliteDatabase, participants, roomMemberCodes, rooms, type Db } from "@scelta/db";
+import { auditEvents, candidates, createPgliteDatabase, participants, roomMemberCodes, rooms, type Db } from "@scelta/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
@@ -59,6 +59,7 @@ describe("join room", () => {
     await db.delete(candidates);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
+    await db.delete(auditEvents);
     await db.delete(rooms);
   });
 

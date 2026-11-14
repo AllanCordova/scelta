@@ -1,4 +1,5 @@
 import {
+  ALLOWED_REACTION_EMOJIS,
   canOpenRound,
   countOfficeRoundNumber,
   tallyRoundVotes,
@@ -98,10 +99,13 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           : (officeBanners.default ?? null);
 
         return {
+          roomId: room.id,
           roomStatus: room.status,
           roomType: room.roomType,
           officeBanners,
           activeBannerUrl,
+          reactionsEnabled: room.reactionsEnabled,
+          allowedReactions: ALLOWED_REACTION_EMOJIS,
           candidates: candidates.map((candidate) => ({
             id: candidate.id,
             displayName: candidate.displayName,

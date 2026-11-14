@@ -46,5 +46,20 @@ describe("createSocketPresencePublisher", () => {
       roundNumber: 1,
       state: "restarted",
     });
+
+    publisher.publishReaction?.(roomId, {
+      emoji: "👏",
+      at: "2026-11-13T21:00:00.000Z",
+    });
+    expect(emit).toHaveBeenCalledWith("reaction:broadcast", {
+      emoji: "👏",
+      at: "2026-11-13T21:00:00.000Z",
+    });
+
+    publisher.publishReactionsConfig?.(roomId, false);
+    expect(emit).toHaveBeenCalledWith("reactions:config", {
+      roomId,
+      reactionsEnabled: false,
+    });
   });
 });

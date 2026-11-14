@@ -14,6 +14,7 @@ import {
 import {
   canCastBallot,
   isMemberEligibleVoter,
+  isReactionRateLimited,
   normalizeAccessCode,
   ROUND_RESULTS,
   type MemberSocietyFlags,
@@ -23,7 +24,7 @@ import {
   type RoundResult,
   type RulesPreset,
 } from "@scelta/domain";
-import { and, asc, count, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or } from "drizzle-orm";
 import { findChurchByName, getOrCreateChurch, isUniqueViolation } from "../churches/church-store.js";
 import { generateAccessCode } from "./access-code.js";
 import { createBallotToken } from "./ballot-token.js";
@@ -49,53 +50,65 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       for (let attempt = 0; attempt < INVITE_TOKEN_ATTEMPTS; attempt += 1) {
         const inviteToken = createInviteToken();
         try {
-          const inserted = await db
-            .insert(rooms)
-            .values({
-              churchId,
-              title: room.title,
-              roomType: room.roomType,
-              rulesPreset: room.rulesPreset,
-              quorumValue: room.quorumValue,
-              quorumUnit: room.quorumUnit,
-              eligibleCount: room.eligibleCount,
-              inviteToken,
-              status: room.status,
-            })
-            .returning();
-
-          const row = inserted[0];
-          if (!row) {
-            throw new Error("Room insert returned no row");
-          }
-
-          if (room.candidates && room.candidates.length > 0) {
-            const churchMembers = await db
-              .select({
-                id: members.id,
-                fullName: members.fullName,
-                photoUrl: members.photoUrl,
+          return await db.transaction(async (tx) => {
+            const inserted = await tx
+              .insert(rooms)
+              .values({
+                churchId,
+                title: room.title,
+                roomType: room.roomType,
+                rulesPreset: room.rulesPreset,
+                quorumValue: room.quorumValue,
+                quorumUnit: room.quorumUnit,
+                eligibleCount: room.eligibleCount,
+                inviteToken,
+                status: room.status,
               })
-              .from(members)
-              .where(eq(members.churchId, churchId));
-            const memberByName = new Map(
-              churchMembers.map((member) => [member.fullName.toLocaleLowerCase(), member]),
-            );
-            await db.insert(candidates).values(
-              room.candidates.map((displayName) => {
-                const matched = memberByName.get(displayName.toLocaleLowerCase());
-                return {
-                  roomId: row.id,
-                  memberId: matched?.id ?? null,
-                  displayName,
-                  photoUrl: matched?.photoUrl ?? null,
-                  isEligible: true,
-                };
-              }),
-            );
-          }
+              .returning();
 
-          return toStoredRoom(row);
+            const row = inserted[0];
+            if (!row) {
+              throw new Error("Room insert returned no row");
+            }
+
+            if (room.candidates && room.candidates.length > 0) {
+              const churchMembers = await tx
+                .select({
+                  id: members.id,
+                  fullName: members.fullName,
+                  photoUrl: members.photoUrl,
+                })
+                .from(members)
+                .where(eq(members.churchId, churchId));
+              const memberByName = new Map(
+                churchMembers.map((member) => [member.fullName.toLocaleLowerCase(), member]),
+              );
+              await tx.insert(candidates).values(
+                room.candidates.map((displayName) => {
+                  const matched = memberByName.get(displayName.toLocaleLowerCase());
+                  return {
+                    roomId: row.id,
+                    memberId: matched?.id ?? null,
+                    displayName,
+                    photoUrl: matched?.photoUrl ?? null,
+                    isEligible: true,
+                  };
+                }),
+              );
+            }
+
+            await insertAuditEvent(tx, row.id, "room_created", {
+              title: row.title,
+              roomType: row.roomType,
+              rulesPreset: row.rulesPreset,
+              quorumValue: row.quorumValue,
+              quorumUnit: row.quorumUnit,
+              eligibleCount: row.eligibleCount,
+              status: row.status,
+            });
+
+            return toStoredRoom(row);
+          });
         } catch (error) {
           if (isUniqueViolation(error) && attempt < INVITE_TOKEN_ATTEMPTS - 1) {
             continue;
@@ -169,17 +182,99 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       if (input.status !== undefined) {
         patch.status = input.status;
       }
+      if (input.reactionsEnabled !== undefined) {
+        patch.reactionsEnabled = input.reactionsEnabled;
+      }
 
       if (Object.keys(patch).length === 0) {
         return this.findRoomById(roomId);
       }
 
-      const [updated] = await db
-        .update(rooms)
-        .set(patch)
-        .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
-        .returning();
-      return updated ? toStoredRoom(updated) : null;
+      return db.transaction(async (tx) => {
+        const [existing] = await tx
+          .select()
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .limit(1);
+        if (!existing) {
+          return null;
+        }
+
+        const [updated] = await tx
+          .update(rooms)
+          .set(patch)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .returning();
+        if (!updated) {
+          return null;
+        }
+
+        const quorumChanged =
+          existing.quorumValue !== updated.quorumValue ||
+          existing.quorumUnit !== updated.quorumUnit ||
+          existing.eligibleCount !== updated.eligibleCount;
+
+        if (quorumChanged) {
+          await insertAuditEvent(tx, updated.id, "quorum_changed", {
+            previous: {
+              quorumValue: existing.quorumValue,
+              quorumUnit: existing.quorumUnit,
+              eligibleCount: existing.eligibleCount,
+            },
+            next: {
+              quorumValue: updated.quorumValue,
+              quorumUnit: updated.quorumUnit,
+              eligibleCount: updated.eligibleCount,
+            },
+          });
+        }
+
+        if (existing.status !== updated.status) {
+          await insertAuditEvent(tx, updated.id, "room_status_changed", {
+            previous: existing.status,
+            next: updated.status,
+          });
+        }
+
+        return toStoredRoom(updated);
+      });
+    },
+
+    async rotateInviteToken(roomId) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return null;
+      }
+
+      for (let attempt = 0; attempt < INVITE_TOKEN_ATTEMPTS; attempt += 1) {
+        const nextToken = createInviteToken();
+        try {
+          return await db.transaction(async (tx) => {
+            const [updated] = await tx
+              .update(rooms)
+              .set({ inviteToken: nextToken })
+              .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+              .returning();
+            if (!updated) {
+              return null;
+            }
+            await tx.insert(auditEvents).values({
+              roomId: updated.id,
+              actorRole: "admin",
+              action: "invite_rotated",
+              payload: {},
+            });
+            return toStoredRoom(updated);
+          });
+        } catch (error) {
+          if (isUniqueViolation(error) && attempt < INVITE_TOKEN_ATTEMPTS - 1) {
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      throw new Error("Could not store a unique invite token");
     },
 
     async setOfficeBanner(roomId, officeKey, bannerUrl) {
@@ -629,6 +724,17 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
               }
             }
 
+            await tx.insert(auditEvents).values({
+              roomId,
+              actorRole: "admin",
+              action: "round_opened",
+              payload: {
+                roundId: row.id,
+                roundNumber: row.number,
+                ...(row.officeLabel !== null ? { officeLabel: row.officeLabel } : {}),
+              },
+            });
+
             return { ok: true as const, round: toStoredRound(row) };
           });
         } catch (error) {
@@ -642,21 +748,36 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
     },
 
     async closeRound(roomId, roundId, outcome) {
-      const updated = await db
-        .update(rounds)
-        .set({
-          status: "closed",
-          outcome,
-          closedAt: new Date(),
-        })
-        .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId), eq(rounds.status, "open")))
-        .returning();
-      const row = updated[0];
-      if (!row) {
-        return null;
-      }
-      const restartCounts = await loadRestartCountsByRoom(db, [roomId]);
-      return toStoredRound(row, restartCounts.get(row.id) ?? 0);
+      return db.transaction(async (tx) => {
+        const updated = await tx
+          .update(rounds)
+          .set({
+            status: "closed",
+            outcome,
+            closedAt: new Date(),
+          })
+          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId), eq(rounds.status, "open")))
+          .returning();
+        const row = updated[0];
+        if (!row) {
+          return null;
+        }
+
+        await tx.insert(auditEvents).values({
+          roomId,
+          actorRole: "admin",
+          action: "round_closed",
+          payload: {
+            roundId: row.id,
+            roundNumber: row.number,
+            outcome: row.outcome,
+            ...(row.officeLabel !== null ? { officeLabel: row.officeLabel } : {}),
+          },
+        });
+
+        const restartCounts = await loadRestartCountsByRoom(tx, [roomId]);
+        return toStoredRound(row, restartCounts.get(row.id) ?? 0);
+      });
     },
 
     async restartRound(roomId, roundId) {
@@ -844,16 +965,47 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
     },
 
     async listAuditEvents(roomId) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return [];
+      }
       const rows = await db
-        .select()
+        .select({
+          id: auditEvents.id,
+          roomId: auditEvents.roomId,
+          actorRole: auditEvents.actorRole,
+          action: auditEvents.action,
+          payload: auditEvents.payload,
+          createdAt: auditEvents.createdAt,
+        })
         .from(auditEvents)
-        .where(eq(auditEvents.roomId, roomId))
-        .orderBy(asc(auditEvents.createdAt));
+        .innerJoin(rooms, eq(auditEvents.roomId, rooms.id))
+        .where(and(eq(auditEvents.roomId, roomId), eq(rooms.churchId, church.id)))
+        .orderBy(asc(auditEvents.createdAt), asc(auditEvents.id));
       return rows.map(toStoredAuditEvent);
+    },
+
+    async recordAuditEvent(roomId, action, payload = {}) {
+      const room = await this.findRoomById(roomId);
+      if (!room) {
+        throw new Error("Cannot record audit event for unknown room");
+      }
+      const inserted = await insertAuditEvent(db, roomId, action, payload);
+      return toStoredAuditEvent(inserted);
     },
 
     async castBallot(input) {
       return db.transaction(async (tx) => {
+        const roomRows = await tx
+          .select({ status: rooms.status })
+          .from(rooms)
+          .where(eq(rooms.id, input.roomId))
+          .limit(1);
+        const roomRow = roomRows[0];
+        if (!roomRow || roomRow.status !== "open") {
+          return { ok: false as const, reason: "room_not_open" as const };
+        }
+
         const roundRows = await tx
           .select()
           .from(rounds)
@@ -897,7 +1049,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         }
 
         const eligibility = canCastBallot({
-          roomStatus: "open",
+          roomStatus: roomRow.status,
           roundStatus: round.status,
           isParticipantPresent: Boolean(participant?.isPresent),
           hasAlreadyVoted: false,
@@ -1120,6 +1272,62 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .orderBy(asc(members.fullName));
       return rows.map(toStoredMember);
     },
+
+    async sendReaction({ roomId, joinKeyHash, emoji, since, maxPerWindow }) {
+      return db.transaction(async (tx) => {
+        const [participant] = await tx
+          .select()
+          .from(participants)
+          .where(and(eq(participants.roomId, roomId), eq(participants.joinKeyHash, joinKeyHash)))
+          .for("update")
+          .limit(1);
+
+        if (!participant || !participant.isPresent) {
+          return { ok: false, reason: "participant_not_in_room" } as const;
+        }
+
+        if (participant.accessCodeId) {
+          const [codeRow] = await tx
+            .select({ revokedAt: roomMemberCodes.revokedAt })
+            .from(roomMemberCodes)
+            .where(eq(roomMemberCodes.id, participant.accessCodeId))
+            .limit(1);
+          if (!codeRow || codeRow.revokedAt !== null) {
+            return { ok: false, reason: "participant_not_in_room" } as const;
+          }
+        }
+
+        const [recent] = await tx
+          .select({ total: count() })
+          .from(reactions)
+          .where(
+            and(
+              eq(reactions.roomId, roomId),
+              eq(reactions.participantId, participant.id),
+              gte(reactions.createdAt, since),
+            ),
+          );
+
+        if (isReactionRateLimited(recent?.total ?? 0, maxPerWindow)) {
+          return { ok: false, reason: "rate_limited" } as const;
+        }
+
+        const [inserted] = await tx
+          .insert(reactions)
+          .values({
+            roomId,
+            participantId: participant.id,
+            emoji,
+          })
+          .returning({ createdAt: reactions.createdAt });
+
+        return {
+          ok: true,
+          emoji,
+          createdAt: inserted?.createdAt ?? new Date(),
+        } as const;
+      });
+    },
   };
 }
 
@@ -1198,6 +1406,7 @@ function toStoredRoom(row: {
   officeBanners?: Record<string, string> | null;
   inviteToken: string;
   status: string;
+  reactionsEnabled: boolean;
   createdAt: Date;
 }): StoredRoom {
   return {
@@ -1211,6 +1420,7 @@ function toStoredRoom(row: {
     officeBanners: row.officeBanners ?? {},
     inviteToken: row.inviteToken,
     status: row.status as RoomStatus,
+    reactionsEnabled: row.reactionsEnabled,
     createdAt: row.createdAt,
   };
 }
@@ -1325,4 +1535,25 @@ function toStoredAccessCode(row: {
     revokedAt: row.revokedAt,
     createdAt: row.createdAt,
   };
+}
+
+async function insertAuditEvent(
+  executor: Pick<Db, "insert">,
+  roomId: string,
+  action: string,
+  payload: Record<string, unknown>,
+) {
+  const [inserted] = await executor
+    .insert(auditEvents)
+    .values({
+      roomId,
+      actorRole: "admin",
+      action,
+      payload,
+    })
+    .returning();
+  if (!inserted) {
+    throw new Error("Audit event insert returned no row");
+  }
+  return inserted;
 }
