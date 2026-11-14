@@ -435,6 +435,9 @@ function JoinedRoomView({
     round?.status === "open"
       ? officeGuidanceForBallot(ballotState?.roomType, round.officeLabel)
       : null;
+  const activeBannerUrl = round?.officeLabel
+    ? (ballotState?.officeBanners?.[round.officeLabel] ?? ballotState?.activeBannerUrl ?? null)
+    : (ballotState?.officeBanners?.default ?? ballotState?.activeBannerUrl ?? null);
   const boardOffices = ballotState?.offices ?? [];
   const allBoardOfficesElected =
     boardOffices.length > 0 && boardOffices.every((office) => office.status === "elected");
@@ -488,6 +491,19 @@ function JoinedRoomView({
               <span className="voter-scrutiny-kicker">Cédula Eleitoral</span>
               <span className="voter-secret-badge">1 escolha permitida</span>
             </div>
+            {activeBannerUrl ? (
+              <div className="voter-office-banner">
+                <img
+                  src={activeBannerUrl}
+                  alt={
+                    round.officeLabel
+                      ? `Banner do cargo ${round.officeLabel}`
+                      : `Banner da eleição ${title}`
+                  }
+                  className="voter-office-banner-img"
+                />
+              </div>
+            ) : null}
             <div className="voter-scrutiny-main">
               <div className="voter-emblem-placeholder" aria-hidden="true">
                 {round.officeLabel ? initialsFromName(round.officeLabel) : "SC"}

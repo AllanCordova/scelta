@@ -742,6 +742,65 @@ describe("AdminRoomDetail", () => {
     });
     expect(await screen.findByText("Completa")).toBeInTheDocument();
   });
+
+  it("lets admin select each cargo in multi-office rooms and preview its distinct banner", async () => {
+    const boardRoom: RoomDetail = {
+      ...sampleRoom,
+      roomType: "upa_board",
+      officeBanners: {
+        Presidente: "https://example.com/presidente-banner.png",
+        Tesoureiro: "https://example.com/tesoureiro-banner.png",
+      },
+      offices: [
+        {
+          officeLabel: "Presidente",
+          order: 1,
+          status: "open",
+          roundCount: 1,
+          winnerCandidateId: null,
+          winnerName: null,
+        },
+        {
+          officeLabel: "Tesoureiro",
+          order: 2,
+          status: "pending",
+          roundCount: 0,
+          winnerCandidateId: null,
+          winnerName: null,
+        },
+      ],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: boardRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    const select = (await screen.findByLabelText("Cargo do banner")) as HTMLSelectElement;
+    expect(select.value).toBe("Presidente");
+    expect(screen.getByAltText("Banner do cargo Presidente")).toHaveAttribute(
+      "src",
+      "https://example.com/presidente-banner.png",
+    );
+
+    fireEvent.change(select, { target: { value: "Tesoureiro" } });
+    expect(screen.getByAltText("Banner do cargo Tesoureiro")).toHaveAttribute(
+      "src",
+      "https://example.com/tesoureiro-banner.png",
+    );
+  });
 });
 
 function json(body: unknown, status = 200) {

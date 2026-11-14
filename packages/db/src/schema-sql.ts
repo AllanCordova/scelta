@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS rooms (
   quorum_value integer NOT NULL,
   quorum_unit quorum_unit NOT NULL DEFAULT 'absolute',
   eligible_count integer NOT NULL DEFAULT 0,
+  office_banners jsonb NOT NULL DEFAULT '{}'::jsonb,
   invite_token text NOT NULL,
   status room_status NOT NULL DEFAULT 'draft',
   created_at timestamptz NOT NULL DEFAULT now()
@@ -97,6 +98,7 @@ CREATE TABLE IF NOT EXISTS rooms (
 CREATE UNIQUE INDEX IF NOT EXISTS rooms_invite_token_uidx ON rooms (invite_token);
 
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS eligible_count integer NOT NULL DEFAULT 0;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS office_banners jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS room_member_codes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

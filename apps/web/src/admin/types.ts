@@ -93,6 +93,7 @@ export type RoomSummary = {
   quorumValue: number;
   quorumUnit: QuorumUnit;
   eligibleCount: number;
+  officeBanners?: Record<string, string>;
   status: RoomStatus;
   candidates?: CandidateOption[];
   round: RoomRound | null;
@@ -113,6 +114,7 @@ export type OfficeProgressItem = {
   winnerCandidateId: string | null;
   winnerName: string | null;
   winnerPhotoUrl?: string | null;
+  bannerUrl?: string | null;
 };
 
 export type RoomDetail = RoomSummary & {

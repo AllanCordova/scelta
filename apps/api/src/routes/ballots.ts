@@ -92,10 +92,16 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
 
         const officeState = await loadRoomOfficeState(repository, room, allCandidates, allRounds);
         const officeRoundNumber = round ? countOfficeRoundNumber(allRounds, round) : undefined;
+        const officeBanners = room.officeBanners ?? {};
+        const activeBannerUrl = round?.officeLabel
+          ? (officeBanners[round.officeLabel] ?? null)
+          : (officeBanners.default ?? null);
 
         return {
           roomStatus: room.status,
           roomType: room.roomType,
+          officeBanners,
+          activeBannerUrl,
           candidates: candidates.map((candidate) => ({
             id: candidate.id,
             displayName: candidate.displayName,
@@ -112,6 +118,7 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
                 status,
                 winnerName,
                 winnerPhotoUrl: winnerCandidate?.photoUrl ?? null,
+                bannerUrl: officeBanners[officeLabel] ?? null,
               };
             },
           ),

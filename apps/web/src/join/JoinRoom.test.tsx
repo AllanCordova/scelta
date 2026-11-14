@@ -572,6 +572,65 @@ describe("JoinRoom", () => {
     expect(await screen.findAllByText("Página 1 de 2")).not.toHaveLength(0);
     unmount();
   });
+
+  it("renders the cargo banner inside the Cédula Eleitoral section when present", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith("/v1/join/banner-token") && method === "GET") {
+          return json({ title: "Diretoria UPA", status: "open", canJoin: true });
+        }
+        if (url.endsWith("/v1/join/banner-token") && method === "POST") {
+          return json({
+            title: "Diretoria UPA",
+            status: "open",
+            displayName: "Maria",
+            presentCount: 1,
+            alreadyJoined: false,
+          });
+        }
+        if (url.endsWith("/v1/join/banner-token/ballot")) {
+          return json({
+            roomStatus: "open",
+            roomType: "upa_board",
+            officeBanners: {
+              Presidente: "https://example.com/presidente-banner.png",
+            },
+            activeBannerUrl: "https://example.com/presidente-banner.png",
+            candidates: [
+              { id: "cand-1", displayName: "Paulo Apóstolo", photoUrl: null },
+              { id: "cand-2", displayName: "Silas", photoUrl: null },
+            ],
+            round: {
+              id: "round-1",
+              number: 1,
+              officeLabel: "Presidente",
+              status: "open",
+              outcome: null,
+              tally: null,
+            },
+          });
+        }
+        if (url.endsWith("/v1/join/banner-token/ballot/receipt")) {
+          return json({ roundId: "round-1", hasVoted: false });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<JoinRoom token="banner-token" />);
+
+    fireEvent.change(await screen.findByLabelText("Código de acesso"), {
+      target: { value: "A7K9M2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar na sala" }));
+
+    const banner = await screen.findByAltText("Banner do cargo Presidente");
+    expect(banner).toHaveAttribute("src", "https://example.com/presidente-banner.png");
+    expect(banner.closest(".voter-scrutiny-brief")).not.toBeNull();
+  });
 });
 
 function json(body: unknown, status = 200) {
