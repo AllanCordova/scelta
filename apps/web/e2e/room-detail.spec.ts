@@ -38,6 +38,11 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await expect(page.getByText("Paulo Apóstolo")).toBeVisible();
   await expect(page.getByText("Silas", { exact: true })).toBeVisible();
 
+  const initialInviteUrl = await page.getByLabel("Token Direto para Votantes").inputValue();
+  expect(initialInviteUrl).toMatch(/\/join\//);
+
+  await page.getByRole("button", { name: "Rotacionar convite" }).click();
+  await expect(page.getByLabel("Token Direto para Votantes")).not.toHaveValue(initialInviteUrl);
   const inviteUrlValue = await page.getByLabel("Token Direto para Votantes").inputValue();
   expect(inviteUrlValue).toMatch(/\/join\//);
 

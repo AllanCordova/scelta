@@ -240,6 +240,43 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       });
     },
 
+    async rotateInviteToken(roomId) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return null;
+      }
+
+      for (let attempt = 0; attempt < INVITE_TOKEN_ATTEMPTS; attempt += 1) {
+        const nextToken = createInviteToken();
+        try {
+          return await db.transaction(async (tx) => {
+            const [updated] = await tx
+              .update(rooms)
+              .set({ inviteToken: nextToken })
+              .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+              .returning();
+            if (!updated) {
+              return null;
+            }
+            await tx.insert(auditEvents).values({
+              roomId: updated.id,
+              actorRole: "admin",
+              action: "invite_rotated",
+              payload: {},
+            });
+            return toStoredRoom(updated);
+          });
+        } catch (error) {
+          if (isUniqueViolation(error) && attempt < INVITE_TOKEN_ATTEMPTS - 1) {
+            continue;
+          }
+          throw error;
+        }
+      }
+
+      throw new Error("Could not store a unique invite token");
+    },
+
     async deleteRoom(roomId) {
       const church = await findChurchByName(db, churchName);
       if (!church) {
@@ -935,6 +972,16 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
 
     async castBallot(input) {
       return db.transaction(async (tx) => {
+        const roomRows = await tx
+          .select({ status: rooms.status })
+          .from(rooms)
+          .where(eq(rooms.id, input.roomId))
+          .limit(1);
+        const roomRow = roomRows[0];
+        if (!roomRow || roomRow.status !== "open") {
+          return { ok: false as const, reason: "room_not_open" as const };
+        }
+
         const roundRows = await tx
           .select()
           .from(rounds)
@@ -978,7 +1025,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         }
 
         const eligibility = canCastBallot({
-          roomStatus: "open",
+          roomStatus: roomRow.status,
           roundStatus: round.status,
           isParticipantPresent: Boolean(participant?.isPresent),
           hasAlreadyVoted: false,

@@ -743,6 +743,52 @@ describe("AdminRoomDetail", () => {
     expect(await screen.findByText("Completa")).toBeInTheDocument();
   });
 
+  it("rotates the invite token and updates the voter invite link", async () => {
+    let currentRoom: RoomDetail = sampleRoom;
+    const rotatedRoom: RoomDetail = {
+      ...sampleRoom,
+      inviteToken: "rotated-token-xyz",
+      invitePath: "/join/rotated-token-xyz",
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({
+            room: currentRoom,
+            participantsCount: 0,
+            latestRound: null,
+            candidates: [],
+            results: null,
+            eligibleMembers: [],
+          });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
+          return json({ accessCodes: [] });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/invite/rotate`) && method === "POST") {
+          currentRoom = rotatedRoom;
+          return json({ room: rotatedRoom });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    const inviteInput = (await screen.findByLabelText("Token Direto para Votantes")) as HTMLInputElement;
+    expect(inviteInput.value).toContain("/join/token-elder-2026");
+
+    fireEvent.click(screen.getByRole("button", { name: "Rotacionar convite" }));
+
+    await waitFor(() => {
+      expect(inviteInput.value).toContain("/join/rotated-token-xyz");
+    });
+  });
+
   it("renders the room audit log section when auditEvents are returned", async () => {
     const auditedRoom: RoomDetail = {
       ...sampleRoom,

@@ -336,6 +336,28 @@ export async function updateRoom(
   return body.room;
 }
 
+export async function rotateRoomInvite(apiBase: string, roomId: string): Promise<RoomSummary> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/invite/rotate`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+
+  const body = (await response.json().catch(() => ({}))) as {
+    room?: RoomSummary;
+    error?: string;
+    details?: FieldError[];
+  };
+
+  if (!response.ok || !body.room) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown", body.details ?? []);
+  }
+
+  return body.room;
+}
+
 export async function deleteRoom(apiBase: string, roomId: string): Promise<void> {
   const response = await fetch(`${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}`, {
     method: "DELETE",

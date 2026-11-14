@@ -127,6 +127,7 @@ export type SendReactionResult =
 export type RoomRepository = {
   createRoom(room: NewRoom): Promise<StoredRoom>;
   updateRoom(roomId: string, input: UpdateRoomInput): Promise<StoredRoom | null>;
+  rotateInviteToken(roomId: string): Promise<StoredRoom | null>;
   listRooms(): Promise<StoredRoom[]>;
   findRoomByInviteToken(inviteToken: string): Promise<StoredRoom | null>;
   findRoomById(roomId: string): Promise<StoredRoom | null>;

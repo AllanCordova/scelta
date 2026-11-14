@@ -190,15 +190,15 @@
 
 ### B4.2 — Security baseline for voting
 
-**Status:** `todo`  
+**Status:** `done`  
 **Description:** Apply `agents/security.md` to voting surfaces (invite tokens, anonymity, authz).
 
 **Acceptance criteria:**
 
-- [ ] Invite tokens are unguessable and rotatable
-- [ ] Voters cannot access admin controls
-- [ ] Anonymity invariant verified by tests (no API returns voter→choice)
-- [ ] Clean-context security agent review completed for Epic 1
+- [x] Invite tokens are unguessable and rotatable
+- [x] Voters cannot access admin controls
+- [x] Anonymity invariant verified by tests (no API returns voter→choice)
+- [x] Clean-context security agent review completed for Epic 1
 
 ---
 
