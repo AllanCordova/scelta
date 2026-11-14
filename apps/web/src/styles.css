@@ -3269,22 +3269,24 @@ button.danger-button:hover:not(:disabled) {
   padding-bottom: 0.65rem;
 }
 
+.room-chat-header-title {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
 .room-chat-header h2 {
   margin: 0;
   font-size: 1.05rem;
-}
-
-.room-chat-subtitle {
-  margin: 0.15rem 0 0;
-  font-size: 0.78rem;
-  color: var(--muted);
 }
 
 .room-chat-header-actions {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .room-chat-icon-btn {

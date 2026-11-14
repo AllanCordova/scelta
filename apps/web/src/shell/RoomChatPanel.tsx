@@ -466,31 +466,30 @@ export function RoomChatPanel(props: RoomChatPanelProps) {
         aria-label="Chat ao vivo da sala"
       >
         <div className="room-chat-header">
-          <div>
+          <div className="room-chat-header-title">
             <h2>Chat ao vivo</h2>
-            <p className="room-chat-subtitle">Ao vivo • máx. 2 msgs a cada 5s</p>
+            {props.mode === "admin" ? (
+              <button
+                type="button"
+                className="ghost room-chat-mod-btn"
+                aria-expanded={isModerationOpen}
+                onClick={() => void handleOpenModeration()}
+              >
+                Pessoas ({participants.length})
+              </button>
+            ) : null}
           </div>
           <div className="room-chat-header-actions">
             {props.mode === "admin" ? (
-              <>
-                <button
-                  type="button"
-                  className={`ghost room-chat-icon-btn room-chat-mute-btn ${chatMuted ? "is-muted" : ""}`}
-                  aria-label={chatMuted ? "Liberar sala" : "Silenciar sala"}
-                  title={chatMuted ? "Liberar sala" : "Silenciar sala"}
-                  onClick={() => void handleToggleRoomMute()}
-                >
-                  <MuteIcon muted={chatMuted} />
-                </button>
-                <button
-                  type="button"
-                  className="ghost room-chat-mod-btn"
-                  aria-expanded={isModerationOpen}
-                  onClick={() => void handleOpenModeration()}
-                >
-                  Pessoas ({participants.length})
-                </button>
-              </>
+              <button
+                type="button"
+                className={`ghost room-chat-icon-btn room-chat-mute-btn ${chatMuted ? "is-muted" : ""}`}
+                aria-label={chatMuted ? "Liberar sala" : "Silenciar sala"}
+                title={chatMuted ? "Liberar sala" : "Silenciar sala"}
+                onClick={() => void handleToggleRoomMute()}
+              >
+                <MuteIcon muted={chatMuted} />
+              </button>
             ) : null}
             <button
               type="button"
@@ -503,7 +502,7 @@ export function RoomChatPanel(props: RoomChatPanelProps) {
             </button>
             <button
               type="button"
-              className="ghost room-chat-close-mobile"
+              className="ghost room-chat-icon-btn room-chat-close-mobile"
               aria-label="Fechar chat"
               onClick={() => {
                 setIsMobileOpen(false);
