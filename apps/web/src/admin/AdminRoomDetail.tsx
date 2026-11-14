@@ -141,26 +141,6 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
-  async function handleToggleReactions() {
-    if (!room) {
-      return;
-    }
-    setIsBusy(true);
-    setActionError(null);
-    try {
-      const nextEnabled = room.reactionsEnabled === false;
-      await updateRoom(apiBase, room.id, { reactionsEnabled: nextEnabled });
-      toast.success(nextEnabled ? "Reações ativadas." : "Reações desativadas.");
-      setRefreshTick((tick) => tick + 1);
-    } catch (error) {
-      const msg = messageFromRoundError(error);
-      setActionError(msg);
-      toast.error(msg);
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
   async function handleCopyInvite() {
     if (!fullInviteUrl) {
       return;
@@ -559,9 +539,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     tally && tally.totalVotes > 0 ? Math.round((winnerVotes / tally.totalVotes) * 100) : 0;
 
   return (
-    <div className="room-with-chat-layout admin-room-with-chat">
-      <div className="admin-page room-detail-page room-with-chat-main">
-        <div className="detail-breadcrumb-bar">
+    <div className="admin-page room-detail-page">
+      <div className="detail-breadcrumb-bar">
         <a className="detail-back-link" href="/admin/salas">
           ← Voltar para Painel de Salas
         </a>
@@ -615,15 +594,6 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                 </button>
               </>
             ) : null}
-
-            <button
-              type="button"
-              className="ghost round-action"
-              disabled={isBusy}
-              onClick={() => void handleToggleReactions()}
-            >
-              {room.reactionsEnabled !== false ? "Reações: Ativadas" : "Reações: Desativadas"}
-            </button>
 
             <button
               type="button"
@@ -1365,7 +1335,6 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
           }
         }}
       />
-      </div>
       <RoomChatPanel
         mode="admin"
         roomId={room.id}

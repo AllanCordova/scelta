@@ -30,8 +30,9 @@ test("live room chat supports text + emotes, 2 msgs/5s rate limit, and admin mut
   const item = page.getByRole("listitem").filter({ hasText: title });
   const codes = await createSimulatedCodes(page, title, 1);
 
-  // Admin opens room detail where chat sidebar is visible on desktop
+  // Admin opens room detail and opens the floating chat overlay
   await item.getByRole("link", { name: title }).click();
+  await page.getByRole("button", { name: "Abrir chat ao vivo" }).click();
   const adminChat = page.getByRole("complementary", { name: "Chat ao vivo da sala" });
   await expect(adminChat).toBeVisible();
 
@@ -43,6 +44,7 @@ test("live room chat supports text + emotes, 2 msgs/5s rate limit, and admin mut
     await voter.getByRole("button", { name: "Entrar na sala" }).click();
     await expect(voter.getByRole("heading", { name: "Você entrou" })).toBeVisible();
 
+    await voter.getByRole("button", { name: "Abrir chat ao vivo" }).click();
     const voterChat = voter.getByRole("complementary", { name: "Chat ao vivo da sala" });
     await expect(voterChat).toBeVisible();
 
@@ -111,7 +113,9 @@ test("live room chat supports text + emotes, 2 msgs/5s rate limit, and admin mut
     await adminChat.getByRole("button", { name: "Liberar sala" }).click();
     await expect(voterChat.getByLabel("Mensagem no chat")).toBeEnabled({ timeout: 10_000 });
 
-    // Mobile viewport shows floating chat button that toggles overlay
+    // Close chat, then verify mobile viewport floating chat button toggles overlay
+    await voterChat.getByRole("button", { name: "Fechar chat" }).click();
+    await expect(voterChat).toBeHidden();
     await voter.setViewportSize({ width: 390, height: 844 });
     const fab = voter.getByRole("button", { name: "Abrir chat ao vivo" });
     await expect(fab).toBeVisible();

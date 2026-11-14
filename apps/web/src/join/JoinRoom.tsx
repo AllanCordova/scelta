@@ -5,7 +5,6 @@ import { apiUrl } from "../api-url";
 import { validateWithZod, type FieldErrors } from "../forms/validation";
 import { startTwoSidedConfettiLoop } from "../shell/confetti";
 import { ShareBoardSheet, ministryLabelForRoomType } from "../admin/ShareBoardPaper";
-import { connectPresenceSocket } from "../admin/presence-socket";
 import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
 import { PaginationBar, paginateItems } from "../shell/PaginationBar";
 import { RoomChatPanel } from "../shell/RoomChatPanel";
@@ -22,17 +21,14 @@ import {
   fetchBallotState,
   fetchJoinPreview,
   fetchVoteReceipt,
-  sendReaction,
   submitBallot,
   submitJoin,
   type BallotState,
 } from "./join-api";
-import { JoinRequestError } from "./join-error";
 import { createJoinKey, isJoinKey, readJoinIdentity, writeJoinIdentity } from "./join-identity";
 
 const BALLOT_POLL_MS = 1000;
 const NULL_VOTE_CHOICE = "__NULL__";
-const DEFAULT_ALLOWED_REACTIONS = ["👏", "🙏", "❤️", "👍", "🎉"];
 
 const joinCodeSchema = z.object({
   code: z
@@ -302,10 +298,6 @@ function JoinedRoomView({
   const [voteError, setVoteError] = useState<string | null>(null);
   const [isVoting, setIsVoting] = useState(false);
   const [isGuidanceExpanded, setIsGuidanceExpanded] = useState(false);
-  const [reactionNotice, setReactionNotice] = useState<string | null>(null);
-  const [isSendingReaction, setIsSendingReaction] = useState(false);
-  const [recentReactions, setRecentReactions] = useState<{ id: string; emoji: string }[]>([]);
-  const [reactionsEnabledOverride, setReactionsEnabledOverride] = useState<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -317,7 +309,6 @@ function JoinedRoomView({
         return;
       }
       setBallotState(next);
-      setReactionsEnabledOverride(null);
 
       if (next.round?.status === "open") {
         const key = roundInstanceKey(next.round.id, next.round.restartCount);
@@ -341,71 +332,6 @@ function JoinedRoomView({
       window.clearInterval(timer);
     };
   }, [token, joinKey]);
-
-  const reactionsEnabled =
-    reactionsEnabledOverride !== null
-      ? reactionsEnabledOverride
-      : (ballotState?.reactionsEnabled ?? true);
-  const allowedReactions = ballotState?.allowedReactions ?? DEFAULT_ALLOWED_REACTIONS;
-
-  const roomId = ballotState?.roomId;
-  useEffect(() => {
-    if (!roomId) {
-      return;
-    }
-    const socket = connectPresenceSocket();
-    const joinChannel = () => {
-      socket.emit("room:join", roomId);
-    };
-    socket.on("connect", joinChannel);
-    socket.on("reaction:broadcast", (payload: { emoji?: string; at?: string }) => {
-      if (typeof payload?.emoji !== "string" || !allowedReactions.includes(payload.emoji)) {
-        return;
-      }
-      const id = `${payload.at ?? Date.now()}|${payload.emoji}`;
-      setRecentReactions((current) =>
-        current.some((item) => item.id === id)
-          ? current
-          : [...current.slice(-5), { id, emoji: payload.emoji! }],
-      );
-    });
-    socket.on("reactions:config", (payload: { roomId?: string; reactionsEnabled?: boolean }) => {
-      if (payload?.roomId === roomId && typeof payload.reactionsEnabled === "boolean") {
-        setReactionsEnabledOverride(payload.reactionsEnabled);
-      }
-    });
-    if (socket.connected) {
-      joinChannel();
-    }
-    return () => {
-      socket.disconnect();
-    };
-  }, [roomId, allowedReactions]);
-
-  async function handleReaction(emoji: string) {
-    setIsSendingReaction(true);
-    setReactionNotice(null);
-    try {
-      const sent = await sendReaction(apiUrl(""), token, { joinKey, emoji });
-      const id = `${sent.at}|${sent.emoji}`;
-      setRecentReactions((current) =>
-        current.some((item) => item.id === id)
-          ? current
-          : [...current.slice(-5), { id, emoji: sent.emoji }],
-      );
-    } catch (error) {
-      if (error instanceof JoinRequestError && error.errorCode === "reaction_rate_limited") {
-        setReactionNotice("Muitas reações em sequência. Aguarde alguns segundos.");
-      } else if (error instanceof JoinRequestError && error.errorCode === "reactions_disabled") {
-        setReactionsEnabledOverride(false);
-        setReactionNotice("Reações desativadas pelo administrador.");
-      } else {
-        setReactionNotice("Não foi possível enviar a reação.");
-      }
-    } finally {
-      setIsSendingReaction(false);
-    }
-  }
 
   const round = ballotState?.round ?? null;
   const candidates = ballotState?.candidates ?? [];
@@ -518,9 +444,8 @@ function JoinedRoomView({
     boardOffices.length > 0 && boardOffices.every((office) => office.status === "elected");
 
   return (
-    <div className="room-with-chat-layout voter-room-with-chat">
-      <div className="join-page voter-flow room-with-chat-main">
-        <header className="voter-session-header panel">
+    <div className="join-page voter-flow">
+      <header className="voter-session-header panel">
         <div className="voter-session-meta">
           <div className="voter-live-pill">
             <span className="voter-live-dot" aria-hidden="true" />
@@ -546,44 +471,6 @@ function JoinedRoomView({
           <p>Sua presença foi registrada.</p>
         </div>
         <span className="voter-secret-badge">Voto Secreto</span>
-      </section>
-
-      <section className="panel voter-reactions-bar" aria-label="Reações da assembleia">
-        <div className="voter-reactions-header">
-          <span className="voter-presence-kicker">Reações</span>
-          {recentReactions.length > 0 ? (
-            <span className="voter-reactions-feed" aria-live="polite">
-              {recentReactions.map((item) => (
-                <span key={item.id} className="voter-reaction-chip">
-                  {item.emoji}
-                </span>
-              ))}
-            </span>
-          ) : null}
-        </div>
-        {reactionsEnabled ? (
-          <div className="voter-reactions-actions">
-            {allowedReactions.map((emoji) => (
-              <button
-                key={emoji}
-                type="button"
-                className="ghost voter-reaction-btn"
-                aria-label={`Reagir com ${emoji}`}
-                disabled={isSendingReaction}
-                onClick={() => void handleReaction(emoji)}
-              >
-                {emoji}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="muted">Reações desativadas pelo administrador.</p>
-        )}
-        {reactionNotice ? (
-          <p className="form-error" role="status">
-            {reactionNotice}
-          </p>
-        ) : null}
       </section>
 
       {allBoardOfficesElected ? (
@@ -990,7 +877,6 @@ function JoinedRoomView({
           <OfficeProgressGrid offices={boardOffices} />
         </section>
       ) : null}
-      </div>
       {ballotState?.roomId ? (
         <RoomChatPanel
           mode="voter"
