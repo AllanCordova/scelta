@@ -116,6 +116,24 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     };
   }, [isQrVisible, fullInviteUrl]);
 
+  async function handleToggleReactions() {
+    if (!room) {
+      return;
+    }
+    setIsBusy(true);
+    setActionError(null);
+    try {
+      const nextEnabled = room.reactionsEnabled === false;
+      await updateRoom(apiBase, room.id, { reactionsEnabled: nextEnabled });
+      toast.success(nextEnabled ? "Reações ativadas." : "Reações desativadas.");
+      setRefreshTick((tick) => tick + 1);
+    } catch (error) {
+      setActionError(roundErrorMessage(error));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleCopyInvite() {
     if (!fullInviteUrl) {
       return;
@@ -529,6 +547,15 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                 </button>
               </>
             ) : null}
+
+            <button
+              type="button"
+              className="ghost round-action"
+              disabled={isBusy}
+              onClick={() => void handleToggleReactions()}
+            >
+              {room.reactionsEnabled !== false ? "Reações: Ativadas" : "Reações: Desativadas"}
+            </button>
 
             <button
               type="button"

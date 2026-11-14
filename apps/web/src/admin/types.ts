@@ -116,6 +116,7 @@ export type OfficeProgressItem = {
 };
 
 export type RoomDetail = RoomSummary & {
+  reactionsEnabled?: boolean;
   presence: {
     presentCount: number;
     eligibleCount: number;

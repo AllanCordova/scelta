@@ -69,6 +69,7 @@ const UpdateRoomBody = Type.Object(
     status: Type.Optional(
       Type.Union([Type.Literal("draft"), Type.Literal("open"), Type.Literal("closed")]),
     ),
+    reactionsEnabled: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -79,6 +80,7 @@ type UpdateRoomBodyType = {
   quorumUnit?: "absolute" | "percent";
   eligibleCount?: number;
   status?: "draft" | "open" | "closed";
+  reactionsEnabled?: boolean;
 };
 
 const RoomIdParams = Type.Object({
@@ -428,6 +430,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           quorumUnit: body.quorumUnit,
           eligibleCount: body.eligibleCount,
           status: body.status,
+          reactionsEnabled: body.reactionsEnabled,
         });
         if (!updated) {
           return reply.code(404).send({ error: "room_not_found" });
@@ -438,6 +441,9 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           options.roomRepository.countPresent(roomId),
         ]);
         options.presencePublisher?.publishPresence(roomId, quorumStatus(updated, presentCount));
+        if (body.reactionsEnabled !== undefined) {
+          options.presencePublisher?.publishReactionsConfig?.(roomId, updated.reactionsEnabled);
+        }
 
         return { room: toRoomResponse(updated, { includeInvite: true, candidates }) };
       } catch (error) {
@@ -694,6 +700,7 @@ function toRoomResponse(
     quorumUnit: room.quorumUnit,
     eligibleCount: room.eligibleCount,
     status: room.status,
+    reactionsEnabled: room.reactionsEnabled,
     ...(candidates.length > 0
       ? {
           candidates: candidates.map((candidate) => ({

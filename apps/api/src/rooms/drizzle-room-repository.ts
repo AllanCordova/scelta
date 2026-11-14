@@ -14,6 +14,7 @@ import {
 import {
   canCastBallot,
   isMemberEligibleVoter,
+  isReactionRateLimited,
   normalizeAccessCode,
   ROUND_RESULTS,
   type MemberSocietyFlags,
@@ -23,7 +24,7 @@ import {
   type RoundResult,
   type RulesPreset,
 } from "@scelta/domain";
-import { and, asc, count, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or } from "drizzle-orm";
 import { findChurchByName, getOrCreateChurch, isUniqueViolation } from "../churches/church-store.js";
 import { generateAccessCode } from "./access-code.js";
 import { createBallotToken } from "./ballot-token.js";
@@ -168,6 +169,9 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       }
       if (input.status !== undefined) {
         patch.status = input.status;
+      }
+      if (input.reactionsEnabled !== undefined) {
+        patch.reactionsEnabled = input.reactionsEnabled;
       }
 
       if (Object.keys(patch).length === 0) {
@@ -1096,6 +1100,62 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .orderBy(asc(members.fullName));
       return rows.map(toStoredMember);
     },
+
+    async sendReaction({ roomId, joinKeyHash, emoji, since, maxPerWindow }) {
+      return db.transaction(async (tx) => {
+        const [participant] = await tx
+          .select()
+          .from(participants)
+          .where(and(eq(participants.roomId, roomId), eq(participants.joinKeyHash, joinKeyHash)))
+          .for("update")
+          .limit(1);
+
+        if (!participant || !participant.isPresent) {
+          return { ok: false, reason: "participant_not_in_room" } as const;
+        }
+
+        if (participant.accessCodeId) {
+          const [codeRow] = await tx
+            .select({ revokedAt: roomMemberCodes.revokedAt })
+            .from(roomMemberCodes)
+            .where(eq(roomMemberCodes.id, participant.accessCodeId))
+            .limit(1);
+          if (!codeRow || codeRow.revokedAt !== null) {
+            return { ok: false, reason: "participant_not_in_room" } as const;
+          }
+        }
+
+        const [recent] = await tx
+          .select({ total: count() })
+          .from(reactions)
+          .where(
+            and(
+              eq(reactions.roomId, roomId),
+              eq(reactions.participantId, participant.id),
+              gte(reactions.createdAt, since),
+            ),
+          );
+
+        if (isReactionRateLimited(recent?.total ?? 0, maxPerWindow)) {
+          return { ok: false, reason: "rate_limited" } as const;
+        }
+
+        const [inserted] = await tx
+          .insert(reactions)
+          .values({
+            roomId,
+            participantId: participant.id,
+            emoji,
+          })
+          .returning({ createdAt: reactions.createdAt });
+
+        return {
+          ok: true,
+          emoji,
+          createdAt: inserted?.createdAt ?? new Date(),
+        } as const;
+      });
+    },
   };
 }
 
@@ -1173,6 +1233,7 @@ function toStoredRoom(row: {
   eligibleCount: number;
   inviteToken: string;
   status: string;
+  reactionsEnabled: boolean;
   createdAt: Date;
 }): StoredRoom {
   return {
@@ -1185,6 +1246,7 @@ function toStoredRoom(row: {
     eligibleCount: row.eligibleCount,
     inviteToken: row.inviteToken,
     status: row.status as RoomStatus,
+    reactionsEnabled: row.reactionsEnabled,
     createdAt: row.createdAt,
   };
 }

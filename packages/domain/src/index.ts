@@ -107,3 +107,11 @@ export {
   type OfficeRoundSnapshot,
   type ResolveTargetOfficeResult,
 } from "./offices.js";
+export {
+  ALLOWED_REACTION_EMOJIS,
+  REACTION_RATE_LIMIT_MAX,
+  REACTION_RATE_LIMIT_WINDOW_MS,
+  isReactionEmojiAllowed,
+  isReactionRateLimited,
+  type AllowedReactionEmoji,
+} from "./reactions.js";
