@@ -110,8 +110,17 @@ export type JoinWithCodeResult =
   | { ok: true; participant: JoinedParticipant }
   | { ok: false; reason: "invalid_access_code" | "revoked_access_code" };
 
+export type UpdateRoomInput = {
+  title?: string;
+  quorumValue?: number;
+  quorumUnit?: "absolute" | "percent";
+  eligibleCount?: number;
+  status?: RoomStatus;
+};
+
 export type RoomRepository = {
   createRoom(room: NewRoom): Promise<StoredRoom>;
+  updateRoom(roomId: string, input: UpdateRoomInput): Promise<StoredRoom | null>;
   listRooms(): Promise<StoredRoom[]>;
   findRoomByInviteToken(inviteToken: string): Promise<StoredRoom | null>;
   findRoomById(roomId: string): Promise<StoredRoom | null>;

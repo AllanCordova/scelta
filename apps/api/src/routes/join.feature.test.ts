@@ -275,6 +275,9 @@ describe("join room", () => {
         async findRoomById() {
           return null;
         },
+        async updateRoom() {
+          return null;
+        },
         async deleteRoom() {
           return false;
         },

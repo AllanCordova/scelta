@@ -4,7 +4,9 @@ import { z } from "zod";
 import { apiUrl } from "../api-url";
 import { validateWithZod, type FieldErrors } from "../forms/validation";
 import { startTwoSidedConfettiLoop } from "../shell/confetti";
+import { ShareBoardSheet, ministryLabelForRoomType } from "../admin/ShareBoardPaper";
 import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
+import { PaginationBar, paginateItems } from "../shell/PaginationBar";
 import { BALLOT_WISDOM_VERSE, officeGuidanceForBallot } from "./ballot-guidance";
 import {
   ballotErrorMessage,
@@ -290,6 +292,8 @@ function JoinedRoomView({
   >({});
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>("");
   const [candidateSearch, setCandidateSearch] = useState<string>("");
+  const [candidatePage, setCandidatePage] = useState(1);
+  const [standingsPage, setStandingsPage] = useState(1);
   const [voteError, setVoteError] = useState<string | null>(null);
   const [isVoting, setIsVoting] = useState(false);
   const [isGuidanceExpanded, setIsGuidanceExpanded] = useState(false);
@@ -431,6 +435,9 @@ function JoinedRoomView({
     round?.status === "open"
       ? officeGuidanceForBallot(ballotState?.roomType, round.officeLabel)
       : null;
+  const boardOffices = ballotState?.offices ?? [];
+  const allBoardOfficesElected =
+    boardOffices.length > 0 && boardOffices.every((office) => office.status === "elected");
 
   return (
     <div className="join-page voter-flow">
@@ -461,6 +468,18 @@ function JoinedRoomView({
         </div>
         <span className="voter-secret-badge">Voto Secreto</span>
       </section>
+
+      {allBoardOfficesElected ? (
+        <ShareBoardSheet
+          roomTitle={title}
+          ministryLabel={ministryLabelForRoomType(ballotState?.roomType)}
+          entries={boardOffices.map((office) => ({
+            officeLabel: office.officeLabel,
+            winnerName: office.winnerName ?? "Confirmado",
+            winnerPhotoUrl: office.winnerPhotoUrl ?? null,
+          }))}
+        />
+      ) : null}
 
       {round?.status === "open" && candidates.length > 0 ? (
         <section className="voter-ballot-section" aria-label="Cédula">
@@ -551,7 +570,10 @@ function JoinedRoomView({
                 <input
                   type="search"
                   value={candidateSearch}
-                  onChange={(event) => setCandidateSearch(event.target.value)}
+                  onChange={(event) => {
+                    setCandidateSearch(event.target.value);
+                    setCandidatePage(1);
+                  }}
                   placeholder="Buscar candidato por nome..."
                   aria-label="Buscar candidato por nome"
                 />
@@ -564,7 +586,10 @@ function JoinedRoomView({
                     <button
                       type="button"
                       className="ghost voter-clear-search"
-                      onClick={() => setCandidateSearch("")}
+                      onClick={() => {
+                        setCandidateSearch("");
+                        setCandidatePage(1);
+                      }}
                     >
                       Limpar busca
                     </button>
@@ -599,39 +624,54 @@ function JoinedRoomView({
                   <p className="panel muted">
                     Nenhum candidato encontrado para &ldquo;{candidateSearch}&rdquo;.
                   </p>
-                ) : (
-                  <div className="voter-candidates-grid">
-                    {filteredCandidates.map((candidate) => {
-                      const isSelected = activeSelectedCandidateId === candidate.id;
-                      return (
-                        <button
-                          key={candidate.id}
-                          type="button"
-                          aria-label={candidate.displayName}
-                          className={
-                            isSelected
-                              ? "choice voter-candidate-card selected"
-                              : "choice voter-candidate-card"
-                          }
-                          aria-pressed={isSelected}
-                          onClick={() => setSelectedCandidateId(candidate.id)}
-                        >
-                          <span className="voter-candidate-top">
-                            <span className="voter-candidate-avatar" aria-hidden="true">
-                              {candidate.photoUrl ? (
-                                <img src={candidate.photoUrl} alt="" className="voter-avatar-img" />
-                              ) : (
-                                initialsFromName(candidate.displayName)
-                              )}
-                            </span>
-                            <span className="voter-radio" aria-hidden="true" />
-                          </span>
-                          <span className="voter-candidate-name">{candidate.displayName}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                ) : (() => {
+                  const pagedCandidates = paginateItems(filteredCandidates, candidatePage, 12);
+                  return (
+                    <>
+                      <div className="voter-candidates-grid">
+                        {pagedCandidates.items.map((candidate) => {
+                          const isSelected = activeSelectedCandidateId === candidate.id;
+                          return (
+                            <button
+                              key={candidate.id}
+                              type="button"
+                              aria-label={candidate.displayName}
+                              className={
+                                isSelected
+                                  ? "choice voter-candidate-card selected"
+                                  : "choice voter-candidate-card"
+                              }
+                              aria-pressed={isSelected}
+                              onClick={() => setSelectedCandidateId(candidate.id)}
+                            >
+                              <span className="voter-candidate-top">
+                                <span className="voter-candidate-avatar" aria-hidden="true">
+                                  {candidate.photoUrl ? (
+                                    <img
+                                      src={candidate.photoUrl}
+                                      alt=""
+                                      className="voter-avatar-img"
+                                    />
+                                  ) : (
+                                    initialsFromName(candidate.displayName)
+                                  )}
+                                </span>
+                                <span className="voter-radio" aria-hidden="true" />
+                              </span>
+                              <span className="voter-candidate-name">{candidate.displayName}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <PaginationBar
+                        currentPage={pagedCandidates.currentPage}
+                        totalPages={pagedCandidates.totalPages}
+                        onPageChange={setCandidatePage}
+                        ariaLabel="Paginação de candidatos da cédula"
+                      />
+                    </>
+                  );
+                })()}
               </fieldset>
 
               {voteError ? (
@@ -654,7 +694,7 @@ function JoinedRoomView({
         </section>
       ) : null}
 
-      {round?.status === "closed" && round.tally ? (
+      {!allBoardOfficesElected && round?.status === "closed" && round.tally ? (
         <section className="voter-result-section" aria-label="Resultado do escrutínio">
           <div
             className={
@@ -733,76 +773,91 @@ function JoinedRoomView({
             </div>
           )}
 
-          <div className="panel voter-standings-card">
-            <div className="voter-standings-header">
-              <h3>Apuração dos votos</h3>
-              <span className="muted">
-                {round.officeLabel
-                  ? `${round.officeLabel} • ${round.officeRoundNumber ?? round.number}º escrutínio`
-                  : `${round.number}º escrutínio`}
-              </span>
-            </div>
-            <ul className="voter-standings-list" aria-label="Apuração">
-              {round.tally.standings.map((item) => {
-                const percent =
-                  totalTallyVotes > 0 ? Math.round((item.votes / totalTallyVotes) * 100) : 0;
-                const isWinner =
-                  round.tally?.outcome === "elected" &&
-                  round.tally.winnerName === item.displayName;
-                const matchedCandidate = candidates.find(
-                  (candidate) =>
-                    candidate.id === item.candidateId ||
-                    candidate.displayName === item.displayName,
-                );
-                return (
-                  <li
-                    key={item.candidateId}
-                    className={isWinner ? "voter-standing-item winner" : "voter-standing-item"}
-                  >
-                    <div className="voter-standing-row">
-                      <span className="voter-standing-identity">
-                        <span className="voter-standing-avatar" aria-hidden="true">
-                          {matchedCandidate?.photoUrl ? (
-                            <img src={matchedCandidate.photoUrl} alt="" className="voter-avatar-img" />
-                          ) : (
-                            initialsFromName(item.displayName)
-                          )}
+          {(() => {
+            const pagedStandings = paginateItems(round.tally.standings, standingsPage, 10);
+            return (
+              <div className="panel voter-standings-card">
+                <div className="voter-standings-header">
+                  <h3>Apuração dos votos</h3>
+                  <span className="muted">
+                    {round.officeLabel
+                      ? `${round.officeLabel} • ${round.officeRoundNumber ?? round.number}º escrutínio`
+                      : `${round.number}º escrutínio`}
+                  </span>
+                </div>
+                <ul className="voter-standings-list" aria-label="Apuração">
+                  {pagedStandings.items.map((item) => {
+                    const percent =
+                      totalTallyVotes > 0 ? Math.round((item.votes / totalTallyVotes) * 100) : 0;
+                    const isWinner =
+                      round.tally?.outcome === "elected" &&
+                      round.tally.winnerName === item.displayName;
+                    const matchedCandidate = candidates.find(
+                      (candidate) =>
+                        candidate.id === item.candidateId ||
+                        candidate.displayName === item.displayName,
+                    );
+                    return (
+                      <li
+                        key={item.candidateId}
+                        className={isWinner ? "voter-standing-item winner" : "voter-standing-item"}
+                      >
+                        <div className="voter-standing-row">
+                          <span className="voter-standing-identity">
+                            <span className="voter-standing-avatar" aria-hidden="true">
+                              {matchedCandidate?.photoUrl ? (
+                                <img
+                                  src={matchedCandidate.photoUrl}
+                                  alt=""
+                                  className="voter-avatar-img"
+                                />
+                              ) : (
+                                initialsFromName(item.displayName)
+                              )}
+                            </span>
+                            <span>{voterStandingLabel(item.displayName, item.votes)}</span>
+                          </span>
+                          <span className="muted">{percent}%</span>
+                        </div>
+                        <div className="voter-standing-bar" aria-hidden="true">
+                          <div
+                            className="voter-standing-fill"
+                            style={{ width: `${Math.min(100, percent)}%` }}
+                          />
+                        </div>
+                      </li>
+                    );
+                  })}
+                  {(round.tally.nullVotes ?? 0) > 0 ? (
+                    <li className="voter-standing-item">
+                      <div className="voter-standing-row">
+                        <span>
+                          {voterStandingLabel("Votos Nulos / Em Branco", round.tally.nullVotes ?? 0)}
                         </span>
-                        <span>{voterStandingLabel(item.displayName, item.votes)}</span>
-                      </span>
-                      <span className="muted">{percent}%</span>
-                    </div>
-                    <div className="voter-standing-bar" aria-hidden="true">
-                      <div
-                        className="voter-standing-fill"
-                        style={{ width: `${Math.min(100, percent)}%` }}
-                      />
-                    </div>
-                  </li>
-                );
-              })}
-              {(round.tally.nullVotes ?? 0) > 0 ? (
-                <li className="voter-standing-item">
-                  <div className="voter-standing-row">
-                    <span>
-                      {voterStandingLabel("Votos Nulos / Em Branco", round.tally.nullVotes ?? 0)}
-                    </span>
-                    <span className="muted">
-                      {totalTallyVotes > 0
-                        ? `${Math.round(((round.tally.nullVotes ?? 0) / totalTallyVotes) * 100)}%`
-                        : "0%"}
-                    </span>
-                  </div>
-                </li>
-              ) : null}
-            </ul>
-          </div>
+                        <span className="muted">
+                          {totalTallyVotes > 0
+                            ? `${Math.round(((round.tally.nullVotes ?? 0) / totalTallyVotes) * 100)}%`
+                            : "0%"}
+                        </span>
+                      </div>
+                    </li>
+                  ) : null}
+                </ul>
+                <PaginationBar
+                  currentPage={pagedStandings.currentPage}
+                  totalPages={pagedStandings.totalPages}
+                  onPageChange={setStandingsPage}
+                  ariaLabel="Paginação de apuração dos votos"
+                />
+              </div>
+            );
+          })()}
         </section>
       ) : null}
-      {ballotState?.offices && ballotState.offices.length > 0 ? (
+      {boardOffices.length > 0 && !allBoardOfficesElected ? (
         <section className="panel" aria-label="Cargos da diretoria">
           <h2>Cargos da Diretoria</h2>
-          <OfficeProgressGrid offices={ballotState.offices} />
+          <OfficeProgressGrid offices={boardOffices} />
         </section>
       ) : null}
     </div>

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { apiUrl } from "../api-url";
 import { validateWithZod, type FieldErrors } from "../forms/validation";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
+import { EditRoomModal } from "./EditRoomModal";
 import {
   CLOSE_ROUND_LABEL,
   FAILED_QUORUM_MESSAGE,
@@ -32,6 +33,7 @@ import {
   listRooms,
   openRound,
   restartRound,
+  updateRoom,
 } from "./rooms-api";
 import type { QuorumPresence } from "./presence-event";
 import type {
@@ -65,6 +67,8 @@ export function AdminRooms() {
   const [roundError, setRoundError] = useState<{ roomId: string; message: string } | null>(null);
   const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
   const [pendingDeleteRoom, setPendingDeleteRoom] = useState<RoomSummary | null>(null);
+  const [pendingCloseRoom, setPendingCloseRoom] = useState<RoomSummary | null>(null);
+  const [editingRoom, setEditingRoom] = useState<RoomSummary | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [qr, setQr] = useState<{ link: string; dataUrl: string } | null>(null);
@@ -511,12 +515,63 @@ export function AdminRooms() {
                 onClose={(roundId) => void handleCloseRound(room.id, roundId)}
                 onRestart={(roundId) => void handleRestartRound(room.id, roundId)}
                 onShowQr={() => handleShowRoomQr(room)}
+                onEdit={() => setEditingRoom(room)}
+                onCloseRoom={() => setPendingCloseRoom(room)}
                 onDelete={() => setPendingDeleteRoom(room)}
               />
             ))}
           </ul>
         )}
       </section>
+
+      <EditRoomModal
+        apiBase={apiBase}
+        room={editingRoom}
+        onClose={() => setEditingRoom(null)}
+        onSaved={(updated) => {
+          setRooms((current) =>
+            current.map((item) => (item.id === updated.id ? { ...item, ...updated } : item)),
+          );
+          setListVersion((current) => current + 1);
+        }}
+      />
+
+      <ConfirmDialog
+        open={pendingCloseRoom !== null}
+        title="Fechar sala"
+        description={
+          pendingCloseRoom
+            ? `Deseja fechar a sala "${pendingCloseRoom.title}" e marcá-la como Completa para histórico?`
+            : ""
+        }
+        confirmLabel="Fechar sala"
+        tone="default"
+        busy={Boolean(pendingCloseRoom && busyRoomId === pendingCloseRoom.id)}
+        onCancel={() => setPendingCloseRoom(null)}
+        onConfirm={() => {
+          const target = pendingCloseRoom;
+          setPendingCloseRoom(null);
+          if (target) {
+            setBusyRoomId(target.id);
+            void updateRoom(apiBase, target.id, { status: "closed" })
+              .then((updated) => {
+                setRooms((current) =>
+                  current.map((item) =>
+                    item.id === updated.id ? { ...item, ...updated } : item,
+                  ),
+                );
+                setListVersion((current) => current + 1);
+                toast.success("Sala marcada como completa.");
+              })
+              .catch((error: unknown) => {
+                setRoundError({ roomId: target.id, message: messageFromRoundError(error) });
+              })
+              .finally(() => {
+                setBusyRoomId(null);
+              });
+          }
+        }}
+      />
 
       <ConfirmDialog
         open={pendingDeleteRoom !== null}
@@ -551,6 +606,8 @@ function RoomRow({
   onClose,
   onRestart,
   onShowQr,
+  onEdit,
+  onCloseRoom,
   onDelete,
 }: {
   room: RoomSummary;
@@ -562,6 +619,8 @@ function RoomRow({
   onClose: (roundId: string) => void;
   onRestart: (roundId: string) => void;
   onShowQr: () => void;
+  onEdit: () => void;
+  onCloseRoom: () => void;
   onDelete: () => void;
 }) {
   const [isCopied, setIsCopied] = useState(false);
@@ -721,6 +780,24 @@ function RoomRow({
                 {isCopied ? "Link copiado" : "Copiar link"}
               </button>
             </>
+          ) : null}
+          <button
+            type="button"
+            className="ghost round-action"
+            disabled={isBusy}
+            onClick={onEdit}
+          >
+            Editar
+          </button>
+          {room.status !== "closed" && room.status !== "cancelled" ? (
+            <button
+              type="button"
+              className="ghost round-action"
+              disabled={isBusy}
+              onClick={onCloseRoom}
+            >
+              Fechar sala
+            </button>
           ) : null}
           <button
             type="button"

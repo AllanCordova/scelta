@@ -13,14 +13,80 @@ export type ShareBoardEntry = {
   winnerPhotoUrl?: string | null;
 };
 
-type ShareBoardPaperProps = {
-  open: boolean;
+type ShareBoardSheetProps = {
   roomTitle: string;
   ministryLabel: string;
-  sessionDateLabel: string;
+  sessionDateLabel?: string;
   entries: readonly ShareBoardEntry[];
+};
+
+type ShareBoardPaperProps = ShareBoardSheetProps & {
+  open: boolean;
   onClose: () => void;
 };
+
+const ROOM_TYPE_MINISTRY_LABELS: Record<string, string> = {
+  pastor: "Pastor",
+  elder: "Presbítero",
+  deacon: "Diácono",
+  session_board: "Mesa do Conselho",
+  upa_board: "Diretoria UPA",
+  ump_board: "Diretoria UMP",
+  custom: "Sessão Geral",
+};
+
+/**
+ * Maps a roomType key to its human-readable ministry/office label.
+ */
+export function ministryLabelForRoomType(roomType?: string): string {
+  return (roomType && ROOM_TYPE_MINISTRY_LABELS[roomType]) || "Diretoria";
+}
+
+/**
+ * Renders the paper sheet showing the ministry, all elected officers
+ * (with photo or initials fallback), and the closing Bible verse.
+ */
+export function ShareBoardSheet({
+  roomTitle,
+  ministryLabel,
+  sessionDateLabel,
+  entries,
+}: ShareBoardSheetProps) {
+  return (
+    <article className="share-paper-sheet" aria-label={`Nova Diretoria Eleita — ${roomTitle}`}>
+      <header className="share-paper-header">
+        <span className="share-paper-ministry">{ministryLabel}</span>
+        <h2 className="share-paper-title">{roomTitle}</h2>
+        <p className="share-paper-subtitle">
+          {sessionDateLabel ? `Nova Diretoria Eleita • ${sessionDateLabel}` : "Nova Diretoria Eleita"}
+        </p>
+      </header>
+
+      <ol className="share-paper-members">
+        {entries.map((entry) => (
+          <li key={`${entry.officeLabel}-${entry.winnerName}`} className="share-paper-member">
+            <span className="share-paper-office">{entry.officeLabel}</span>
+            <div className="share-paper-avatar" aria-hidden="true">
+              {entry.winnerPhotoUrl ? (
+                <img src={entry.winnerPhotoUrl} alt="" className="voter-avatar-img" />
+              ) : (
+                initialsFromName(entry.winnerName)
+              )}
+            </div>
+            <strong className="share-paper-name">{entry.winnerName}</strong>
+          </li>
+        ))}
+      </ol>
+
+      <footer className="share-paper-footer">
+        <blockquote className="share-paper-verse">
+          “{SHARE_BOARD_VERSE.text}”{" "}
+          <cite className="share-paper-verse-ref">— {SHARE_BOARD_VERSE.reference}</cite>
+        </blockquote>
+      </footer>
+    </article>
+  );
+}
 
 /**
  * Formats a plain-text summary of the elected board for clipboard or native sharing.
@@ -118,36 +184,12 @@ export function ShareBoardPaper({
         </div>
       </div>
 
-      <article className="share-paper-sheet">
-        <header className="share-paper-header">
-          <span className="share-paper-ministry">{ministryLabel}</span>
-          <h2 className="share-paper-title">{roomTitle}</h2>
-          <p className="share-paper-subtitle">Nova Diretoria Eleita • {sessionDateLabel}</p>
-        </header>
-
-        <ol className="share-paper-members">
-          {entries.map((entry) => (
-            <li key={`${entry.officeLabel}-${entry.winnerName}`} className="share-paper-member">
-              <span className="share-paper-office">{entry.officeLabel}</span>
-              <div className="share-paper-avatar" aria-hidden="true">
-                {entry.winnerPhotoUrl ? (
-                  <img src={entry.winnerPhotoUrl} alt="" className="voter-avatar-img" />
-                ) : (
-                  initialsFromName(entry.winnerName)
-                )}
-              </div>
-              <strong className="share-paper-name">{entry.winnerName}</strong>
-            </li>
-          ))}
-        </ol>
-
-        <footer className="share-paper-footer">
-          <blockquote className="share-paper-verse">
-            “{SHARE_BOARD_VERSE.text}”{" "}
-            <cite className="share-paper-verse-ref">— {SHARE_BOARD_VERSE.reference}</cite>
-          </blockquote>
-        </footer>
-      </article>
+      <ShareBoardSheet
+        roomTitle={roomTitle}
+        ministryLabel={ministryLabel}
+        sessionDateLabel={sessionDateLabel}
+        entries={entries}
+      />
     </div>
   );
 }

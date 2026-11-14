@@ -9,6 +9,8 @@ import { createJoinKey } from "../join/join-identity";
 import { startTwoSidedConfettiLoop } from "../shell/confetti";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
+import { PaginationBar, paginateItems } from "../shell/PaginationBar";
+import { EditRoomModal } from "./EditRoomModal";
 import { ShareBoardPaper, type ShareBoardEntry } from "./ShareBoardPaper";
 import {
   CLOSE_ROUND_LABEL,
@@ -37,6 +39,7 @@ import {
   openRound,
   removeParticipants,
   restartRound,
+  updateRoom,
 } from "./rooms-api";
 import { useRoomDetail } from "./use-room-detail";
 
@@ -61,11 +64,13 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   const [simProgress, setSimProgress] = useState<string | null>(null);
   const simulatedVotersRef = useRef<SimulatedVoter[]>([]);
   const [selectedOffice, setSelectedOffice] = useState<string>("");
+  const [candidatePage, setCandidatePage] = useState(1);
   const [receiptPage, setReceiptPage] = useState(1);
   const [dismissedWinnerRoundId, setDismissedWinnerRoundId] = useState<string | null>(null);
   const [isSharePaperOpen, setIsSharePaperOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<
-    "delete-room" | "remove-participants" | null
+    "delete-room" | "close-room" | "remove-participants" | null
   >(null);
 
   const { room, loadError, lastSyncedAt } = useRoomDetail(roomId, refreshTick);
@@ -190,6 +195,25 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       await declineRound(apiBase, room.id, roundId);
       setRefreshTick((current) => current + 1);
       toast.info("Cargo declinado.");
+    } catch (error) {
+      const msg = messageFromRoundError(error);
+      setActionError(msg);
+      toast.error(msg);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleCloseRoomStatus() {
+    if (!room) {
+      return;
+    }
+    setActionError(null);
+    setIsBusy(true);
+    try {
+      await updateRoom(apiBase, room.id, { status: "closed" });
+      setRefreshTick((current) => current + 1);
+      toast.success("Sala marcada como completa.");
     } catch (error) {
       const msg = messageFromRoundError(error);
       setActionError(msg);
@@ -508,6 +532,26 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
 
             <button
               type="button"
+              className="ghost round-action"
+              disabled={isBusy}
+              onClick={() => setIsEditModalOpen(true)}
+            >
+              Editar
+            </button>
+
+            {room.status !== "closed" && room.status !== "cancelled" ? (
+              <button
+                type="button"
+                className="ghost round-action"
+                disabled={isBusy}
+                onClick={() => setPendingConfirm("close-room")}
+              >
+                Fechar sala
+              </button>
+            ) : null}
+
+            <button
+              type="button"
               className="ghost round-action danger-action"
               disabled={isBusy}
               onClick={() => setPendingConfirm("delete-room")}
@@ -820,9 +864,12 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
 
           {candidatesList.length === 0 ? (
             <p className="empty">Nenhum candidato nominal cadastrado nesta sala.</p>
-          ) : (
-            <div className="candidate-cards-list">
-              {candidatesList.map((candidate) => {
+          ) : (() => {
+            const pagedCandidates = paginateItems(candidatesList, candidatePage, 10);
+            return (
+              <>
+                <div className="candidate-cards-list">
+                  {pagedCandidates.items.map((candidate) => {
                 const votes = standingsByCandidate.get(candidate.id) ?? 0;
                 const percent =
                   tally && tally.totalVotes > 0
@@ -890,8 +937,16 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                   </div>
                 );
               })}
-            </div>
-          )}
+                </div>
+                <PaginationBar
+                  currentPage={pagedCandidates.currentPage}
+                  totalPages={pagedCandidates.totalPages}
+                  onPageChange={setCandidatePage}
+                  ariaLabel="Paginação de apuração de candidatos"
+                />
+              </>
+            );
+          })()}
 
           {tally && (tally.nullVotes ?? 0) > 0 ? (
             <p className="muted" role="status">
@@ -1024,10 +1079,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
 
           {(() => {
             const pageSize = 5;
-            const totalPages = Math.max(1, Math.ceil(room.receiptTimestamps.length / pageSize));
-            const currentPage = Math.min(receiptPage, totalPages);
-            const startIndex = (currentPage - 1) * pageSize;
-            const visibleReceipts = room.receiptTimestamps.slice(startIndex, startIndex + pageSize);
+            const pagedReceipts = paginateItems(room.receiptTimestamps, receiptPage, pageSize);
+            const startIndex = (pagedReceipts.currentPage - 1) * pageSize;
 
             return (
               <section className="panel audit-feed-card" aria-labelledby="presence-flow-heading">
@@ -1043,32 +1096,15 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                   <p className="audit-receipt-meta">Sessões autenticadas ainda não enviaram cédula</p>
                 </div>
 
-                {totalPages > 1 ? (
-                  <div className="pagination-bar">
-                    <button
-                      type="button"
-                      className="ghost round-action"
-                      disabled={currentPage <= 1}
-                      onClick={() => setReceiptPage(Math.max(1, currentPage - 1))}
-                    >
-                      Anterior
-                    </button>
-                    <span className="muted">
-                      Página {currentPage} de {totalPages}
-                    </span>
-                    <button
-                      type="button"
-                      className="ghost round-action"
-                      disabled={currentPage >= totalPages}
-                      onClick={() => setReceiptPage(Math.min(totalPages, currentPage + 1))}
-                    >
-                      Próxima
-                    </button>
-                  </div>
-                ) : null}
+                <PaginationBar
+                  currentPage={pagedReceipts.currentPage}
+                  totalPages={pagedReceipts.totalPages}
+                  onPageChange={setReceiptPage}
+                  ariaLabel="Paginação do fluxo de presença"
+                />
 
                 <div className="audit-feed-list">
-                  {visibleReceipts.map((timestamp, index) => (
+                  {pagedReceipts.items.map((timestamp, index) => (
                     <div key={`${timestamp}-${startIndex + index}`} className="audit-receipt-item">
                       <span className="audit-receipt-dot" aria-hidden="true" />
                       <div>
@@ -1104,17 +1140,37 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
         onClose={() => setIsSharePaperOpen(false)}
       />
 
+      <EditRoomModal
+        apiBase={apiBase}
+        room={isEditModalOpen ? room : null}
+        onClose={() => setIsEditModalOpen(false)}
+        onSaved={() => setRefreshTick((current) => current + 1)}
+      />
+
       <ConfirmDialog
         open={pendingConfirm !== null}
         title={
-          pendingConfirm === "delete-room" ? "Excluir sala" : "Remover participantes"
+          pendingConfirm === "delete-room"
+            ? "Excluir sala"
+            : pendingConfirm === "close-room"
+              ? "Fechar sala"
+              : "Remover participantes"
         }
         description={
           pendingConfirm === "delete-room"
             ? `Tem certeza que deseja excluir a sala "${room.title}"? Essa ação não pode ser desfeita.`
-            : "Tem certeza que deseja remover os participantes presentes da sala?"
+            : pendingConfirm === "close-room"
+              ? `Deseja fechar a sala "${room.title}" e marcá-la como Completa para histórico?`
+              : "Tem certeza que deseja remover os participantes presentes da sala?"
         }
-        confirmLabel={pendingConfirm === "delete-room" ? "Excluir" : "Remover participantes"}
+        confirmLabel={
+          pendingConfirm === "delete-room"
+            ? "Excluir"
+            : pendingConfirm === "close-room"
+              ? "Fechar sala"
+              : "Remover participantes"
+        }
+        tone={pendingConfirm === "close-room" ? "default" : "danger"}
         busy={isBusy || isSimulating}
         onCancel={() => setPendingConfirm(null)}
         onConfirm={() => {
@@ -1122,6 +1178,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
           setPendingConfirm(null);
           if (target === "delete-room") {
             void handleDeleteRoom();
+          } else if (target === "close-room") {
+            void handleCloseRoomStatus();
           } else if (target === "remove-participants") {
             void handleSimulateRemove();
           }
