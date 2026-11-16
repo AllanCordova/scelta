@@ -167,8 +167,8 @@ describe("AdminRooms", () => {
 
     const item = await screen.findByRole("listitem");
     expect(item).toHaveTextContent("Assembleia aberta");
-    expect(await within(item).findByText("Votantes presentes")).toBeInTheDocument();
-    expect(within(item).getByText("1", { selector: ".presence-count" })).toBeInTheDocument();
+    expect(await within(item).findByText("1 / 4")).toBeInTheDocument();
+    expect(item).toHaveTextContent("Abaixo do quórum");
     expect(within(item).getByRole("button", { name: "Abrir escrutínio" })).toBeDisabled();
     expect(item).toHaveTextContent("Aberta");
   });
@@ -256,8 +256,8 @@ describe("AdminRooms", () => {
 
     render(<AdminRooms />);
     const item = await screen.findByRole("listitem");
-    expect(await within(item).findByText("Votantes presentes")).toBeInTheDocument();
-    expect(within(item).getByText("4", { selector: ".presence-count" })).toBeInTheDocument();
+    expect(await within(item).findByText("4 / 4")).toBeInTheDocument();
+    expect(item).toHaveTextContent("Quórum atingido");
 
     fireEvent.click(within(item).getByRole("button", { name: "Abrir escrutínio" }));
     expect(await within(item).findByRole("alert")).toHaveTextContent(

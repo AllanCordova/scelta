@@ -45,7 +45,7 @@ test("two voters cast distinct votes, results match, and neither UI exposes who 
     await expect(voterTwo.getByRole("heading", { name: "Você entrou" })).toBeVisible();
 
     const item = page.getByRole("listitem").filter({ hasText: title });
-    await expect(item.locator(".presence-count")).toHaveText("2", { timeout: 10_000 });
+    await expect(item.getByText("2 / 2", { exact: true })).toBeVisible({ timeout: 10_000 });
     await item.getByRole("button", { name: "Abrir escrutínio" }).click();
     await expect(item.getByRole("button", { name: "Encerrar escrutínio" })).toBeVisible();
 

@@ -51,7 +51,7 @@ test("society board election runs 2 inconclusive rounds then narrows 3rd round t
     await expect(voterTwo.getByRole("heading", { name: "Você entrou" })).toBeVisible();
 
     const item = page.getByRole("listitem").filter({ hasText: title });
-    await expect(item.locator(".presence-count")).toHaveText("2", { timeout: 10_000 });
+    await expect(item.getByText("2 / 2", { exact: true })).toBeVisible({ timeout: 10_000 });
     await item.getByRole("link", { name: title }).click();
     await expect(page).toHaveURL(/\/admin\/salas\/[0-9a-f-]{36}$/);
 
