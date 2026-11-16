@@ -73,6 +73,7 @@ const UpdateRoomBody = Type.Object(
       Type.Union([Type.Literal("draft"), Type.Literal("open"), Type.Literal("closed")]),
     ),
     reactionsEnabled: Type.Optional(Type.Boolean()),
+    chatMuted: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -84,6 +85,7 @@ type UpdateRoomBodyType = {
   eligibleCount?: number;
   status?: "draft" | "open" | "closed";
   reactionsEnabled?: boolean;
+  chatMuted?: boolean;
 };
 
 const RoomIdParams = Type.Object({
@@ -475,6 +477,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           eligibleCount: body.eligibleCount,
           status: body.status,
           reactionsEnabled: body.reactionsEnabled,
+          chatMuted: body.chatMuted,
         });
         if (!updated) {
           return reply.code(404).send({ error: "room_not_found" });
@@ -487,6 +490,11 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         options.presencePublisher?.publishPresence(roomId, quorumStatus(updated, presentCount));
         if (body.reactionsEnabled !== undefined) {
           options.presencePublisher?.publishReactionsConfig?.(roomId, updated.reactionsEnabled);
+        }
+        if (body.chatMuted !== undefined) {
+          options.presencePublisher?.publishChatConfig?.(roomId, {
+            chatMuted: updated.chatMuted ?? false,
+          });
         }
 
         return { room: toRoomResponse(updated, { includeInvite: true, candidates }) };
@@ -807,6 +815,38 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
       }
     },
   );
+
+  app.delete(
+    "/v1/admin/rooms/:roomId/access-codes/:codeId",
+    { schema: { params: CodeIdParams } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId, codeId } = request.params as { roomId: string; codeId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        const deleted = await options.roomRepository.deleteAccessCode(roomId, codeId);
+        if (!deleted) {
+          return reply.code(404).send({ error: "access_code_not_found" });
+        }
+        const presentCount = await options.roomRepository.countPresent(roomId);
+        const presence = quorumStatus(room, presentCount);
+        options.presencePublisher?.publishPresence(roomId, presence);
+        return { deleted: true, presence };
+      } catch (error) {
+        request.log.error({ err: error, roomId, codeId }, "Failed to delete access code");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
 };
 
 function toAccessCodeResponse(row: {
@@ -849,6 +889,7 @@ function toRoomResponse(
     officeBanners: room.officeBanners ?? {},
     status: room.status,
     reactionsEnabled: room.reactionsEnabled,
+    chatMuted: room.chatMuted ?? false,
     ...(candidates.length > 0
       ? {
           candidates: candidates.map((candidate) => ({

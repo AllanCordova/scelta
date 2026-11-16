@@ -334,6 +334,9 @@ describe("admin rooms", () => {
         async revokeAllAccessCodes() {
           return 0;
         },
+        async deleteAccessCode() {
+          return false;
+        },
         async removePresentParticipants() {
           return 0;
         },
@@ -774,6 +777,75 @@ describe("admin rooms", () => {
     expect(response.statusCode).toBe(201);
     return response.json().room as { inviteToken: string };
   }
+
+  it("allows an admin to permanently delete an access code even after a participant joined with it", async () => {
+    const app = await buildApp({ userRepository, roomRepository: repository });
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Eleição Deletar Código",
+        roomType: "elder",
+        rulesPreset: "ipb_local_officers",
+        quorumValue: 1,
+        quorumUnit: "absolute",
+        status: "open",
+        candidates: ["Paulo", "Silas"],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const room = created.json().room as { id: string; inviteToken: string };
+
+    const simRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/simulate`,
+      headers: { cookie: adminCookie },
+      payload: { count: 1 },
+    });
+    expect(simRes.statusCode).toBe(200);
+    const simCode = (simRes.json() as { accessCodes: Array<{ id: string; code: string }> }).accessCodes[0]!;
+
+    const joinRes = await app.inject({
+      method: "POST",
+      url: `/v1/join/${room.inviteToken}`,
+      payload: { code: simCode.code, joinKey: "join-key-delete-0001" },
+    });
+    expect(joinRes.statusCode).toBe(200);
+
+    const forbidden = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/rooms/${room.id}/access-codes/${simCode.id}`,
+      headers: { cookie: memberCookie },
+    });
+    expect(forbidden.statusCode).toBe(403);
+
+    const deleted = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/rooms/${room.id}/access-codes/${simCode.id}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(deleted.statusCode).toBe(200);
+    expect(deleted.json()).toEqual({
+      deleted: true,
+      presence: {
+        presentCount: 0,
+        eligibleCount: 0,
+        requiredCount: 1,
+        quorumMet: false,
+      },
+    });
+
+    const listAfter = await app.inject({
+      method: "GET",
+      url: `/v1/admin/rooms/${room.id}/access-codes`,
+      headers: { cookie: adminCookie },
+    });
+    expect(listAfter.statusCode).toBe(200);
+    expect(listAfter.json().accessCodes).toEqual([]);
+
+    await app.close();
+  });
 });
 
 async function loginCookie(

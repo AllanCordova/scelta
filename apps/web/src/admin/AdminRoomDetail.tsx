@@ -11,6 +11,7 @@ import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { ImageDropzone } from "../shell/ImageDropzone";
 import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
 import { PaginationBar, paginateItems } from "../shell/PaginationBar";
+import { RoomChatPanel } from "../shell/RoomChatPanel";
 import { EditRoomModal } from "./EditRoomModal";
 import { ShareBoardPaper, type ShareBoardEntry } from "./ShareBoardPaper";
 import {
@@ -41,7 +42,6 @@ import {
   removeParticipants,
   restartRound,
   setRoomOfficeBanner,
-  rotateRoomInvite,
   updateRoom,
 } from "./rooms-api";
 import { useRoomDetail } from "./use-room-detail";
@@ -120,45 +120,6 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       cancelled = true;
     };
   }, [isQrVisible, fullInviteUrl]);
-
-  async function handleRotateInvite() {
-    if (!room) {
-      return;
-    }
-    setIsBusy(true);
-    setActionError(null);
-    try {
-      await rotateRoomInvite(apiBase, room.id);
-      toast.success("Link de convite rotacionado.");
-      setRefreshTick((tick) => tick + 1);
-    } catch (error) {
-      const msg = messageFromRoundError(error);
-      setActionError(msg);
-      toast.error(msg);
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  async function handleToggleReactions() {
-    if (!room) {
-      return;
-    }
-    setIsBusy(true);
-    setActionError(null);
-    try {
-      const nextEnabled = room.reactionsEnabled === false;
-      await updateRoom(apiBase, room.id, { reactionsEnabled: nextEnabled });
-      toast.success(nextEnabled ? "Reações ativadas." : "Reações desativadas.");
-      setRefreshTick((tick) => tick + 1);
-    } catch (error) {
-      const msg = messageFromRoundError(error);
-      setActionError(msg);
-      toast.error(msg);
-    } finally {
-      setIsBusy(false);
-    }
-  }
 
   async function handleCopyInvite() {
     if (!fullInviteUrl) {
@@ -603,25 +564,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                 >
                   QR Code
                 </button>
-                <button
-                  type="button"
-                  className="ghost round-action"
-                  disabled={isBusy}
-                  onClick={() => void handleRotateInvite()}
-                >
-                  Rotacionar convite
-                </button>
               </>
             ) : null}
-
-            <button
-              type="button"
-              className="ghost round-action"
-              disabled={isBusy}
-              onClick={() => void handleToggleReactions()}
-            >
-              {room.reactionsEnabled !== false ? "Reações: Ativadas" : "Reações: Desativadas"}
-            </button>
 
             <button
               type="button"
@@ -1362,6 +1306,12 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             void handleSimulateRemove();
           }
         }}
+      />
+      <RoomChatPanel
+        mode="admin"
+        roomId={room.id}
+        initialChatMuted={room.chatMuted}
+        onRoomUpdated={() => setRefreshTick((tick) => tick + 1)}
       />
     </div>
   );

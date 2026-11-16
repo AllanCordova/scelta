@@ -300,6 +300,9 @@ describe("join room", () => {
         async revokeAllAccessCodes() {
           return 0;
         },
+        async deleteAccessCode() {
+          return false;
+        },
         async removePresentParticipants() {
           return 0;
         },

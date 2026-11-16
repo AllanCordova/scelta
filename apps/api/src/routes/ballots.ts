@@ -105,6 +105,7 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           officeBanners,
           activeBannerUrl,
           reactionsEnabled: room.reactionsEnabled,
+          chatMuted: room.chatMuted ?? false,
           allowedReactions: ALLOWED_REACTION_EMOJIS,
           candidates: candidates.map((candidate) => ({
             id: candidate.id,

@@ -6,7 +6,7 @@ export function App() {
   return (
     <AuthProvider>
       <Shell />
-      <Toaster position="top-right" richColors closeButton />
+      <Toaster position="top-center" richColors closeButton />
     </AuthProvider>
   );
 }

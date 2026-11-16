@@ -6,10 +6,10 @@ import type { PresencePublisher } from "./realtime.js";
 import type { UserRepository } from "./users/user-repository.js";
 import { authRoutes } from "./routes/auth.js";
 import { ballotRoutes } from "./routes/ballots.js";
+import { chatRoutes } from "./routes/chat.js";
 import { healthRoutes } from "./routes/health.js";
 import { joinRoutes } from "./routes/join.js";
 import { memberRoutes } from "./routes/members.js";
-import { reactionRoutes } from "./routes/reactions.js";
 import { roomRoutes, type RoomRouteOptions } from "./routes/rooms.js";
 import { roundRoutes } from "./routes/rounds.js";
 import { rulesRoutes } from "./routes/rules.js";
@@ -63,8 +63,9 @@ export async function buildApp(dependencies: AppDependencies = {}) {
     roomRepository: dependencies.roomRepository,
     presencePublisher: dependencies.presencePublisher,
   });
-  await app.register(reactionRoutes, {
+  await app.register(chatRoutes, {
     roomRepository: dependencies.roomRepository,
+    userRepository: dependencies.userRepository,
     presencePublisher: dependencies.presencePublisher,
   });
 

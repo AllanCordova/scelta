@@ -100,6 +100,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS rooms_invite_token_uidx ON rooms (invite_token
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS eligible_count integer NOT NULL DEFAULT 0;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS office_banners jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reactions_enabled boolean NOT NULL DEFAULT true;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS chat_muted boolean NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS room_member_codes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -137,6 +138,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS participants_room_access_code_uidx
 
 -- Rooms created before join keys already have the table. Backfill those rows, then enforce the column.
 ALTER TABLE participants ADD COLUMN IF NOT EXISTS join_key_hash text;
+ALTER TABLE participants ADD COLUMN IF NOT EXISTS chat_muted boolean NOT NULL DEFAULT false;
 UPDATE participants SET join_key_hash = id::text WHERE join_key_hash IS NULL;
 ALTER TABLE participants ALTER COLUMN join_key_hash SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS participants_room_join_key_uidx ON participants (room_id, join_key_hash);
@@ -218,4 +220,20 @@ CREATE TABLE IF NOT EXISTS audit_events (
   payload jsonb DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS room_chat_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id uuid NOT NULL REFERENCES rooms (id),
+  participant_id uuid REFERENCES participants (id),
+  sender_name text NOT NULL,
+  sender_role text NOT NULL,
+  content text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS room_chat_messages_room_created_idx
+  ON room_chat_messages (room_id, created_at);
+
+CREATE INDEX IF NOT EXISTS room_chat_messages_room_participant_created_idx
+  ON room_chat_messages (room_id, participant_id, created_at);
 `;

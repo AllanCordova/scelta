@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
+import { toast } from "sonner";
 import { apiUrl } from "../api-url";
 import { AccessCodesPanel } from "./AccessCodesPanel";
 import { inviteUrl } from "./room-draft";
-import { listRooms } from "./rooms-api";
+import { listRooms, rotateRoomInvite } from "./rooms-api";
 import type { MemberAccessCodeItem, RoomSummary } from "./types";
 
 const apiBase = apiUrl("");
@@ -12,6 +13,7 @@ export function AdminAccessCodes() {
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [selectedRoomId, setSelectedRoomId] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
+  const [isRotating, setIsRotating] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printCards, setPrintCards] = useState<
     Array<{ id: string; displayName: string; code: string; qrUrl: string; loginUrl: string }> | null
@@ -49,6 +51,25 @@ export function AdminAccessCodes() {
   const fullInviteUrl = selectedRoom
     ? inviteUrl(window.location.origin, selectedRoom.invitePath ?? `/join/${selectedRoom.inviteToken}`)
     : null;
+
+  async function handleRotateInvite() {
+    if (!selectedRoom || isRotating) {
+      return;
+    }
+    setIsRotating(true);
+    try {
+      const updated = await rotateRoomInvite(apiBase, selectedRoom.id);
+      setRooms((current) =>
+        current.map((room) => (room.id === updated.id ? updated : room)),
+      );
+      setPrintCards(null);
+      toast.success("Link de convite rotacionado.");
+    } catch {
+      toast.error("Não foi possível rotacionar o convite da sala.");
+    } finally {
+      setIsRotating(false);
+    }
+  }
 
   async function handlePreparePrintCards(activeCodesList: MemberAccessCodeItem[]) {
     if (!fullInviteUrl) {
@@ -108,21 +129,33 @@ export function AdminAccessCodes() {
         <>
           <section className="panel">
             <label htmlFor="access-codes-room-select">Sala</label>
-            <select
-              id="access-codes-room-select"
-              value={selectedRoomId}
-              onChange={(event) => {
-                setSelectedRoomId(event.target.value);
-                setPrintCards(null);
-                setPrintError(null);
-              }}
-            >
-              {rooms.map((room) => (
-                <option key={room.id} value={room.id}>
-                  {room.title}
-                </option>
-              ))}
-            </select>
+            <div className="token-input-row">
+              <select
+                id="access-codes-room-select"
+                value={selectedRoomId}
+                onChange={(event) => {
+                  setSelectedRoomId(event.target.value);
+                  setPrintCards(null);
+                  setPrintError(null);
+                }}
+              >
+                {rooms.map((room) => (
+                  <option key={room.id} value={room.id}>
+                    {room.title}
+                  </option>
+                ))}
+              </select>
+              {selectedRoom ? (
+                <button
+                  type="button"
+                  className="ghost round-action"
+                  disabled={isRotating}
+                  onClick={() => void handleRotateInvite()}
+                >
+                  Rotacionar convite
+                </button>
+              ) : null}
+            </div>
           </section>
 
           {printError ? (

@@ -5,6 +5,7 @@ import {
   members,
   participants,
   reactions,
+  roomChatMessages,
   roomMemberCodes,
   rooms,
   rounds,
@@ -13,6 +14,7 @@ import {
 } from "@scelta/db";
 import {
   canCastBallot,
+  isChatRateLimited,
   isMemberEligibleVoter,
   isReactionRateLimited,
   normalizeAccessCode,
@@ -185,6 +187,9 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       if (input.reactionsEnabled !== undefined) {
         patch.reactionsEnabled = input.reactionsEnabled;
       }
+      if (input.chatMuted !== undefined) {
+        patch.chatMuted = input.chatMuted;
+      }
 
       if (Object.keys(patch).length === 0) {
         return this.findRoomById(roomId);
@@ -327,6 +332,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           await tx.delete(voteReceipts).where(inArray(voteReceipts.roundId, roundIds));
         }
 
+        await tx.delete(roomChatMessages).where(eq(roomChatMessages.roomId, roomId));
         await tx.delete(reactions).where(eq(reactions.roomId, roomId));
         await tx.delete(auditEvents).where(eq(auditEvents.roomId, roomId));
         await tx.delete(rounds).where(eq(rounds.roomId, roomId));
@@ -581,6 +587,20 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             .where(eq(participants.roomId, roomId));
         }
         return updated.length;
+      });
+    },
+
+    async deleteAccessCode(roomId, codeId) {
+      return db.transaction(async (tx) => {
+        await tx
+          .update(participants)
+          .set({ accessCodeId: null, isPresent: false })
+          .where(and(eq(participants.roomId, roomId), eq(participants.accessCodeId, codeId)));
+        const deleted = await tx
+          .delete(roomMemberCodes)
+          .where(and(eq(roomMemberCodes.id, codeId), eq(roomMemberCodes.roomId, roomId)))
+          .returning({ id: roomMemberCodes.id });
+        return deleted.length > 0;
       });
     },
 
@@ -1328,6 +1348,199 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         } as const;
       });
     },
+
+    async listChatMessages(roomId, limit = 100) {
+      const rows = await db
+        .select()
+        .from(roomChatMessages)
+        .where(eq(roomChatMessages.roomId, roomId))
+        .orderBy(desc(roomChatMessages.createdAt))
+        .limit(limit);
+      return rows.reverse().map((row) => ({
+        id: row.id,
+        roomId: row.roomId,
+        participantId: row.participantId,
+        senderName: row.senderName,
+        senderRole: row.senderRole === "admin" ? ("admin" as const) : ("voter" as const),
+        content: row.content,
+        createdAt: row.createdAt,
+      }));
+    },
+
+    async sendVoterChatMessage({ roomId, joinKeyHash, content, since, maxPerWindow }) {
+      return db.transaction(async (tx) => {
+        const [roomRow] = await tx
+          .select({ chatMuted: rooms.chatMuted })
+          .from(rooms)
+          .where(eq(rooms.id, roomId))
+          .limit(1);
+        if (!roomRow || roomRow.chatMuted) {
+          return { ok: false, reason: "room_chat_muted" } as const;
+        }
+
+        const [participant] = await tx
+          .select()
+          .from(participants)
+          .where(and(eq(participants.roomId, roomId), eq(participants.joinKeyHash, joinKeyHash)))
+          .for("update")
+          .limit(1);
+
+        if (!participant || !participant.isPresent) {
+          return { ok: false, reason: "participant_not_in_room" } as const;
+        }
+        if (participant.chatMuted) {
+          return { ok: false, reason: "participant_muted" } as const;
+        }
+
+        if (participant.accessCodeId) {
+          const [codeRow] = await tx
+            .select({ revokedAt: roomMemberCodes.revokedAt })
+            .from(roomMemberCodes)
+            .where(eq(roomMemberCodes.id, participant.accessCodeId))
+            .limit(1);
+          if (!codeRow || codeRow.revokedAt !== null) {
+            return { ok: false, reason: "participant_not_in_room" } as const;
+          }
+        }
+
+        const [recent] = await tx
+          .select({ total: count() })
+          .from(roomChatMessages)
+          .where(
+            and(
+              eq(roomChatMessages.roomId, roomId),
+              eq(roomChatMessages.participantId, participant.id),
+              gte(roomChatMessages.createdAt, since),
+            ),
+          );
+
+        if (isChatRateLimited(recent?.total ?? 0, maxPerWindow)) {
+          return { ok: false, reason: "rate_limited" } as const;
+        }
+
+        const [inserted] = await tx
+          .insert(roomChatMessages)
+          .values({
+            roomId,
+            participantId: participant.id,
+            senderName: participant.displayName,
+            senderRole: "voter",
+            content,
+          })
+          .returning();
+
+        return {
+          ok: true,
+          message: {
+            id: inserted!.id,
+            roomId: inserted!.roomId,
+            participantId: inserted!.participantId,
+            senderName: inserted!.senderName,
+            senderRole: "voter" as const,
+            content: inserted!.content,
+            createdAt: inserted!.createdAt,
+          },
+        } as const;
+      });
+    },
+
+    async sendAdminChatMessage({ roomId, senderName, content }) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return null;
+      }
+      const [roomRow] = await db
+        .select({ id: rooms.id })
+        .from(rooms)
+        .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+        .limit(1);
+      if (!roomRow) {
+        return null;
+      }
+      const [inserted] = await db
+        .insert(roomChatMessages)
+        .values({
+          roomId,
+          participantId: null,
+          senderName,
+          senderRole: "admin",
+          content,
+        })
+        .returning();
+      return inserted
+        ? {
+            id: inserted.id,
+            roomId: inserted.roomId,
+            participantId: null,
+            senderName: inserted.senderName,
+            senderRole: "admin" as const,
+            content: inserted.content,
+            createdAt: inserted.createdAt,
+          }
+        : null;
+    },
+
+    async listParticipants(roomId) {
+      const rows = await db
+        .select({
+          id: participants.id,
+          displayName: participants.displayName,
+          isPresent: participants.isPresent,
+          chatMuted: participants.chatMuted,
+          joinedAt: participants.joinedAt,
+        })
+        .from(participants)
+        .where(eq(participants.roomId, roomId))
+        .orderBy(asc(participants.joinedAt));
+      return rows;
+    },
+
+    async setParticipantChatMuted(roomId, participantId, chatMuted) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return null;
+      }
+      const [roomRow] = await db
+        .select({ id: rooms.id })
+        .from(rooms)
+        .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+        .limit(1);
+      if (!roomRow) {
+        return null;
+      }
+      const [updated] = await db
+        .update(participants)
+        .set({ chatMuted })
+        .where(and(eq(participants.id, participantId), eq(participants.roomId, roomId)))
+        .returning({
+          id: participants.id,
+          displayName: participants.displayName,
+          isPresent: participants.isPresent,
+          chatMuted: participants.chatMuted,
+          joinedAt: participants.joinedAt,
+        });
+      return updated ?? null;
+    },
+
+    async findParticipantChatStatus(roomId, joinKeyHash) {
+      const [row] = await db
+        .select({
+          id: participants.id,
+          chatMuted: participants.chatMuted,
+        })
+        .from(participants)
+        .where(and(eq(participants.roomId, roomId), eq(participants.joinKeyHash, joinKeyHash)))
+        .limit(1);
+      return row ?? null;
+    },
+
+    async deleteChatMessage(roomId, messageId) {
+      const deleted = await db
+        .delete(roomChatMessages)
+        .where(and(eq(roomChatMessages.id, messageId), eq(roomChatMessages.roomId, roomId)))
+        .returning({ id: roomChatMessages.id });
+      return deleted.length > 0;
+    },
   };
 }
 
@@ -1407,6 +1620,7 @@ function toStoredRoom(row: {
   inviteToken: string;
   status: string;
   reactionsEnabled: boolean;
+  chatMuted?: boolean;
   createdAt: Date;
 }): StoredRoom {
   return {
@@ -1421,6 +1635,7 @@ function toStoredRoom(row: {
     inviteToken: row.inviteToken,
     status: row.status as RoomStatus,
     reactionsEnabled: row.reactionsEnabled,
+    chatMuted: row.chatMuted ?? false,
     createdAt: row.createdAt,
   };
 }

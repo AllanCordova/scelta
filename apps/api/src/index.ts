@@ -35,6 +35,24 @@ async function main() {
     publishRoundState(roomId, roundState) {
       presenceSink.current?.publishRoundState?.(roomId, roundState);
     },
+    publishBallotActivity(roomId, roundId) {
+      presenceSink.current?.publishBallotActivity?.(roomId, roundId);
+    },
+    publishReaction(roomId, reaction) {
+      presenceSink.current?.publishReaction?.(roomId, reaction);
+    },
+    publishReactionsConfig(roomId, reactionsEnabled) {
+      presenceSink.current?.publishReactionsConfig?.(roomId, reactionsEnabled);
+    },
+    publishChatMessage(roomId, message) {
+      presenceSink.current?.publishChatMessage?.(roomId, message);
+    },
+    publishChatConfig(roomId, config) {
+      presenceSink.current?.publishChatConfig?.(roomId, config);
+    },
+    publishChatMessageDeleted(roomId, messageId) {
+      presenceSink.current?.publishChatMessageDeleted?.(roomId, messageId);
+    },
   };
   const app = await buildApp({ roomRepository, userRepository, presencePublisher });
   await app.ready();

@@ -105,6 +105,7 @@ export const rooms = pgTable(
     inviteToken: text("invite_token").notNull(),
     status: roomStatusEnum("status").notNull().default("draft"),
     reactionsEnabled: boolean("reactions_enabled").notNull().default(true),
+    chatMuted: boolean("chat_muted").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [uniqueIndex("rooms_invite_token_uidx").on(table.inviteToken)],
@@ -140,6 +141,7 @@ export const participants = pgTable(
     /** SHA-256 of the client join key. One presence row per room and key. */
     joinKeyHash: text("join_key_hash").notNull(),
     isPresent: boolean("is_present").notNull().default(true),
+    chatMuted: boolean("chat_muted").notNull().default(false),
     joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
@@ -246,3 +248,26 @@ export const auditEvents = pgTable("audit_events", {
   payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const roomChatMessages = pgTable(
+  "room_chat_messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id),
+    participantId: uuid("participant_id").references(() => participants.id),
+    senderName: text("sender_name").notNull(),
+    senderRole: text("sender_role").notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("room_chat_messages_room_created_idx").on(table.roomId, table.createdAt),
+    index("room_chat_messages_room_participant_created_idx").on(
+      table.roomId,
+      table.participantId,
+      table.createdAt,
+    ),
+  ],
+);

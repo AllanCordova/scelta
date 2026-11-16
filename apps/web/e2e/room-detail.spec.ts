@@ -41,15 +41,12 @@ test("admin clicks a room card to open the room detail view and manages the scru
   const initialInviteUrl = await page.getByLabel("Token Direto para Votantes").inputValue();
   expect(initialInviteUrl).toMatch(/\/join\//);
 
-  await page.getByRole("button", { name: "Rotacionar convite" }).click();
-  await expect(page.getByLabel("Token Direto para Votantes")).not.toHaveValue(initialInviteUrl);
-  const inviteUrlValue = await page.getByLabel("Token Direto para Votantes").inputValue();
-  expect(inviteUrlValue).toMatch(/\/join\//);
+  // Invite rotation and access codes are managed under /admin/codigos, not on room detail
+  await expect(page.getByRole("button", { name: "Rotacionar convite" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Gerar códigos do rol" })).toHaveCount(0);
 
   const roomDetailUrl = page.url();
 
-  // Access codes are managed under /admin/codigos, not on room detail
-  await expect(page.getByRole("button", { name: "Gerar códigos do rol" })).toHaveCount(0);
   await page.getByRole("link", { name: "Admin" }).first().click();
   await expect(page).toHaveURL(/\/admin$/);
   await page.getByRole("link", { name: /Códigos de Acesso/i }).click();
@@ -59,16 +56,34 @@ test("admin clicks a room card to open the room detail view and manages the scru
   const roomOptionValue = await roomOption.getAttribute("value");
   await page.getByLabel("Sala").selectOption(roomOptionValue!);
 
+  await page.getByRole("button", { name: "Rotacionar convite" }).click();
+  await expect(page.getByText("Link de convite rotacionado.")).toBeVisible();
+
   await page.getByRole("button", { name: "Gerar códigos do rol" }).click();
   await expect(page.locator(".simulator-status").filter({ hasText: /códigos ativos prontos para credenciamento/ })).toBeVisible();
   const firstPin = await page.locator(".access-code-pin").first().textContent();
   expect(firstPin).toBeTruthy();
 
+  // List hides raw URL and exposes both copy code and copy link buttons plus delete button
+  await expect(page.locator(".access-code-url")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Copiar código" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copiar link" }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remover" }).first()).toBeVisible();
+
   await page.getByRole("button", { name: "Imprimir cartões A4" }).click();
   await expect(page.getByRole("dialog", { name: "Cartões de acesso para impressão" })).toBeVisible();
   await page.getByRole("button", { name: "Fechar" }).click();
 
+  // Delete one access code permanently (delete last so firstPin remains active)
+  const initialCodeCount = await page.locator(".access-code-row").count();
+  await page.getByRole("button", { name: "Remover" }).last().click();
+  await page.getByRole("dialog", { name: "Remover código de acesso" }).getByRole("button", { name: "Remover" }).click();
+  await expect(page.locator(".access-code-row")).toHaveCount(initialCodeCount - 1);
+
   await page.goto(roomDetailUrl);
+  const inviteUrlValue = await page.getByLabel("Token Direto para Votantes").inputValue();
+  expect(inviteUrlValue).toMatch(/\/join\//);
+  expect(inviteUrlValue).not.toBe(initialInviteUrl);
 
   // Simulator: clicking Simular votos before opening a round shows clear feedback
   await page.getByRole("button", { name: "Simular votos" }).click();
