@@ -24,6 +24,14 @@ test("society board election runs 2 inconclusive rounds then narrows 3rd round t
   await page.reload();
   const href = created.room.invitePath;
 
+  const stamp = Date.now().toString(36);
+  const imported = await page.request.post("http://127.0.0.1:3334/v1/admin/members/import", {
+    data: {
+      csv: `nome,comungante,sexo,data_nascimento,upaativo,upaingresso\nUpa ${stamp} A,sim,F,1990-01-01,sim,2020-01-01\nUpa ${stamp} B,sim,F,1991-01-01,sim,2020-01-01`,
+    },
+  });
+  expect(imported.ok()).toBeTruthy();
+
   const codes = await createSimulatedCodes(page, title, 2);
 
   const voterOneContext = await page.context().browser()!.newContext();
@@ -139,8 +147,14 @@ async function createSimulatedCodes(page: Page, roomTitle: string, count: number
   const simRes = await page.request.post(
     `http://127.0.0.1:3334/v1/admin/rooms/${room.id}/access-codes/generate`,
   );
-  const { accessCodes } = (await simRes.json()) as { accessCodes: Array<{ code: string }> };
-  return accessCodes.slice(0, count).map((c) => c.code);
+  const { accessCodes } = (await simRes.json()) as {
+    accessCodes: Array<{ code: string; revokedAt: string | null }>;
+  };
+  const active = accessCodes.filter((item) => item.revokedAt === null);
+  if (active.length < count) {
+    throw new Error(`Expected ${count} access codes, got ${active.length}`);
+  }
+  return active.slice(0, count).map((item) => item.code);
 }
 
 async function loginAsAdmin(page: Page) {
