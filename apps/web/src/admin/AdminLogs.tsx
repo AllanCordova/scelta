@@ -22,7 +22,6 @@ export function AdminLogs() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
 
     void fetchIntegrityLogs(apiBase, selectedRoomId || undefined)
       .then((response) => {
@@ -92,7 +91,10 @@ export function AdminLogs() {
             type="button"
             className="ghost round-action"
             disabled={loading}
-            onClick={() => setRefreshTick((tick) => tick + 1)}
+            onClick={() => {
+              setLoading(true);
+              setRefreshTick((tick) => tick + 1);
+            }}
           >
             Atualizar
           </button>
@@ -159,7 +161,10 @@ export function AdminLogs() {
           <select
             id="integrity-room-filter"
             value={selectedRoomId}
-            onChange={(event) => setSelectedRoomId(event.target.value)}
+            onChange={(event) => {
+              setLoading(true);
+              setSelectedRoomId(event.target.value);
+            }}
           >
             <option value="">Todas as salas (incluindo salas excluídas)</option>
             {(data?.rooms ?? []).map((room) => (
