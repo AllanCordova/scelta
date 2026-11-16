@@ -17,8 +17,6 @@ import {
   ROUND_RESTARTED_MESSAGE,
   STATUS_LABELS,
   describePreset,
-  quorumLabel,
-  quorumStateLabel,
   roomErrorMessage,
   roundErrorMessage,
   showsPresence,
@@ -703,26 +701,15 @@ function RoomRow({
           {isActive ? (
             <div className="quorum-block" aria-live="polite">
               <div className="quorum-block-top">
-                <span className="quorum-block-label">Presença &amp; Votação</span>
-                {presence !== undefined ? (
-                  <span
-                    className={
-                      presence.quorumMet ? "quorum-state badge-met" : "quorum-state badge-below"
-                    }
-                  >
-                    {quorumStateLabel(presence.quorumMet)}
-                  </span>
-                ) : null}
+                <span className="quorum-block-label">Votantes presentes</span>
               </div>
               <div className="presence">
                 {presence === undefined ? (
                   "…"
                 ) : (
                   <>
-                    <span className="presence-count">
-                      {quorumLabel(presence.presentCount, presence.requiredCount)}
-                    </span>
-                    <span className="presence-caption">presentes / mínimo</span>
+                    <span className="presence-count">{presence.presentCount}</span>
+                    <span className="presence-caption">na sala</span>
                   </>
                 )}
               </div>

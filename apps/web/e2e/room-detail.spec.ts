@@ -32,7 +32,7 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
   await expect(page.getByText("Votos Computados")).toBeVisible();
   await expect(page.getByText("Faltam Votar")).toBeVisible();
-  await expect(page.getByText("Quórum Mínimo")).toBeVisible();
+  await expect(page.getByText("Votantes presentes")).toBeVisible();
   await expect(page.getByText("Regimento da Eleição")).toBeVisible();
   await expect(page.getByText("Fluxo de Presença")).toBeVisible();
   await expect(page.getByText("Paulo Apóstolo")).toBeVisible();

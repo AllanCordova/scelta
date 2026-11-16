@@ -25,8 +25,6 @@ import {
   ROUND_DECLINED_MESSAGE,
   ROUND_RESTARTED_MESSAGE,
   STATUS_LABELS,
-  quorumLabel,
-  quorumStateLabel,
   roundErrorMessage,
   showsPresence,
   standingLabel,
@@ -834,27 +832,15 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
           </div>
         </div>
 
-        <div className="detail-kpi-card">
+        <section className="detail-kpi-card" aria-label="Votantes presentes">
           <div className="detail-kpi-top">
-            <span className="detail-kpi-label">Quórum Mínimo</span>
-            <span
-              className={
-                room.presence.quorumMet ? "quorum-state badge-met" : "quorum-state badge-below"
-              }
-            >
-              {room.presence.quorumMet ? "VÁLIDO" : "PENDENTE"}
-            </span>
+            <span className="detail-kpi-label">Votantes presentes</span>
           </div>
           <div className="detail-kpi-value-row">
-            <span className="detail-kpi-status-title">
-              {quorumStateLabel(room.presence.quorumMet)}
-            </span>
+            <span className="detail-kpi-number">{room.presence.presentCount}</span>
+            <span className="detail-kpi-sub">na sala</span>
           </div>
-          <p className="detail-kpi-footnote">
-            {quorumLabel(room.presence.presentCount, room.presence.requiredCount)} (presentes /
-            mínimo)
-          </p>
-        </div>
+        </section>
 
         <div className="detail-kpi-card">
           <div className="detail-kpi-top">

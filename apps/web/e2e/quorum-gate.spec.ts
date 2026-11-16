@@ -19,8 +19,8 @@ test("admin sees presence against quorum and cannot open round until quorum is m
 
   const item = page.getByRole("listitem").filter({ hasText: title });
   await expect(item).toBeVisible();
-  await expect(item.getByText("0 / 2", { exact: true })).toBeVisible();
-  await expect(item.getByText("Abaixo do quórum", { exact: true })).toBeVisible();
+  await expect(item.locator(".presence-count")).toHaveText("0");
+  await expect(item.getByText("Votantes presentes")).toBeVisible();
   await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeDisabled();
 
   const href = await page.getByRole("link", { name: /\/join\// }).getAttribute("href");
@@ -40,8 +40,7 @@ test("admin sees presence against quorum and cannot open round until quorum is m
     await context.close();
   }
 
-  await expect(item.getByText("2 / 2", { exact: true })).toBeVisible({ timeout: 10_000 });
-  await expect(item.getByText("Quórum atingido", { exact: true })).toBeVisible();
+  await expect(item.locator(".presence-count")).toHaveText("2", { timeout: 10_000 });
   await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeEnabled();
 });
 
@@ -69,8 +68,8 @@ test("admin sees quorum met when required presence joins and closes without fail
   }
 
   const item = page.getByRole("listitem").filter({ hasText: title });
-  await expect(item.getByText("0 / 1", { exact: true })).toBeVisible();
-  await expect(item.getByText("Abaixo do quórum", { exact: true })).toBeVisible();
+  await expect(item.locator(".presence-count")).toHaveText("0");
+  await expect(item.getByText("Votantes presentes")).toBeVisible();
 
   const [code] = await createSimulatedCodes(page, title, 1);
   const visitor = await page.context().newPage();
@@ -79,8 +78,7 @@ test("admin sees quorum met when required presence joins and closes without fail
   await visitor.getByRole("button", { name: "Entrar na sala" }).click();
   await expect(visitor.getByRole("heading", { name: "Você entrou" })).toBeVisible();
 
-  await expect(item.getByText("1 / 1", { exact: true })).toBeVisible({ timeout: 10_000 });
-  await expect(item.getByText("Quórum atingido", { exact: true })).toBeVisible();
+  await expect(item.locator(".presence-count")).toHaveText("1", { timeout: 10_000 });
 
   await item.getByRole("button", { name: "Abrir escrutínio" }).click();
   await visitor.getByRole("button", { name: "Voto Nulo / Em Branco" }).click();

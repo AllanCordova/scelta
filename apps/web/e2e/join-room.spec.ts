@@ -23,7 +23,7 @@ test("a visitor joins an open room and the admin sees one presence", async ({ pa
   }
 
   const item = page.getByRole("listitem").filter({ hasText: title });
-  await expect(item.getByText("0 / 0", { exact: true })).toBeVisible();
+  await expect(item.locator(".presence-count")).toHaveText("0");
 
   const codes = await createSimulatedCodes(page, title, 1);
 
@@ -33,7 +33,7 @@ test("a visitor joins an open room and the admin sees one presence", async ({ pa
   await visitor.getByRole("button", { name: "Entrar na sala" }).click();
   await expect(visitor.getByRole("heading", { name: "Você entrou" })).toBeVisible();
   await expect(visitor.getByText(title)).toBeVisible();
-  await expect(item.getByText("1 / 0", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(item.locator(".presence-count")).toHaveText("1", { timeout: 10_000 });
 });
 
 test("an unknown invite is rejected", async ({ page }) => {

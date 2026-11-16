@@ -320,7 +320,7 @@ describe("AdminRoomDetail", () => {
 
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
 
-    expect(await screen.findByText("0 / 1 (presentes / mínimo)")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Votantes presentes" })).toHaveTextContent("0");
 
     // Simulate 2 participants joining
     fireEvent.change(screen.getByLabelText("Participantes"), { target: { value: "2" } });
@@ -329,7 +329,7 @@ describe("AdminRoomDetail", () => {
     expect(
       await screen.findByText("2 participantes simulados entraram na sala."),
     ).toBeInTheDocument();
-    expect(await screen.findByText("2 / 1 (presentes / mínimo)")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Votantes presentes" })).toHaveTextContent("2");
     expect(screen.getByText("2 Membros Aguardando")).toBeInTheDocument();
 
     // Simulate randomized votes for the 2 waiting participants
@@ -344,7 +344,7 @@ describe("AdminRoomDetail", () => {
     const confirmDialog = await screen.findByRole("dialog");
     fireEvent.click(within(confirmDialog).getByRole("button", { name: "Remover participantes" }));
     expect(await screen.findByText("1 participantes removidos da presença.")).toBeInTheDocument();
-    expect(await screen.findByText("1 / 1 (presentes / mínimo)")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Votantes presentes" })).toHaveTextContent("1");
 
     // Emit a socket ballot:activity event and verify live refresh
     currentRoom = {
