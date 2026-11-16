@@ -2,6 +2,7 @@ import { readQuorumPresence, type QuorumPresence } from "./presence-event";
 import type {
   CreatableRoomStatus,
   FieldError,
+  IntegrityLogsResponse,
   MemberAccessCodeItem,
   MemberImportReport,
   PaginatedMembersResult,
@@ -150,6 +151,18 @@ export async function declineRound(
 ): Promise<RoomRound> {
   return postRound(
     `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds/${encodeURIComponent(roundId)}/decline`,
+  );
+}
+
+export async function resolveRoundTie(
+  apiBase: string,
+  roomId: string,
+  roundId: string,
+  winnerCandidateId: string,
+): Promise<RoomRound> {
+  return postRound(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds/${encodeURIComponent(roundId)}/resolve-tie`,
+    { winnerCandidateId },
   );
 }
 
@@ -305,7 +318,7 @@ export type UpdateRoomPayload = {
   quorumValue?: number;
   quorumUnit?: QuorumUnit;
   eligibleCount?: number;
-  status?: "draft" | "open" | "closed";
+  status?: "draft" | "open" | "test" | "closed";
   reactionsEnabled?: boolean;
   chatMuted?: boolean;
 };
@@ -444,6 +457,80 @@ export async function listAccessCodes(
   return body.accessCodes;
 }
 
+export type PresentParticipant = {
+  id: string;
+  displayName: string;
+  joinedAt: string;
+};
+
+export async function listPresentParticipants(
+  apiBase: string,
+  roomId: string,
+): Promise<PresentParticipant[]> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/participants`,
+    { credentials: "include" },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    participants?: PresentParticipant[];
+    error?: string;
+  };
+  if (!response.ok || !Array.isArray(body.participants)) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.participants;
+}
+
+export async function expelParticipants(
+  apiBase: string,
+  roomId: string,
+  target: { all: true } | { participantId: string },
+): Promise<{ expelledCount: number }> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/participants/expel`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(target),
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    expelledCount?: number;
+    error?: string;
+  };
+  if (!response.ok || typeof body.expelledCount !== "number") {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return { expelledCount: body.expelledCount };
+}
+
+export async function issueMemberAccessCode(
+  apiBase: string,
+  roomId: string,
+  memberId: string,
+  replace = false,
+): Promise<{ accessCode: MemberAccessCodeItem; created: boolean }> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/access-codes/issue`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ memberId, replace }),
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    accessCode?: MemberAccessCodeItem;
+    created?: boolean;
+    error?: string;
+  };
+  if (!response.ok || !body.accessCode || typeof body.created !== "boolean") {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return { accessCode: body.accessCode, created: body.created };
+}
+
 export async function generateAccessCodes(
   apiBase: string,
   roomId: string,
@@ -536,6 +623,27 @@ export async function deleteAccessCode(
     const body = (await response.json().catch(() => ({}))) as { error?: string };
     throw new RoomRequestError(response.status, body.error ?? "unknown");
   }
+}
+
+export async function fetchIntegrityLogs(
+  apiBase: string,
+  roomId?: string,
+): Promise<IntegrityLogsResponse> {
+  const qs = roomId ? `?roomId=${encodeURIComponent(roomId)}` : "";
+  const response = await fetch(`${apiBase}/v1/admin/logs${qs}`, {
+    credentials: "include",
+  });
+  const body = (await response.json().catch(() => ({}))) as Partial<IntegrityLogsResponse> & {
+    error?: string;
+  };
+  if (!response.ok || !Array.isArray(body.logs) || !body.summary) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return {
+    logs: body.logs,
+    rooms: Array.isArray(body.rooms) ? body.rooms : [],
+    summary: body.summary,
+  };
 }
 
 async function postRound(url: string, payload?: Record<string, unknown>): Promise<RoomRound> {

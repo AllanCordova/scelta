@@ -8,7 +8,7 @@ export type RoomType =
   | "upa_board"
   | "ump_board"
   | "custom";
-export type CreatableRoomStatus = "draft" | "open";
+export type CreatableRoomStatus = "draft" | "open" | "test";
 export type RoomStatus = CreatableRoomStatus | "voting" | "closed" | "cancelled";
 
 export type PresetDefinition = {
@@ -75,6 +75,14 @@ export type CandidateStanding = {
   votes: number;
 };
 
+export type TieBreakReason = "age" | "admin_tiebreak";
+
+export type TiedCandidateOption = {
+  id: string;
+  displayName: string;
+  birthDate: string | null;
+};
+
 export type RoundTally = {
   totalVotes: number;
   nullVotes?: number;
@@ -83,6 +91,9 @@ export type RoundTally = {
   winnerId: string | null;
   winnerName: string | null;
   standings: CandidateStanding[];
+  tieBreakReason?: TieBreakReason;
+  tieBreakRequired?: boolean;
+  tiedCandidates?: TiedCandidateOption[];
 };
 
 export type RoomSummary = {
@@ -123,6 +134,41 @@ export type AuditEventItem = {
   action: string;
   payload: Record<string, unknown>;
   createdAt: string;
+};
+
+export type IntegrityLogItem = {
+  id: string;
+  sequence: number;
+  roomId: string;
+  roomTitle: string;
+  roomStatus: string;
+  actorRole: string;
+  action: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  integrityHash: string;
+};
+
+export type IntegrityLogsSummary = {
+  totalEvents: number;
+  humanBallotsCast: number;
+  simulatedBallotsCast: number;
+  humanParticipantsJoined: number;
+  adminVoteInterventions: number;
+  chainHeadHash: string;
+  immutable: boolean;
+};
+
+export type IntegrityLogRoomOption = {
+  id: string;
+  title: string;
+  status: string;
+};
+
+export type IntegrityLogsResponse = {
+  logs: IntegrityLogItem[];
+  rooms: IntegrityLogRoomOption[];
+  summary: IntegrityLogsSummary;
 };
 
 export type RoomDetail = RoomSummary & {

@@ -225,6 +225,7 @@ describe("AdminRoomDetail", () => {
   it("updates live on socket ballot/presence events and simulates participants joining and voting", async () => {
     let currentRoom: RoomDetail = {
       ...sampleRoom,
+      status: "test",
       presence: {
         presentCount: 0,
         eligibleCount: 4,
@@ -872,6 +873,91 @@ describe("AdminRoomDetail", () => {
     expect(await screen.findByRole("heading", { name: "Auditoria da sala" })).toBeInTheDocument();
     expect(screen.getByText("Sala criada")).toBeInTheDocument();
     expect(screen.getByText("Quórum alterado")).toBeInTheDocument();
+  });
+
+  it("blocks opening a 4th scrutiny on a 3rd-round tie without birth dates and lets the admin resolve the winner by age", async () => {
+    let currentRoom: RoomDetail = {
+      ...sampleRoom,
+      roomType: "upa_board",
+      rulesPreset: "ipb_society_board",
+      round: {
+        id: "round-3",
+        number: 3,
+        officeLabel: "Presidente",
+        officeRoundNumber: 3,
+        status: "closed",
+        outcome: "no_majority",
+        tally: {
+          totalVotes: 2,
+          threshold: 2,
+          outcome: "no_majority",
+          winnerId: null,
+          winnerName: null,
+          standings: [
+            { candidateId: "cand-1", displayName: "Paulo Apóstolo", votes: 1 },
+            { candidateId: "cand-2", displayName: "Silas", votes: 1 },
+          ],
+          tieBreakRequired: true,
+          tiedCandidates: [
+            { id: "cand-1", displayName: "Paulo Apóstolo", birthDate: null },
+            { id: "cand-2", displayName: "Silas", birthDate: null },
+          ],
+        },
+      },
+    };
+
+    const resolveCalls: { winnerCandidateId: string }[] = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: currentRoom });
+        }
+        if (
+          url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/rounds/round-3/resolve-tie`) &&
+          method === "POST"
+        ) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { winnerCandidateId: string };
+          resolveCalls.push(body);
+          const resolvedRound = {
+            ...currentRoom.round!,
+            outcome: "elected" as const,
+            tally: {
+              ...currentRoom.round!.tally!,
+              outcome: "elected" as const,
+              winnerId: "cand-2",
+              winnerName: "Silas",
+              tieBreakReason: "admin_tiebreak" as const,
+              tieBreakRequired: false,
+            },
+          };
+          currentRoom = { ...currentRoom, round: resolvedRound };
+          return json({ round: resolvedRound });
+        }
+        return json({ accessCodes: [] });
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    expect(
+      await screen.findByText(/Desempate do 3º Escrutínio — Critério de Idade/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Desempate pendente (3º escrutínio)" }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Declarar Silas eleito (mais velho)" }));
+
+    await waitFor(() => {
+      expect(resolveCalls).toEqual([{ winnerCandidateId: "cand-2" }]);
+    });
+    expect(
+      await screen.findByText(/Eleito por desempate de idade \(decisão da mesa\): Silas/i),
+    ).toBeInTheDocument();
   });
 });
 

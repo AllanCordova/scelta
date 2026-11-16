@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AdminMembers } from "./AdminMembers";
+import { AdminMembers, formatMembersCsv } from "./AdminMembers";
 
 describe("AdminMembers", () => {
   beforeEach(() => {
@@ -133,6 +133,51 @@ describe("AdminMembers", () => {
     await waitFor(() => {
       expect(deleteCalls).toHaveLength(1);
     });
+  });
+
+  it("formats and exports members to CSV from the member roll header", async () => {
+    const csv = formatMembersCsv([
+      {
+        id: "m-1",
+        fullName: "Paulo Apóstolo",
+        isCommunicant: true,
+        isMale: true,
+        birthDate: "1985-04-12",
+        photoUrl: "https://example.com/paulo.jpg",
+        societyFlags: { upaActive: true, upaEnrolledAt: "2024-01-10" },
+      },
+      {
+        id: "m-2",
+        fullName: "Lídia, de Tiatira",
+        isCommunicant: false,
+        isMale: false,
+        birthDate: null,
+        photoUrl: null,
+        societyFlags: { umpActive: true, umpEnrolledAt: "2023-05-01" },
+      },
+    ]);
+
+    expect(csv).toBe(
+      [
+        "nome,comungante,sexo,data_nascimento,upa_ativo,upa_ingresso,ump_ativo,ump_ingresso,foto",
+        "Paulo Apóstolo,sim,M,1985-04-12,sim,2024-01-10,nao,,https://example.com/paulo.jpg",
+        '"Lídia, de Tiatira",nao,F,,nao,,sim,2023-05-01,',
+      ].join("\n"),
+    );
+
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    render(<AdminMembers />);
+    expect(await screen.findByText("Paulo Apóstolo")).toBeInTheDocument();
+
+    const exportBtn = screen.getByRole("button", { name: "Exportar CSV" });
+    expect(exportBtn).not.toBeDisabled();
+    fireEvent.click(exportBtn);
+
+    await waitFor(() => {
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+    });
+    clickSpy.mockRestore();
   });
 });
 

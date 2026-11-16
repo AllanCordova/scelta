@@ -58,7 +58,11 @@ export function validateCandidateNames(
 export function canCastBallot(
   input: BallotCastCheckInput,
 ): { ok: true } | { ok: false; reason: BallotRejectionReason } {
-  if (input.roomStatus !== "open" && input.roomStatus !== "voting") {
+  if (
+    input.roomStatus !== "open" &&
+    input.roomStatus !== "test" &&
+    input.roomStatus !== "voting"
+  ) {
     return { ok: false, reason: "room_not_open" };
   }
 

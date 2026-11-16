@@ -460,7 +460,21 @@ export function AdminRooms() {
               >
                 Aberta
               </button>
+              <button
+                type="button"
+                className={status === "test" ? "choice selected" : "choice"}
+                aria-pressed={status === "test"}
+                onClick={() => setStatus("test")}
+              >
+                Teste
+              </button>
             </div>
+            {status === "test" ? (
+              <p className="field-hint">
+                Salas de <strong>Teste</strong> habilitam o Simulador de Assembleia (entradas e votos
+                simulados). Salas oficiais (Aberta) bloqueiam qualquer simulação.
+              </p>
+            ) : null}
           </fieldset>
 
           {errorMessage ? (

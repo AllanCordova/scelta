@@ -22,7 +22,12 @@ export function TabBar() {
           <TabLink
             href="/admin"
             label="Admin"
-            current={path === "/admin" || path === "/admin/codigos" || path === "/admin/membros"}
+            current={
+              path === "/admin" ||
+              path === "/admin/codigos" ||
+              path === "/admin/membros" ||
+              path === "/admin/logs"
+            }
           >
             <MembersIcon />
           </TabLink>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
 import { apiUrl } from "../api-url";
+import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { AccessCodesPanel } from "./AccessCodesPanel";
 import { inviteUrl } from "./room-draft";
 import { listRooms, rotateRoomInvite } from "./rooms-api";
@@ -14,6 +15,7 @@ export function AdminAccessCodes() {
   const [selectedRoomId, setSelectedRoomId] = useState<string>("");
   const [isLoading, setIsLoading] = useState(true);
   const [isRotating, setIsRotating] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printCards, setPrintCards] = useState<
     Array<{ id: string; displayName: string; code: string; qrUrl: string; loginUrl: string }> | null
@@ -150,7 +152,7 @@ export function AdminAccessCodes() {
                   type="button"
                   className="ghost round-action"
                   disabled={isRotating}
-                  onClick={() => void handleRotateInvite()}
+                  onClick={() => setConfirmRotate(true)}
                 >
                   Rotacionar convite
                 </button>
@@ -173,6 +175,20 @@ export function AdminAccessCodes() {
           ) : null}
         </>
       )}
+
+      <ConfirmDialog
+        open={confirmRotate}
+        title="Rotacionar convite"
+        description="Isso invalida o link de todo mundo de uma vez. Quem já está com a página aberta pode continuar vendo a cédula antiga, e quem atualizar o link velho fica de fora. Para uma pessoa só, gere o código dela."
+        confirmLabel="Rotacionar mesmo assim"
+        tone="danger"
+        busy={isRotating}
+        onCancel={() => setConfirmRotate(false)}
+        onConfirm={() => {
+          setConfirmRotate(false);
+          void handleRotateInvite();
+        }}
+      />
 
       {printCards && selectedRoom ? (
         <div className="print-cards-overlay" role="dialog" aria-label="Cartões de acesso para impressão">

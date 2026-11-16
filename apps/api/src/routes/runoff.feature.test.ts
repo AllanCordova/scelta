@@ -3,6 +3,7 @@ import {
   ballots,
   candidates,
   createPgliteDatabase,
+  members,
   participants,
   roomMemberCodes,
   rooms,
@@ -65,6 +66,7 @@ describe("multi-round and runoff elections", () => {
     await db.delete(roomMemberCodes);
     await db.delete(auditEvents);
     await db.delete(rooms);
+    await db.delete(members);
   });
 
   it("runs ipb_society_board through 2 failed rounds into a 3rd-round top-2 runoff without carrying prior votes", async () => {
@@ -270,6 +272,130 @@ describe("multi-round and runoff elections", () => {
     await app.close();
   });
 
+  it("automatically elects the oldest candidate when the 3rd scrutiny ends in a tie and birth dates exist", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+
+    await repository.createMember({
+      fullName: "Lucas Novo",
+      isCommunicant: true,
+      isMale: true,
+      birthDate: "2011-06-15",
+      societyFlags: { upaActive: true, upaEnrolledAt: "2024-01-01" },
+    });
+    await repository.createMember({
+      fullName: "Mateus Velho",
+      isCommunicant: true,
+      isMale: true,
+      birthDate: "2009-01-10",
+      societyFlags: { upaActive: true, upaEnrolledAt: "2024-01-01" },
+    });
+
+    const room = await createRoom(app, {
+      title: "UPA — Desempate por Idade",
+      roomType: "upa_board",
+      rulesPreset: "ipb_society_board",
+      quorumValue: 2,
+      candidates: ["Lucas Novo", "Mateus Velho"],
+    });
+    const lucas = room.candidates.find((c) => c.displayName === "Lucas Novo")!;
+    const mateus = room.candidates.find((c) => c.displayName === "Mateus Velho")!;
+
+    await join(app, room.inviteToken, "Votante 1", voterOneKey);
+    await join(app, room.inviteToken, "Votante 2", voterTwoKey);
+
+    for (const expectedRound of [1, 2]) {
+      const opened = await openRound(app, room.id);
+      expect(opened.statusCode).toBe(201);
+      expect(opened.json().round.officeRoundNumber).toBe(expectedRound);
+      await castVote(app, room.inviteToken, voterOneKey, lucas.id);
+      await castVote(app, room.inviteToken, voterTwoKey, mateus.id);
+      const closed = await closeRound(app, room.id, opened.json().round.id);
+      expect(closed.json().round.outcome).toBe("no_majority");
+    }
+
+    const openR3 = await openRound(app, room.id);
+    expect(openR3.statusCode).toBe(201);
+    expect(openR3.json().round.officeRoundNumber).toBe(3);
+    await castVote(app, room.inviteToken, voterOneKey, lucas.id);
+    await castVote(app, room.inviteToken, voterTwoKey, mateus.id);
+
+    const closeR3 = await closeRound(app, room.id, openR3.json().round.id);
+    expect(closeR3.statusCode).toBe(200);
+    expect(closeR3.json().round.outcome).toBe("elected");
+    expect(closeR3.json().round.tally.winnerId).toBe(mateus.id);
+    expect(closeR3.json().round.tally.winnerName).toBe("Mateus Velho");
+    expect(closeR3.json().round.tally.tieBreakReason).toBe("age");
+
+    await app.close();
+  });
+
+  it("blocks a 4th scrutiny and delegates tie-break to admin when 3rd-round tied candidates have no birthDate", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+    const room = await createRoom(app, {
+      title: "UPA — Desempate pelo Admin",
+      roomType: "upa_board",
+      rulesPreset: "ipb_society_board",
+      quorumValue: 2,
+      candidates: ["Ana Sem Data", "Bia Sem Data"],
+    });
+    const ana = room.candidates.find((c) => c.displayName === "Ana Sem Data")!;
+    const bia = room.candidates.find((c) => c.displayName === "Bia Sem Data")!;
+
+    await join(app, room.inviteToken, "Votante 1", voterOneKey);
+    await join(app, room.inviteToken, "Votante 2", voterTwoKey);
+
+    for (const expectedRound of [1, 2]) {
+      const opened = await openRound(app, room.id);
+      expect(opened.statusCode).toBe(201);
+      expect(opened.json().round.officeRoundNumber).toBe(expectedRound);
+      await castVote(app, room.inviteToken, voterOneKey, ana.id);
+      await castVote(app, room.inviteToken, voterTwoKey, bia.id);
+      const closed = await closeRound(app, room.id, opened.json().round.id);
+      expect(closed.json().round.outcome).toBe("no_majority");
+    }
+
+    const openR3 = await openRound(app, room.id);
+    expect(openR3.statusCode).toBe(201);
+    const round3Id = openR3.json().round.id as string;
+    await castVote(app, room.inviteToken, voterOneKey, ana.id);
+    await castVote(app, room.inviteToken, voterTwoKey, bia.id);
+
+    const closeR3 = await closeRound(app, room.id, round3Id);
+    expect(closeR3.statusCode).toBe(200);
+    expect(closeR3.json().round.outcome).toBe("no_majority");
+    expect(closeR3.json().round.tally.tieBreakRequired).toBe(true);
+    expect(closeR3.json().round.tally.tiedCandidates).toEqual([
+      { id: ana.id, displayName: "Ana Sem Data", birthDate: null },
+      { id: bia.id, displayName: "Bia Sem Data", birthDate: null },
+    ]);
+
+    // Attempting to open a 4th scrutiny for Presidente is rejected
+    const openR4 = await openRound(app, room.id);
+    expect(openR4.statusCode).toBe(409);
+    expect(openR4.json()).toEqual({ error: "max_rounds_reached" });
+
+    // Admin resolves tie-break on the day after checking who is older
+    const resolved = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/rounds/${round3Id}/resolve-tie`,
+      headers: { cookie: adminCookie },
+      payload: { winnerCandidateId: bia.id },
+    });
+    expect(resolved.statusCode).toBe(200);
+    expect(resolved.json().round.outcome).toBe("elected");
+    expect(resolved.json().round.tally.winnerId).toBe(bia.id);
+    expect(resolved.json().round.tally.winnerName).toBe("Bia Sem Data");
+    expect(resolved.json().round.tally.tieBreakReason).toBe("admin_tiebreak");
+
+    // Next round now advances to Vice-Presidente
+    const nextOfficeRound = await openRound(app, room.id);
+    expect(nextOfficeRound.statusCode).toBe(201);
+    expect(nextOfficeRound.json().round.officeLabel).toBe("Vice-Presidente");
+    expect(nextOfficeRound.json().round.officeRoundNumber).toBe(1);
+
+    await app.close();
+  });
+
   async function createRoom(
     app: Awaited<ReturnType<typeof buildApp>>,
     input: {
@@ -305,22 +431,42 @@ describe("multi-round and runoff elections", () => {
   async function join(
     app: Awaited<ReturnType<typeof buildApp>>,
     token: string,
-    _displayName: string,
+    displayName: string,
     joinKey: string,
   ) {
     const room = await repository.findRoomByInviteToken(token);
-    const [simCode] = room ? await repository.createSimulatedAccessCodes(room.id, 1) : [];
+    if (!room) {
+      return app.inject({
+        method: "POST",
+        url: `/v1/join/${token}`,
+        payload: { code: "ZZZZZZ", joinKey },
+      });
+    }
+    const memberName = `${displayName} (${joinKey.slice(-6)})`;
+    let generated = await repository.generateMemberAccessCodes(room.id);
+    let memberCode = generated.find((item) => item.displayName === memberName && !item.revokedAt);
+    if (!memberCode) {
+      await repository.createMember({
+        fullName: memberName,
+        isCommunicant: true,
+        isMale: true,
+        birthDate: "1990-01-01",
+        societyFlags: { upaActive: true, umpActive: true },
+      });
+      generated = await repository.generateMemberAccessCodes(room.id);
+      memberCode = generated.find((item) => item.displayName === memberName && !item.revokedAt);
+    }
     return app.inject({
       method: "POST",
       url: `/v1/join/${token}`,
-      payload: { code: simCode?.code ?? "ZZZZZZ", joinKey },
+      payload: { code: memberCode?.code ?? "ZZZZZZ", joinKey },
     });
   }
 
   function openRound(
     app: Awaited<ReturnType<typeof buildApp>>,
     roomId: string,
-    payload?: { candidateIds: string[] },
+    payload?: { candidateIds?: string[]; officeLabel?: string },
   ) {
     return app.inject({
       method: "POST",

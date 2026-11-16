@@ -11,8 +11,10 @@ coverage/
 # Env / secrets
 .env
 .env.local
+.env.production
 .env.*.local
 !.env.example
+!.env.production.example
 
 # Logs / OS
 logs/

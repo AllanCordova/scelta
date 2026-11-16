@@ -17,6 +17,9 @@ export {
   type CandidateOption,
   type CandidateStanding,
   type TallyEntry,
+  type TallyRoundOptions,
+  type TieBreakReason,
+  type TiedCandidateOption,
   type MajorityResult,
   type RoundTally,
 } from "./majority.js";
@@ -43,6 +46,7 @@ export {
 } from "./rounds.js";
 export {
   canOpenRound,
+  canSimulateInRoom,
   CREATE_ROOM_STATUSES,
   PRESET_DEFINITIONS,
   ROOM_STATUSES,

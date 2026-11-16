@@ -19,7 +19,7 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("1");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByLabel("Aptos").fill("2");
-  await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
+  await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Teste" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
   const item = page.getByRole("listitem").filter({ hasText: title });
@@ -57,6 +57,10 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await page.getByLabel("Sala").selectOption(roomOptionValue!);
 
   await page.getByRole("button", { name: "Rotacionar convite" }).click();
+  await page
+    .getByRole("dialog", { name: "Rotacionar convite" })
+    .getByRole("button", { name: "Rotacionar mesmo assim" })
+    .click();
   await expect(page.getByText("Link de convite rotacionado.")).toBeVisible();
 
   await page.getByRole("button", { name: "Gerar códigos do rol" }).click();

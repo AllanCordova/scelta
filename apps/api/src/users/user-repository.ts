@@ -34,6 +34,7 @@ export type UserRepository = {
     userId: string,
     input: { name: string; photoUrl: string | null },
   ): Promise<PublicUser | null>;
+  updateUserPassword?(userId: string, passwordHash: string): Promise<void>;
   createSession(userId: string, token: string, expiresAt: Date): Promise<void>;
   deleteSession(token: string): Promise<void>;
 };

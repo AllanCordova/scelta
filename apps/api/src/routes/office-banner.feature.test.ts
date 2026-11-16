@@ -170,7 +170,7 @@ describe("admin-only cargo banner images", () => {
         rulesPreset: "ipb_local_officers",
         quorumValue: 1,
         quorumUnit: "absolute",
-        status: "open",
+        status: "test",
         candidates: ["Ana", "Bia"],
       },
     });

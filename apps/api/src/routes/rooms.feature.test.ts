@@ -298,6 +298,7 @@ describe("admin rooms", () => {
     const app = await buildApp({
       userRepository,
       roomRepository: {
+        ...repository,
         async createRoom() {
           throw new Error("duplicate key value violates unique constraint invite_token=secret");
         },
@@ -512,7 +513,7 @@ describe("admin rooms", () => {
         quorumValue: 1,
         quorumUnit: "absolute",
         eligibleCount: 4,
-        status: "open",
+        status: "test",
         candidates: ["Paulo Apóstolo", "Silas"],
       },
     });
@@ -654,7 +655,7 @@ describe("admin rooms", () => {
         rulesPreset: "ipb_local_officers",
         quorumValue: 2,
         quorumUnit: "absolute",
-        status: "open",
+        status: "test",
         candidates: ["Paulo", "Silas"],
       },
     });
@@ -790,7 +791,7 @@ describe("admin rooms", () => {
         rulesPreset: "ipb_local_officers",
         quorumValue: 1,
         quorumUnit: "absolute",
-        status: "open",
+        status: "test",
         candidates: ["Paulo", "Silas"],
       },
     });

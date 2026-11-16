@@ -7,7 +7,14 @@ import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { DatePickerField } from "../shell/DatePickerField";
 import { ImageDropzone } from "../shell/ImageDropzone";
 import { memberImportSummaryLabel } from "./copy";
-import { createMember, deleteMember, importMembers, listMembersPage, updateMember } from "./rooms-api";
+import {
+  createMember,
+  deleteMember,
+  importMembers,
+  listMembers,
+  listMembersPage,
+  updateMember,
+} from "./rooms-api";
 import type { StoredMemberItem } from "./types";
 
 const apiBase = apiUrl("");
@@ -32,6 +39,36 @@ const CSV_TEMPLATE_CONTENT = [
 ].join("\n");
 
 const TEMPLATE_DATA_URL = `data:text/csv;charset=utf-8,${encodeURIComponent(CSV_TEMPLATE_CONTENT)}`;
+
+function escapeCsvCell(value: string): string {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
+export function formatMembersCsv(items: readonly StoredMemberItem[]): string {
+  const lines = [
+    EXPECTED_COLUMNS.join(","),
+    ...items.map((member) => {
+      const gender = member.isMale === true ? "M" : member.isMale === false ? "F" : "";
+      const photo =
+        member.photoUrl && !member.photoUrl.startsWith("data:") ? member.photoUrl : "";
+      return [
+        escapeCsvCell(member.fullName),
+        member.isCommunicant ? "sim" : "nao",
+        gender,
+        member.birthDate ?? "",
+        member.societyFlags.upaActive ? "sim" : "nao",
+        member.societyFlags.upaEnrolledAt ?? "",
+        member.societyFlags.umpActive ? "sim" : "nao",
+        member.societyFlags.umpEnrolledAt ?? "",
+        escapeCsvCell(photo),
+      ].join(",");
+    }),
+  ];
+  return lines.join("\n");
+}
 
 export function AdminMembers() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -68,6 +105,7 @@ export function AdminMembers() {
   const [csvContent, setCsvContent] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
   const [rejectedRows, setRejectedRows] = useState<{ line: number; name?: string; reason: string }[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
@@ -335,6 +373,30 @@ const csvImportSchema = z.object({
     }
   }
 
+  async function handleExportCsv() {
+    if (isExportingCsv) {
+      return;
+    }
+    setIsExportingCsv(true);
+    try {
+      const fullRoll = await listMembers(apiBase);
+      const exportItems = fullRoll.length > 0 ? fullRoll : members;
+      const csv = formatMembersCsv(exportItems);
+      const dataUrl = `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = "membros-scelta.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success("Rol de membros exportado em CSV.");
+    } catch {
+      toast.error("Não foi possível exportar os membros para CSV.");
+    } finally {
+      setIsExportingCsv(false);
+    }
+  }
+
   return (
     <div className="admin-page">
       <a className="detail-back-link" href="/admin">
@@ -449,7 +511,17 @@ const csvImportSchema = z.object({
       <section className="panel" aria-labelledby="member-list-heading">
         <div className="member-list-header">
           <h2 id="member-list-heading">Membros cadastrados</h2>
-          <span className="member-count-pill">Total: {totalMembers}</span>
+          <div className="member-import-badges">
+            <span className="member-count-pill">Total: {totalMembers}</span>
+            <button
+              type="button"
+              className="ghost"
+              disabled={isExportingCsv || (totalMembers === 0 && members.length === 0)}
+              onClick={() => void handleExportCsv()}
+            >
+              {isExportingCsv ? "Exportando…" : "Exportar CSV"}
+            </button>
+          </div>
         </div>
         <div className="member-search-row">
           <label htmlFor="member-search-input" className="sr-only">

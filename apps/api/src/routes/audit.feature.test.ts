@@ -86,7 +86,7 @@ describe("admin audit log", () => {
         rulesPreset: "ipb_local_officers",
         quorumValue: 1,
         quorumUnit: "absolute",
-        status: "open",
+        status: "test",
         candidates: ["Presb. Marcos"],
       },
     });
@@ -283,6 +283,178 @@ describe("admin audit log", () => {
       headers: { cookie: adminCookie },
     });
     expect(invalidUuidAudit.statusCode).toBe(400);
+
+    await app.close();
+  });
+
+  it("restricts simulation tools to test rooms and preserves undeletable human-voting proof logs even after room deletion", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+
+    await repository.createMember({
+      fullName: "Membro Real Verificado",
+      isCommunicant: true,
+      isMale: true,
+      birthDate: "1988-04-10",
+      societyFlags: {},
+    });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Assembleia Oficial Comprovada",
+        roomType: "elder",
+        rulesPreset: "ipb_local_officers",
+        quorumValue: 1,
+        quorumUnit: "absolute",
+        status: "open",
+        candidates: ["Membro Real Verificado"],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const room = created.json().room as {
+      id: string;
+      inviteToken: string;
+      candidates: Array<{ id: string }>;
+    };
+
+    // Simulation tools must be blocked on non-"test" rooms
+    const blockedSim = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/simulate`,
+      headers: { cookie: adminCookie },
+      payload: { count: 1 },
+    });
+    expect(blockedSim.statusCode).toBe(409);
+    expect(blockedSim.json()).toMatchObject({ error: "simulation_requires_test_room" });
+
+    const blockedRemove = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/participants/remove`,
+      headers: { cookie: adminCookie },
+      payload: { count: 1 },
+    });
+    expect(blockedRemove.statusCode).toBe(409);
+    expect(blockedRemove.json()).toMatchObject({ error: "simulation_requires_test_room" });
+
+    // Real member joins and casts ballot
+    const generated = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/generate`,
+      headers: { cookie: adminCookie },
+    });
+    expect(generated.statusCode).toBe(200);
+    const memberCode = (generated.json().accessCodes as Array<{ code: string }>)[0]!.code;
+
+    const joined = await app.inject({
+      method: "POST",
+      url: `/v1/join/${room.inviteToken}`,
+      payload: { code: memberCode, joinKey: "real-member-join-key-001" },
+    });
+    expect(joined.statusCode).toBe(200);
+
+    const opened = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/rounds`,
+      headers: { cookie: adminCookie },
+    });
+    expect(opened.statusCode).toBe(201);
+
+    const cast = await app.inject({
+      method: "POST",
+      url: `/v1/join/${room.inviteToken}/ballot`,
+      payload: {
+        joinKey: "real-member-join-key-001",
+        candidateId: room.candidates[0]!.id,
+      },
+    });
+    expect(cast.statusCode).toBe(201);
+
+    // Inspect global integrity logs
+    const logsRes = await app.inject({
+      method: "GET",
+      url: `/v1/admin/logs?roomId=${room.id}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(logsRes.statusCode).toBe(200);
+    const logsBody = logsRes.json() as {
+      logs: Array<{
+        id: string;
+        action: string;
+        actorRole: string;
+        payload: Record<string, unknown>;
+        integrityHash: string;
+      }>;
+      summary: {
+        humanBallotsCast: number;
+        simulatedBallotsCast: number;
+        humanParticipantsJoined: number;
+        adminVoteInterventions: number;
+        immutable: boolean;
+      };
+    };
+
+    expect(logsBody.summary).toMatchObject({
+      humanBallotsCast: 1,
+      simulatedBallotsCast: 0,
+      humanParticipantsJoined: 1,
+      adminVoteInterventions: 0,
+      immutable: true,
+    });
+
+    const ballotLog = logsBody.logs.find((entry) => entry.action === "ballot_cast");
+    expect(ballotLog).toBeDefined();
+    expect(ballotLog?.actorRole).toBe("voter");
+    expect(ballotLog?.payload).toMatchObject({
+      voterOrigin: "authenticated_member",
+      isSimulated: false,
+      memberVerified: true,
+      adminIntervention: false,
+    });
+    expect(ballotLog?.integrityHash).toMatch(/^[A-F0-9]{16}$/);
+
+    // Logs cannot be deleted or modified even by admin
+    const deleteAllLogs = await app.inject({
+      method: "DELETE",
+      url: "/v1/admin/logs",
+      headers: { cookie: adminCookie },
+    });
+    expect(deleteAllLogs.statusCode).toBe(403);
+    expect(deleteAllLogs.json()).toMatchObject({ error: "logs_are_immutable" });
+
+    const deleteSingleLog = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/logs/${ballotLog!.id}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(deleteSingleLog.statusCode).toBe(403);
+    expect(deleteSingleLog.json()).toMatchObject({ error: "logs_are_immutable" });
+
+    // Deleting the room preserves all logs and appends room_deleted
+    const deleteRoomRes = await app.inject({
+      method: "DELETE",
+      url: `/v1/admin/rooms/${room.id}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(deleteRoomRes.statusCode).toBe(204);
+
+    const logsAfterRoomDelete = await app.inject({
+      method: "GET",
+      url: `/v1/admin/logs?roomId=${room.id}`,
+      headers: { cookie: adminCookie },
+    });
+    expect(logsAfterRoomDelete.statusCode).toBe(200);
+    const preservedActions = (
+      logsAfterRoomDelete.json().logs as Array<{ action: string; roomTitle: string }>
+    ).map((entry) => entry.action);
+    expect(preservedActions).toEqual([
+      "room_created",
+      "participant_joined",
+      "round_opened",
+      "ballot_cast",
+      "room_deleted",
+    ]);
 
     await app.close();
   });

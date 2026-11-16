@@ -22,18 +22,27 @@ export type AppDependencies = {
 
 export async function buildApp(dependencies: AppDependencies = {}) {
   const app = Fastify({
+    bodyLimit: 15 * 1024 * 1024,
     // Trust forwarded headers only from loopback and private addresses (the Compose
     // nginx). A client on the published API port cannot forge its address.
     trustProxy: "loopback, uniquelocal",
-    logger: {
-      redact: ["req.headers.authorization", "req.headers.cookie", "res.headers.set-cookie"],
-    },
+    logger:
+      process.env.SCELTA_LOG === "silent"
+        ? false
+        : {
+            redact: [
+              "req.headers.authorization",
+              "req.headers.cookie",
+              "req.headers.x-scelta-join-key",
+              "res.headers.set-cookie",
+            ],
+          },
   });
 
   await app.register(cors, {
     origin: env.corsOrigin,
     credentials: true,
-    allowedHeaders: ["Content-Type"],
+    allowedHeaders: ["Content-Type", "x-scelta-join-key"],
   });
   await app.register(sensible);
   await app.register(healthRoutes);

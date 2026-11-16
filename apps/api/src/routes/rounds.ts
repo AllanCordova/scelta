@@ -172,6 +172,9 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           if (resolved.reason === "winner_already_elected") {
             return reply.code(409).send({ error: "winner_already_elected" });
           }
+          if (resolved.reason === "max_rounds_reached") {
+            return reply.code(409).send({ error: "max_rounds_reached" });
+          }
           return reply.code(400).send({ error: "invalid_candidate_subset" });
         }
 
@@ -244,6 +247,9 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         let tally: RoundTally | null = null;
         let outcome: RoundResult | null = closeRoundOutcome(quorum.quorumMet);
 
+        const allRoundsBeforeClose = await repository.listRounds(room.id);
+        const officeRoundNumber = countOfficeRoundNumber(allRoundsBeforeClose, round);
+
         if (quorum.quorumMet) {
           const ballotCandidateIds = await repository.listRoundBallotCandidateIds(roundId);
           const votedCount = ballotCandidateIds.length;
@@ -264,18 +270,20 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
 
           const candidates = await repository.listCandidates(roomId);
           if (candidates.length > 0) {
-            tally = tallyRoundVotes(candidates, ballotCandidateIds);
+            tally = tallyRoundVotes(candidates, ballotCandidateIds, {
+              roundNumber: officeRoundNumber,
+            });
             outcome = tally.outcome;
           }
         }
 
-        const closed = await repository.closeRound(roomId, roundId, outcome);
+        const closed = await repository.closeRound(roomId, roundId, outcome, {
+          winnerCandidateId: tally?.winnerId ?? null,
+          tieBreakReason: tally?.tieBreakReason ?? null,
+        });
         if (!closed) {
           return reply.code(409).send({ error: "round_not_open" });
         }
-
-        const allRounds = await repository.listRounds(room.id);
-        const officeRoundNumber = countOfficeRoundNumber(allRounds, closed);
 
         options.presencePublisher?.publishRoundState?.(room.id, {
           roundId: closed.id,
@@ -371,11 +379,16 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: check.reason });
         }
 
-        const [allCandidates, ballotCandidateIds] = await Promise.all([
+        const [allCandidates, ballotCandidateIds, allRoundsBeforeDecline] = await Promise.all([
           repository.listAllCandidates(roomId),
           repository.listRoundBallotCandidateIds(roundId),
+          repository.listRounds(room.id),
         ]);
-        const tally = tallyRoundVotes(allCandidates, ballotCandidateIds);
+        const tally = tallyRoundVotes(allCandidates, ballotCandidateIds, {
+          roundNumber: countOfficeRoundNumber(allRoundsBeforeDecline, round),
+          winnerOverrideId: round.winnerCandidateId,
+          tieBreakReason: round.tieBreakReason,
+        });
         if (!tally.winnerId) {
           return reply.code(409).send({ error: "winner_not_elected" });
         }
@@ -404,6 +417,98 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         };
       } catch (error) {
         request.log.error({ err: error, roomId, roundId }, "Failed to decline elected office");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/rounds/:roundId/resolve-tie",
+    {
+      schema: {
+        params: Type.Object({ roomId: Uuid, roundId: Uuid }),
+        body: Type.Object({ winnerCandidateId: Uuid }, { additionalProperties: false }),
+      },
+    },
+    async (request, reply) => {
+      const repository = await adminRepository(request, reply, options);
+      if (!repository) {
+        return;
+      }
+
+      const { roomId, roundId } = request.params as { roomId: string; roundId: string };
+      const { winnerCandidateId } = request.body as { winnerCandidateId: string };
+
+      try {
+        const room = await repository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        if (!canOpenRound(room.status)) {
+          return reply.code(409).send({ error: "room_not_open" });
+        }
+
+        const round = await repository.findRound(roomId, roundId);
+        if (!round) {
+          return reply.code(404).send({ error: "round_not_found" });
+        }
+        if (round.status !== "closed") {
+          return reply.code(409).send({ error: "round_not_closed" });
+        }
+        if (round.outcome !== "no_majority") {
+          return reply.code(409).send({ error: "tie_break_not_required" });
+        }
+
+        const [candidates, allCandidates, ballotCandidateIds, allRounds] = await Promise.all([
+          repository.listCandidates(roomId),
+          repository.listAllCandidates(roomId),
+          repository.listRoundBallotCandidateIds(roundId),
+          repository.listRounds(room.id),
+        ]);
+        const officeRoundNumber = countOfficeRoundNumber(allRounds, round);
+        if (officeRoundNumber < 3) {
+          return reply.code(409).send({ error: "tie_break_not_required" });
+        }
+
+        const activePool = candidates.length > 0 ? candidates : allCandidates;
+        const initialTally = tallyRoundVotes(activePool, ballotCandidateIds, {
+          roundNumber: officeRoundNumber,
+        });
+        if (!initialTally.tieBreakRequired || !initialTally.tiedCandidates) {
+          return reply.code(409).send({ error: "tie_break_not_required" });
+        }
+        if (!initialTally.tiedCandidates.some((item) => item.id === winnerCandidateId)) {
+          return reply.code(400).send({ error: "invalid_tie_break_candidate" });
+        }
+
+        if (!repository.resolveRoundTie) {
+          return reply.code(503).send({ error: "persistence_unavailable" });
+        }
+        const resolved = await repository.resolveRoundTie(roomId, roundId, winnerCandidateId);
+        if (!resolved) {
+          return reply.code(409).send({ error: "tie_break_not_required" });
+        }
+
+        const finalTally = tallyRoundVotes(activePool, ballotCandidateIds, {
+          roundNumber: officeRoundNumber,
+          winnerOverrideId: winnerCandidateId,
+          tieBreakReason: "admin_tiebreak",
+        });
+
+        options.presencePublisher?.publishRoundState?.(room.id, {
+          roundId: resolved.id,
+          roundNumber: resolved.number,
+          ...(resolved.officeLabel !== null
+            ? { officeLabel: resolved.officeLabel, officeRoundNumber }
+            : {}),
+          state: "closed",
+        });
+
+        return {
+          round: toRoundSummary(resolved, finalTally, officeRoundNumber),
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId, roundId }, "Failed to resolve round tie");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },

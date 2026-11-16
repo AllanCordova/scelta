@@ -91,6 +91,79 @@ describe("JoinRoom", () => {
     expect(screen.queryByLabelText("Código de acesso")).not.toBeInTheDocument();
   });
 
+  it("opens the door when a closed room becomes joinable", async () => {
+    let canJoin = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json({
+          title: "Assembleia",
+          status: canJoin ? "open" : "closed",
+          canJoin,
+        }),
+      ),
+    );
+
+    render(<JoinRoom token="late-token" />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Esta sala foi encerrada.");
+    canJoin = true;
+    expect(
+      await screen.findByRole("button", { name: "Entrar na sala" }, { timeout: 4000 }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the ballot after the voter is expelled and lets them enter again", async () => {
+    writeJoinIdentity(window.localStorage, "live-token", {
+      joinKey: "b".repeat(32),
+      displayName: "Ana",
+      accessCode: "A7K9M2",
+    });
+    let viewerAccess: "absent" | "present" = "absent";
+    let joins = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/ballot")) {
+          return json({
+            roomStatus: "voting",
+            viewerAccess,
+            candidates: [{ id: "cand-1", displayName: "Paulo" }],
+            round: { id: "round-1", number: 1, status: "open", outcome: null },
+          });
+        }
+        if (url.endsWith("/live-token") && init?.method === "POST") {
+          joins += 1;
+          if (joins > 1) {
+            viewerAccess = "present";
+          }
+          return json({
+            title: "Assembleia",
+            status: "voting",
+            displayName: "Ana",
+            presentCount: 1,
+            alreadyJoined: true,
+          });
+        }
+        if (url.endsWith("/live-token")) {
+          return json({ title: "Assembleia", status: "voting", canJoin: true });
+        }
+        if (url.endsWith("/ballot/receipt")) {
+          return json({ roundId: "round-1", hasVoted: false });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(<JoinRoom token="live-token" />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Você foi removido da sala.");
+    expect(screen.queryByRole("button", { name: "Paulo" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Entrar novamente" }));
+    expect(await screen.findByRole("button", { name: "Paulo" })).toBeInTheDocument();
+  });
+
   it("lets a joined voter cast one anonymous vote and hides the chosen candidate on the receipt", async () => {
     let voted = false;
     writeJoinIdentity(window.localStorage, "invite-token", {

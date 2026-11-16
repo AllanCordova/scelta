@@ -15,6 +15,7 @@ export const quorumUnitEnum = pgEnum("quorum_unit", ["absolute", "percent"]);
 export const roomStatusEnum = pgEnum("room_status", [
   "draft",
   "open",
+  "test",
   "voting",
   "closed",
   "cancelled",
@@ -163,6 +164,8 @@ export const rounds = pgTable(
     /** null while open or waiting for the tally; otherwise a round result. */
     outcome: text("outcome"),
     declinedCandidateId: uuid("declined_candidate_id"),
+    winnerCandidateId: uuid("winner_candidate_id"),
+    tieBreakReason: text("tie_break_reason"),
     openedAt: timestamp("opened_at", { withTimezone: true }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
   },
@@ -240,9 +243,9 @@ export const reactions = pgTable(
 
 export const auditEvents = pgTable("audit_events", {
   id: uuid("id").defaultRandom().primaryKey(),
-  roomId: uuid("room_id")
-    .notNull()
-    .references(() => rooms.id),
+  churchId: uuid("church_id").references(() => churches.id),
+  roomId: uuid("room_id").notNull(),
+  roomTitle: text("room_title"),
   actorRole: text("actor_role").notNull(),
   action: text("action").notNull(),
   payload: jsonb("payload").$type<Record<string, unknown>>().default({}),

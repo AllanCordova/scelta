@@ -10,7 +10,7 @@ import type { FastifyPluginAsync } from "fastify";
 import type { PresencePublisher } from "../realtime.js";
 import { hashJoinKey } from "../rooms/join-key.js";
 import { loadRoomOfficeState } from "../rooms/office-state.js";
-import type { RoomRepository } from "../rooms/room-repository.js";
+import type { RoomRepository, StoredRound } from "../rooms/room-repository.js";
 import { toRoundSummary } from "../rooms/round-summary.js";
 
 const TokenParams = Type.Object({
@@ -73,12 +73,17 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           return reply.code(404).send({ error: "invite_not_found" });
         }
 
-        const [candidates, allCandidates, allRounds] = await Promise.all([
+        const joinKey = readJoinKeyHeader(request.headers["x-scelta-join-key"]);
+        const [candidates, allCandidates, allRounds, viewerAccess] = await Promise.all([
           repository.listCandidates(room.id),
           repository.listAllCandidates(room.id),
           repository.listRounds(room.id),
+          joinKey && repository.describeVoterSession
+            ? repository.describeVoterSession(room.id, hashJoinKey(joinKey))
+            : Promise.resolve("unknown" as const),
         ]);
-        const round = allRounds[allRounds.length - 1] ?? null;
+        const round = selectCurrentRound(allRounds);
+        const officeRoundNumber = round ? countOfficeRoundNumber(allRounds, round) : undefined;
         let tally: RoundTally | null = null;
 
         if (
@@ -88,11 +93,22 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           allCandidates.length > 0
         ) {
           const ballotCandidateIds = await repository.listRoundBallotCandidateIds(round.id);
-          tally = tallyRoundVotes(allCandidates, ballotCandidateIds);
+          const eligibleIds = new Set(candidates.map((candidate) => candidate.id));
+          const useEligibleOnly =
+            candidates.length > 0 &&
+            ballotCandidateIds.every((id) => id === null || eligibleIds.has(id));
+          tally = tallyRoundVotes(
+            useEligibleOnly ? candidates : allCandidates,
+            ballotCandidateIds,
+            {
+              roundNumber: officeRoundNumber,
+              winnerOverrideId: round.winnerCandidateId,
+              tieBreakReason: round.tieBreakReason,
+            },
+          );
         }
 
         const officeState = await loadRoomOfficeState(repository, room, allCandidates, allRounds);
-        const officeRoundNumber = round ? countOfficeRoundNumber(allRounds, round) : undefined;
         const officeBanners = room.officeBanners ?? {};
         const activeBannerUrl = round?.officeLabel
           ? (officeBanners[round.officeLabel] ?? null)
@@ -106,6 +122,7 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           activeBannerUrl,
           reactionsEnabled: room.reactionsEnabled,
           chatMuted: room.chatMuted ?? false,
+          viewerAccess,
           allowedReactions: ALLOWED_REACTION_EMOJIS,
           candidates: candidates.map((candidate) => ({
             id: candidate.id,
@@ -158,8 +175,7 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           return reply.code(404).send({ error: "invite_not_found" });
         }
 
-        const latest = await repository.latestRounds([room.id]);
-        const round = latest[0] ?? null;
+        const round = selectCurrentRound(await repository.listRounds(room.id));
         if (!round || round.status !== "open") {
           return { roundId: null, hasVoted: false };
         }
@@ -202,8 +218,7 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           return reply.code(409).send({ error: "room_not_open" });
         }
 
-        const latest = await repository.latestRounds([room.id]);
-        const round = latest[0] ?? null;
+        const round = selectCurrentRound(await repository.listRounds(room.id));
         if (!round || round.status !== "open") {
           return reply.code(409).send({ error: "round_not_open" });
         }
@@ -244,3 +259,28 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
     },
   );
 };
+
+const JOIN_KEY_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function readJoinKeyHeader(value: string | string[] | undefined): string | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) {
+    return null;
+  }
+  const joinKey = raw.trim();
+  if (joinKey.length < 16 || joinKey.length > 128 || !JOIN_KEY_PATTERN.test(joinKey)) {
+    return null;
+  }
+  return joinKey;
+}
+
+/** Prefer the open round everyone should be voting in, even if a later number is already closed. */
+function selectCurrentRound(allRounds: StoredRound[]): StoredRound | null {
+  for (let index = allRounds.length - 1; index >= 0; index -= 1) {
+    const round = allRounds[index];
+    if (round?.status === "open") {
+      return round;
+    }
+  }
+  return allRounds[allRounds.length - 1] ?? null;
+}

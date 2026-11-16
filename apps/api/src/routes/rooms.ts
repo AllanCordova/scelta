@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import {
+  canSimulateInRoom,
   countOfficeRoundNumber,
   findPreset,
   isMemberEligibleForRoomType,
@@ -46,7 +48,9 @@ const CreateRoomBody = Type.Object(
     quorumValue: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
     quorumUnit: Type.Optional(Type.Union([Type.Literal("absolute"), Type.Literal("percent")])),
     eligibleCount: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
-    status: Type.Optional(Type.Union([Type.Literal("draft"), Type.Literal("open")])),
+    status: Type.Optional(
+      Type.Union([Type.Literal("draft"), Type.Literal("open"), Type.Literal("test")]),
+    ),
     candidates: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { maxItems: 50 })),
   },
   { additionalProperties: false },
@@ -70,7 +74,12 @@ const UpdateRoomBody = Type.Object(
     quorumUnit: Type.Optional(Type.Union([Type.Literal("absolute"), Type.Literal("percent")])),
     eligibleCount: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
     status: Type.Optional(
-      Type.Union([Type.Literal("draft"), Type.Literal("open"), Type.Literal("closed")]),
+      Type.Union([
+        Type.Literal("draft"),
+        Type.Literal("open"),
+        Type.Literal("test"),
+        Type.Literal("closed"),
+      ]),
     ),
     reactionsEnabled: Type.Optional(Type.Boolean()),
     chatMuted: Type.Optional(Type.Boolean()),
@@ -83,7 +92,7 @@ type UpdateRoomBodyType = {
   quorumValue?: number;
   quorumUnit?: "absolute" | "percent";
   eligibleCount?: number;
-  status?: "draft" | "open" | "closed";
+  status?: "draft" | "open" | "test" | "closed";
   reactionsEnabled?: boolean;
   chatMuted?: boolean;
 };
@@ -100,6 +109,28 @@ const RoomIdParams = Type.Object({
 const RemoveParticipantsBody = Type.Object(
   {
     count: Type.Integer({ minimum: 1, maximum: 50 }),
+  },
+  { additionalProperties: false },
+);
+
+const Uuid = Type.String({
+  minLength: 36,
+  maxLength: 36,
+  pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+});
+
+const IssueAccessCodeBody = Type.Object(
+  {
+    memberId: Uuid,
+    replace: Type.Optional(Type.Boolean()),
+  },
+  { additionalProperties: false },
+);
+
+const ExpelParticipantsBody = Type.Object(
+  {
+    all: Type.Optional(Type.Boolean()),
+    participantId: Type.Optional(Uuid),
   },
   { additionalProperties: false },
 );
@@ -309,11 +340,19 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
             options.roomRepository.listAuditEvents(roomId),
           ]);
         const round = allRounds[allRounds.length - 1] ?? null;
-        const candidatesByRoom = new Map([[roomId, allCandidates]]);
+        const officeRoundNumber = round ? countOfficeRoundNumber(allRounds, round) : undefined;
+        const candidatesByRoom = new Map([
+          [roomId, roomCandidates.length > 0 ? roomCandidates : allCandidates],
+        ]);
+        const allCandidatesByRoom = new Map([[roomId, allCandidates]]);
         const tallyByRound = await loadTalliesForClosedRounds(
           options.roomRepository,
           round ? [round] : [],
           candidatesByRoom,
+          allCandidatesByRoom,
+          round && officeRoundNumber !== undefined
+            ? new Map([[round.id, officeRoundNumber]])
+            : undefined,
         );
         const [receiptDates, officeState] = await Promise.all([
           round
@@ -321,7 +360,6 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
             : Promise.resolve([]),
           loadRoomOfficeState(options.roomRepository, room, allCandidates, allRounds),
         ]);
-        const officeRoundNumber = round ? countOfficeRoundNumber(allRounds, round) : undefined;
 
         return {
           room: {
@@ -468,6 +506,14 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
             error: "invalid_room",
             details: [{ field: "quorumValue", code: "out_of_range" }],
           });
+        }
+
+        if (
+          body.status === "open" &&
+          existing.status === "test" &&
+          (await options.roomRepository.hasSimulatedAccessCodes?.(roomId))
+        ) {
+          return reply.code(409).send({ error: "cannot_open_test_room" });
         }
 
         const updated = await options.roomRepository.updateRoom(roomId, {
@@ -662,6 +708,9 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         if (!room) {
           return reply.code(404).send({ error: "room_not_found" });
         }
+        if (!canSimulateInRoom(room.status)) {
+          return reply.code(409).send({ error: "simulation_requires_test_room" });
+        }
 
         const removedCount = await options.roomRepository.removePresentParticipants(roomId, count);
         const presentCount = await options.roomRepository.countPresent(roomId);
@@ -671,6 +720,78 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         return { removedCount, presence };
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to remove participants");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/v1/admin/rooms/:roomId/participants",
+    { schema: { params: RoomIdParams } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository?.listParticipants) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        const rows = await options.roomRepository.listParticipants(roomId);
+        return {
+          participants: rows
+            .filter((participant) => participant.isPresent)
+            .map((participant) => ({
+              id: participant.id,
+              displayName: participant.displayName,
+              joinedAt: participant.joinedAt.toISOString(),
+            })),
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to list present participants");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/participants/expel",
+    { schema: { params: RoomIdParams, body: ExpelParticipantsBody } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository?.expelParticipants) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      const body = request.body as { all?: boolean; participantId?: string };
+      const expelAll = body.all === true;
+      if (expelAll === Boolean(body.participantId)) {
+        return reply.code(400).send({ error: "invalid_expel" });
+      }
+
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+        const expelledCount = await options.roomRepository.expelParticipants(
+          roomId,
+          expelAll ? undefined : body.participantId,
+        );
+        const presentCount = await options.roomRepository.countPresent(roomId);
+        const presence = quorumStatus(room, presentCount);
+        options.presencePublisher?.publishPresence(roomId, presence);
+        return { expelledCount, presence };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to expel participants");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },
@@ -729,6 +850,40 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
   );
 
   app.post(
+    "/v1/admin/rooms/:roomId/access-codes/issue",
+    { schema: { params: RoomIdParams, body: IssueAccessCodeBody } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository?.issueMemberAccessCode) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      const body = request.body as { memberId: string; replace?: boolean };
+      try {
+        const issued = await options.roomRepository.issueMemberAccessCode(
+          roomId,
+          body.memberId,
+          body.replace === true,
+        );
+        if (!issued.ok) {
+          const status = issued.reason === "member_ineligible" ? 422 : 404;
+          return reply.code(status).send({ error: issued.reason });
+        }
+        return {
+          accessCode: toAccessCodeResponse(issued.accessCode),
+          created: issued.created,
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to issue access code");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
     "/v1/admin/rooms/:roomId/access-codes/simulate",
     { schema: { params: RoomIdParams, body: SimulateCodesBody } },
     async (request, reply) => {
@@ -745,6 +900,9 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         const room = await options.roomRepository.findRoomById(roomId);
         if (!room) {
           return reply.code(404).send({ error: "room_not_found" });
+        }
+        if (!canSimulateInRoom(room.status)) {
+          return reply.code(409).send({ error: "simulation_requires_test_room" });
         }
         const codes = await options.roomRepository.createSimulatedAccessCodes(roomId, count);
         return { accessCodes: codes.map(toAccessCodeResponse) };
@@ -847,6 +1005,161 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
       }
     },
   );
+
+  app.get("/v1/admin/logs", async (request, reply) => {
+    if (!(await requireAdmin(request, reply, options.userRepository))) {
+      return;
+    }
+    if (!options.roomRepository) {
+      return reply.code(503).send({ error: "persistence_unavailable" });
+    }
+
+    const query = (request.query ?? {}) as { roomId?: string };
+    const roomIdFilter =
+      typeof query.roomId === "string" && query.roomId.trim().length > 0
+        ? query.roomId.trim()
+        : undefined;
+    if (
+      roomIdFilter &&
+      !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(
+        roomIdFilter,
+      )
+    ) {
+      return reply.code(400).send({ error: "invalid_room_id" });
+    }
+
+    try {
+      const [events, allRooms] = await Promise.all([
+        options.roomRepository.listAllAuditEvents
+          ? options.roomRepository.listAllAuditEvents(roomIdFilter)
+          : roomIdFilter
+            ? options.roomRepository.listAuditEvents(roomIdFilter)
+            : Promise.resolve([]),
+        options.roomRepository.listRooms(),
+      ]);
+
+      const roomMap = new Map(allRooms.map((r) => [r.id, r]));
+      const distinctRooms = new Map<
+        string,
+        { id: string; title: string; status: string; deleted: boolean }
+      >();
+      for (const r of allRooms) {
+        distinctRooms.set(r.id, {
+          id: r.id,
+          title: r.title,
+          status: r.status,
+          deleted: false,
+        });
+      }
+
+      let previousHash = "GENESIS";
+      const logsWithHashes = events.map((event, index) => {
+        const knownRoom = roomMap.get(event.roomId);
+        const titleFromPayload =
+          typeof event.payload?.title === "string" ? event.payload.title : null;
+        const roomTitle =
+          event.roomTitle ?? knownRoom?.title ?? titleFromPayload ?? `Sala ${event.roomId.slice(0, 8)}`;
+        const roomStatus =
+          event.roomStatus ??
+          knownRoom?.status ??
+          (typeof event.payload?.roomStatus === "string"
+            ? event.payload.roomStatus
+            : typeof event.payload?.status === "string"
+              ? event.payload.status
+              : "closed");
+        if (!distinctRooms.has(event.roomId)) {
+          distinctRooms.set(event.roomId, {
+            id: event.roomId,
+            title: roomTitle,
+            status: String(roomStatus),
+            deleted: true,
+          });
+        }
+
+        const iso = event.createdAt.toISOString();
+        const integrityHash = createHash("sha256")
+          .update(`${previousHash}:${event.id}:${event.roomId}:${event.actorRole}:${event.action}:${iso}`)
+          .digest("hex")
+          .slice(0, 16)
+          .toUpperCase();
+        previousHash = integrityHash;
+
+        return {
+          id: event.id,
+          sequence: index + 1,
+          roomId: event.roomId,
+          roomTitle,
+          roomStatus: String(roomStatus),
+          actorRole: event.actorRole,
+          action: event.action,
+          payload: event.payload,
+          createdAt: iso,
+          integrityHash,
+        };
+      });
+
+      const humanBallotsCast = logsWithHashes.filter(
+        (item) => item.action === "ballot_cast" && item.actorRole === "voter",
+      ).length;
+      const simulatedBallotsCast = logsWithHashes.filter(
+        (item) => item.action === "ballot_cast" && item.actorRole === "simulated_voter",
+      ).length;
+      const humanParticipantsJoined = logsWithHashes.filter(
+        (item) => item.action === "participant_joined" && item.actorRole === "voter",
+      ).length;
+      const simulatedParticipantsJoined = logsWithHashes.filter(
+        (item) => item.action === "participant_joined" && item.actorRole === "simulated_voter",
+      ).length;
+
+      return {
+        summary: {
+          totalEvents: logsWithHashes.length,
+          humanBallotsCast,
+          simulatedBallotsCast,
+          humanParticipantsJoined,
+          simulatedParticipantsJoined,
+          adminVoteInterventions: 0,
+          immutable: true,
+          chainTipHash: previousHash,
+        },
+        rooms: Array.from(distinctRooms.values()),
+        logs: logsWithHashes,
+      };
+    } catch (error) {
+      request.log.error({ err: error }, "Failed to list integrity logs");
+      return reply.code(500).send({ error: "persistence_failed" });
+    }
+  });
+
+  app.delete("/v1/admin/logs", async (request, reply) => {
+    if (!(await requireAdmin(request, reply, options.userRepository))) {
+      return;
+    }
+    return reply.code(403).send({
+      error: "logs_are_immutable",
+      message: "Os logs de auditoria e comprovação de votos são permanentes e inapagáveis, inclusive para administradores.",
+    });
+  });
+
+  app.delete("/v1/admin/logs/:logId", async (request, reply) => {
+    if (!(await requireAdmin(request, reply, options.userRepository))) {
+      return;
+    }
+    return reply.code(403).send({
+      error: "logs_are_immutable",
+      message: "Os logs de auditoria e comprovação de votos são permanentes e inapagáveis, inclusive para administradores.",
+    });
+  });
+
+  app.patch("/v1/admin/logs/:logId", async (request, reply) => {
+    if (!(await requireAdmin(request, reply, options.userRepository))) {
+      return;
+    }
+    return reply.code(403).send({
+      error: "logs_are_immutable",
+      message: "Os logs de auditoria e comprovação de votos são permanentes e inalteráveis.",
+    });
+  });
 };
 
 function toAccessCodeResponse(row: {
@@ -925,6 +1238,8 @@ async function loadTalliesForClosedRounds(
   repository: RoomRepository,
   rounds: StoredRound[],
   candidatesByRoom: Map<string, StoredCandidate[]>,
+  fallbackCandidatesByRoom?: Map<string, StoredCandidate[]>,
+  officeRoundNumberByRoundId?: Map<string, number>,
 ): Promise<Map<string, RoundTally>> {
   const tallies = new Map<string, RoundTally>();
   for (const round of rounds) {
@@ -934,12 +1249,26 @@ async function loadTalliesForClosedRounds(
     if (round.outcome !== "elected" && round.outcome !== "no_majority") {
       continue;
     }
-    const candidates = candidatesByRoom.get(round.roomId) ?? [];
-    if (candidates.length === 0) {
+    const primaryCandidates = candidatesByRoom.get(round.roomId) ?? [];
+    const fallbackCandidates = fallbackCandidatesByRoom?.get(round.roomId) ?? primaryCandidates;
+    if (primaryCandidates.length === 0 && fallbackCandidates.length === 0) {
       continue;
     }
     const ballotCandidateIds = await repository.listRoundBallotCandidateIds(round.id);
-    tallies.set(round.id, tallyRoundVotes(candidates, ballotCandidateIds));
+    const primaryIds = new Set(primaryCandidates.map((candidate) => candidate.id));
+    const usePrimary =
+      primaryCandidates.length > 0 &&
+      ballotCandidateIds.every((id) => id === null || primaryIds.has(id));
+    const pool = usePrimary ? primaryCandidates : fallbackCandidates;
+    const roundNumber = officeRoundNumberByRoundId?.get(round.id) ?? round.number;
+    tallies.set(
+      round.id,
+      tallyRoundVotes(pool, ballotCandidateIds, {
+        roundNumber,
+        winnerOverrideId: round.winnerCandidateId,
+        tieBreakReason: round.tieBreakReason,
+      }),
+    );
   }
   return tallies;
 }

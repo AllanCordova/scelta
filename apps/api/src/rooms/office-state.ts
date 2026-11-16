@@ -1,5 +1,6 @@
 import {
   buildOfficeProgress,
+  countOfficeRoundNumber,
   isMultiOfficeRoomType,
   resolveTargetOffice,
   tallyRoundVotes,
@@ -30,7 +31,11 @@ export async function loadRoomOfficeState(
 
       if (round.status === "closed" && round.outcome === "elected" && allCandidates.length > 0) {
         const ballotCandidateIds = await repository.listRoundBallotCandidateIds(round.id);
-        const tally = tallyRoundVotes(allCandidates, ballotCandidateIds);
+        const tally = tallyRoundVotes(allCandidates, ballotCandidateIds, {
+          roundNumber: countOfficeRoundNumber(allRounds, round),
+          winnerOverrideId: round.winnerCandidateId,
+          tieBreakReason: round.tieBreakReason,
+        });
         winnerCandidateId = tally.winnerId;
         winnerName = tally.winnerName;
       }

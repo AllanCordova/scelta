@@ -34,7 +34,10 @@ export function Header() {
               className="nav-link"
               href="/admin"
               aria-current={
-                path === "/admin" || path === "/admin/codigos" || path === "/admin/membros"
+                path === "/admin" ||
+                path === "/admin/codigos" ||
+                path === "/admin/membros" ||
+                path === "/admin/logs"
                   ? "page"
                   : undefined
               }

@@ -12,10 +12,10 @@ export const ROOM_TYPES = [
 ] as const;
 export type RoomType = (typeof ROOM_TYPES)[number];
 
-export const CREATE_ROOM_STATUSES = ["draft", "open"] as const;
+export const CREATE_ROOM_STATUSES = ["draft", "open", "test"] as const;
 export type CreateRoomStatus = (typeof CREATE_ROOM_STATUSES)[number];
 
-export const ROOM_STATUSES = ["draft", "open", "voting", "closed", "cancelled"] as const;
+export const ROOM_STATUSES = ["draft", "open", "test", "voting", "closed", "cancelled"] as const;
 export type RoomStatus = (typeof ROOM_STATUSES)[number];
 
 export type MajorityRule = "absolute_majority";
@@ -176,7 +176,11 @@ export function validateCreateRoom(
 }
 
 export function canOpenRound(status: RoomStatus): boolean {
-  return status === "open" || status === "voting";
+  return status === "open" || status === "test" || status === "voting";
+}
+
+export function canSimulateInRoom(status: RoomStatus): boolean {
+  return status === "test";
 }
 
 function resolveEligibleCount(draft: CreateRoomDraft): {

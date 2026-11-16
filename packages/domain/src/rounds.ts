@@ -79,7 +79,8 @@ export type ResolveNextRoundInput = {
 
 export type NextRoundRejectionReason =
   | "winner_already_elected"
-  | "invalid_candidate_subset";
+  | "invalid_candidate_subset"
+  | "max_rounds_reached";
 
 export type ResolveNextRoundResult =
   | { ok: true; candidateIds: string[] }
@@ -98,6 +99,13 @@ export function nextRoundPlan(input: NextRoundPlan): RoundOutcome {
   }
 
   if (input.preset === "ipb_society_board") {
+    if (input.roundNumber >= 3) {
+      return {
+        kind: "inconclusive",
+        reason: "Maximum of 3 ballots reached; tie-break by age required",
+      };
+    }
+
     if (input.roundNumber >= 2) {
       return {
         kind: "next_round",
@@ -114,6 +122,13 @@ export function nextRoundPlan(input: NextRoundPlan): RoundOutcome {
   }
 
   if (input.preset === "ipb_local_officers") {
+    if (input.roundNumber >= 3) {
+      return {
+        kind: "inconclusive",
+        reason: "Maximum of 3 ballots reached; tie-break by age required",
+      };
+    }
+
     if (input.roundNumber >= 2) {
       const limit = Math.max(vacancies * 2, vacancies + 1);
       return {
@@ -145,6 +160,14 @@ export function resolveNextRoundCandidateIds(
 ): ResolveNextRoundResult {
   if (input.previousOutcome === "elected") {
     return { ok: false, reason: "winner_already_elected" };
+  }
+
+  if (
+    input.previousRoundNumber !== null &&
+    input.previousRoundNumber >= 3 &&
+    input.previousOutcome === "no_majority"
+  ) {
+    return { ok: false, reason: "max_rounds_reached" };
   }
 
   const eligibleSet = new Set(input.eligibleCandidateIds);

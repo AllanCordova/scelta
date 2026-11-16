@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canOpenRound, findPreset, validateCreateRoom } from "./room.js";
+import { canOpenRound, canSimulateInRoom, findPreset, validateCreateRoom } from "./room.js";
 
 describe("validateCreateRoom", () => {
   it("pre-fills quorum, majority, and round behavior from the local officers preset", () => {
@@ -208,12 +208,33 @@ describe("validateCreateRoom", () => {
     });
   });
 
-  it("allows a round only in an open or voting room", () => {
+  it("allows a round only in an open, test, or voting room and restricts simulation to test rooms", () => {
     expect(canOpenRound("open")).toBe(true);
+    expect(canOpenRound("test")).toBe(true);
     expect(canOpenRound("voting")).toBe(true);
     expect(canOpenRound("draft")).toBe(false);
     expect(canOpenRound("closed")).toBe(false);
     expect(canOpenRound("cancelled")).toBe(false);
+
+    expect(canSimulateInRoom("test")).toBe(true);
+    expect(canSimulateInRoom("open")).toBe(false);
+    expect(canSimulateInRoom("draft")).toBe(false);
+    expect(canSimulateInRoom("voting")).toBe(false);
+    expect(canSimulateInRoom("closed")).toBe(false);
+    expect(canSimulateInRoom("cancelled")).toBe(false);
+  });
+
+  it("accepts creating a room with status test", () => {
+    const result = validateCreateRoom({
+      title: "Assembleia de Teste",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      status: "test",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.status).toBe("test");
+    }
   });
 
   it("rejects a blank title", () => {

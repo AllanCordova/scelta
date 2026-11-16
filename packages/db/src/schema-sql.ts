@@ -10,10 +10,12 @@ EXCEPTION
 END $$;
 
 DO $$ BEGIN
-  CREATE TYPE room_status AS ENUM ('draft', 'open', 'voting', 'closed', 'cancelled');
+  CREATE TYPE room_status AS ENUM ('draft', 'open', 'test', 'voting', 'closed', 'cancelled');
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
+
+ALTER TYPE room_status ADD VALUE IF NOT EXISTS 'test';
 
 DO $$ BEGIN
   CREATE TYPE rules_preset AS ENUM ('ipb_local_officers', 'ipb_society_board', 'custom');
@@ -151,12 +153,16 @@ CREATE TABLE IF NOT EXISTS rounds (
   status round_status NOT NULL DEFAULT 'pending',
   outcome text,
   declined_candidate_id uuid,
+  winner_candidate_id uuid,
+  tie_break_reason text,
   opened_at timestamptz,
   closed_at timestamptz
 );
 
 ALTER TABLE rounds ADD COLUMN IF NOT EXISTS outcome text;
 ALTER TABLE rounds ADD COLUMN IF NOT EXISTS declined_candidate_id uuid;
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS winner_candidate_id uuid;
+ALTER TABLE rounds ADD COLUMN IF NOT EXISTS tie_break_reason text;
 
 -- At most one open round per room, and round numbers do not collide.
 CREATE UNIQUE INDEX IF NOT EXISTS rounds_room_number_uidx ON rounds (room_id, number);
@@ -214,12 +220,18 @@ CREATE INDEX IF NOT EXISTS reactions_room_participant_created_idx
 
 CREATE TABLE IF NOT EXISTS audit_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  room_id uuid NOT NULL REFERENCES rooms (id),
+  church_id uuid REFERENCES churches (id),
+  room_id uuid NOT NULL,
+  room_title text,
   actor_role text NOT NULL,
   action text NOT NULL,
   payload jsonb DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS church_id uuid REFERENCES churches (id);
+ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS room_title text;
+ALTER TABLE audit_events DROP CONSTRAINT IF EXISTS audit_events_room_id_fkey;
 
 CREATE TABLE IF NOT EXISTS room_chat_messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

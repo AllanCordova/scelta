@@ -2,8 +2,9 @@ import { hashPassword } from "../auth/password.js";
 import { EmailAlreadyUsedError, type UserRepository } from "./user-repository.js";
 
 /**
- * Creates the operator account once. An email that already exists keeps its
- * password and role, so a member cannot be promoted by restarting the API.
+ * Creates the operator account or syncs its password when already an admin.
+ * An existing member email keeps its password and role, so a member cannot be
+ * promoted by restarting the API.
  */
 export async function ensureBootstrapAdmin(
   users: UserRepository,
@@ -12,6 +13,10 @@ export async function ensureBootstrapAdmin(
   const email = account.email.trim().toLowerCase();
   const existing = await users.findByEmail(email);
   if (existing) {
+    if (existing.role === "admin" && users.updateUserPassword) {
+      const passwordHash = await hashPassword(account.password);
+      await users.updateUserPassword(existing.id, passwordHash);
+    }
     return;
   }
 

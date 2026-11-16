@@ -13,12 +13,29 @@ export type MajorityResult = {
 export type CandidateOption = {
   id: string;
   displayName: string;
+  photoUrl?: string | null;
+  birthDate?: string | null;
+  isEligible?: boolean;
 };
 
 export type CandidateStanding = {
   candidateId: string;
   displayName: string;
   votes: number;
+};
+
+export type TieBreakReason = "age" | "admin_tiebreak";
+
+export type TiedCandidateOption = {
+  id: string;
+  displayName: string;
+  birthDate: string | null;
+};
+
+export type TallyRoundOptions = {
+  roundNumber?: number;
+  winnerOverrideId?: string | null;
+  tieBreakReason?: TieBreakReason | null;
 };
 
 export type RoundTally = {
@@ -29,6 +46,9 @@ export type RoundTally = {
   winnerId: string | null;
   winnerName: string | null;
   standings: CandidateStanding[];
+  tieBreakReason?: TieBreakReason;
+  tieBreakRequired?: boolean;
+  tiedCandidates?: TiedCandidateOption[];
 };
 
 /** Absolute majority: strictly more than 50% of votes (> half). */
@@ -52,7 +72,9 @@ export function hasAbsoluteMajority(
 export function tallyRoundVotes(
   candidates: readonly CandidateOption[],
   ballotCandidateIds: readonly (string | null)[],
+  options?: TallyRoundOptions,
 ): RoundTally {
+  const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   const counts = new Map<string, number>();
   for (const candidate of candidates) {
     counts.set(candidate.id, 0);
@@ -84,16 +106,116 @@ export function tallyRoundVotes(
     votes: entry.votes,
   }));
 
+  if (options?.winnerOverrideId) {
+    const overrideWinner = byId.get(options.winnerOverrideId);
+    if (overrideWinner) {
+      return {
+        totalVotes: majority.totalVotes,
+        nullVotes,
+        threshold: majority.threshold,
+        outcome: "elected",
+        winnerId: overrideWinner.id,
+        winnerName: overrideWinner.displayName,
+        standings,
+        ...(options.tieBreakReason ? { tieBreakReason: options.tieBreakReason } : {}),
+      };
+    }
+  }
+
   const winnerId = majority.winnerIds[0] ?? null;
   const winnerName = winnerId ? (nameById.get(winnerId) ?? null) : null;
+
+  if (winnerId !== null) {
+    return {
+      totalVotes: majority.totalVotes,
+      nullVotes,
+      threshold: majority.threshold,
+      outcome: "elected",
+      winnerId,
+      winnerName,
+      standings,
+    };
+  }
+
+  const roundNumber = options?.roundNumber ?? 1;
+  if (roundNumber >= 3 && candidates.length > 0) {
+    const topVotes = majority.sorted[0]?.votes ?? 0;
+    let tiedCandidates: CandidateOption[];
+
+    if (topVotes > 0) {
+      tiedCandidates = majority.sorted
+        .filter((entry) => entry.votes === topVotes)
+        .map((entry) => byId.get(entry.candidateId))
+        .filter((candidate): candidate is CandidateOption => Boolean(candidate));
+    } else {
+      const eligibleOnly = candidates.filter((candidate) => candidate.isEligible !== false);
+      tiedCandidates = eligibleOnly.length > 0 ? [...eligibleOnly] : [...candidates];
+    }
+
+    if (tiedCandidates.length === 1) {
+      const singleWinner = tiedCandidates[0]!;
+      return {
+        totalVotes: majority.totalVotes,
+        nullVotes,
+        threshold: majority.threshold,
+        outcome: "elected",
+        winnerId: singleWinner.id,
+        winnerName: singleWinner.displayName,
+        standings,
+      };
+    }
+
+    if (tiedCandidates.length >= 2) {
+      const allHaveBirthDate = tiedCandidates.every(
+        (candidate) =>
+          typeof candidate.birthDate === "string" &&
+          /^\d{4}-\d{2}-\d{2}$/.test(candidate.birthDate),
+      );
+
+      if (allHaveBirthDate) {
+        const sortedByAge = [...tiedCandidates].sort((a, b) =>
+          a.birthDate!.localeCompare(b.birthDate!),
+        );
+        if (sortedByAge[0]!.birthDate! < sortedByAge[1]!.birthDate!) {
+          const oldest = sortedByAge[0]!;
+          return {
+            totalVotes: majority.totalVotes,
+            nullVotes,
+            threshold: majority.threshold,
+            outcome: "elected",
+            winnerId: oldest.id,
+            winnerName: oldest.displayName,
+            standings,
+            tieBreakReason: "age",
+          };
+        }
+      }
+
+      return {
+        totalVotes: majority.totalVotes,
+        nullVotes,
+        threshold: majority.threshold,
+        outcome: "no_majority",
+        winnerId: null,
+        winnerName: null,
+        standings,
+        tieBreakRequired: true,
+        tiedCandidates: tiedCandidates.map((candidate) => ({
+          id: candidate.id,
+          displayName: candidate.displayName,
+          birthDate: candidate.birthDate ?? null,
+        })),
+      };
+    }
+  }
 
   return {
     totalVotes: majority.totalVotes,
     nullVotes,
     threshold: majority.threshold,
-    outcome: winnerId ? "elected" : "no_majority",
-    winnerId,
-    winnerName,
+    outcome: "no_majority",
+    winnerId: null,
+    winnerName: null,
     standings,
   };
 }
