@@ -64,12 +64,12 @@ async function main() {
   const started = performance.now();
   const server = await startServer();
   const problems: string[] = [];
-  const samples: Record<string, Sample[]> = {
-    entrar: [],
-    início: [],
-    voto: [],
-    cédula: [],
-    resultado: [],
+  const samples = {
+    entrar: [] as Sample[],
+    início: [] as Sample[],
+    voto: [] as Sample[],
+    cédula: [] as Sample[],
+    resultado: [] as Sample[],
   };
 
   try {
@@ -231,7 +231,7 @@ async function createAssembly(baseUrl: string, cookie: string, users: number) {
       roomType: "custom",
       rulesPreset: "custom",
       status: "open",
-      quorumValue: 1,
+      quorumValue: users,
       quorumUnit: "absolute",
       eligibleCount: users,
       candidates: ["Ana Costa", "Bruno Lima", "Carla Dias"],
@@ -310,8 +310,14 @@ async function pollPhase(baseUrl: string, token: string, voters: Voter[], bucket
   for (let waveIndex = 0; waveIndex < POLL_WAVES; waveIndex += 1) {
     const waveResult = await wave(voters, async (voter) => {
       const timed = await time(() => readBallot(baseUrl, token, voter));
-      bucket.push(sampleOf(timed.ms, timed.value.ok, timed.value.status, timed.value.error));
-      return { name: voter.name, screen: timed.value.screen };
+      const value = timed.value ?? {
+        ok: false,
+        status: 0,
+        error: "sem resposta",
+        screen: { phase: "desconhecida" as const },
+      };
+      bucket.push(sampleOf(timed.ms, value.ok, value.status, value.error));
+      return { name: voter.name, screen: value.screen };
     });
     seen.push(...waveResult);
   }
@@ -485,7 +491,12 @@ function percentile(samples: number[], percent: number): number {
   return sorted[index] ?? 0;
 }
 
-function printReport(users: number, elapsedMs: number, samples: Record<string, Sample[]>, problems: string[]) {
+function printReport(
+  users: number,
+  elapsedMs: number,
+  samples: Record<string, Sample[]>,
+  problems: string[],
+) {
   console.log("");
   console.log(`Assembleia simulada: ${users} pessoas ao mesmo tempo`);
   console.log(`Duração: ${(elapsedMs / 1000).toFixed(1)}s`);

@@ -65,8 +65,18 @@ export function quorumLabel(presentCount: number, requiredCount: number): string
   return `${presentCount} / ${requiredCount}`;
 }
 
-export function quorumStateLabel(quorumMet: boolean): string {
-  return quorumMet ? "Quórum atingido" : "Abaixo do quórum";
+export function quorumStateLabel(presentCount: number, requiredCount: number): string {
+  if (requiredCount > 0 && presentCount === requiredCount) {
+    return "Número completo";
+  }
+  if (requiredCount > 0 && presentCount > requiredCount) {
+    return "Acima do número definido";
+  }
+  return "Faltam votantes";
+}
+
+export function exactVoterCountMessage(presentCount: number, requiredCount: number): string {
+  return `A sala só abre com exatamente ${requiredCount} votantes presentes. Há ${presentCount} na sala.`;
 }
 
 export const OPEN_ROUND_LABEL = "Abrir escrutínio";
@@ -116,8 +126,8 @@ const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   title: "Informe um título.",
   roomType: "Escolha o tipo da sala.",
   rulesPreset: "Escolha o conjunto de regras.",
-  quorumValue: "Quórum inválido.",
-  quorumUnit: "Informe a unidade do quórum.",
+  quorumValue: "Número de votantes presentes inválido.",
+  quorumUnit: "Informe a unidade dos votantes presentes.",
   eligibleCount: "Número de aptos inválido.",
   status: "Situação inválida.",
   candidates: "Cadastre ou importe ao menos um membro comungante antes de criar a sala.",
@@ -161,7 +171,7 @@ export function roundErrorMessage(errorCode: string): string {
     case "room_not_open":
       return "Abra a sala antes do escrutínio.";
     case "quorum_not_met":
-      return "Quórum mínimo não atingido para abrir o escrutínio.";
+      return "A sala só abre quando os votantes presentes forem exatamente o número definido.";
     case "round_already_open":
       return "Já existe um escrutínio aberto.";
     case "round_not_open":

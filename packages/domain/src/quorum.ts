@@ -54,9 +54,10 @@ export function evaluateQuorum(input: QuorumInput): QuorumStatus {
     presentCount: input.presentCount,
     eligibleCount: input.eligibleCount,
     requiredCount,
-    // A non-positive requirement is not a quorum. Percent of an empty eligible
-    // list is 0, and that must not count as everyone being present.
-    quorumMet: requiredCount > 0 && input.presentCount >= requiredCount,
+    // The configured number is the exact assembly size. Fewer or more people
+    // cannot open the room. A percent of an empty eligible list is 0 and
+    // cannot match.
+    quorumMet: requiredCount > 0 && input.presentCount === requiredCount,
   };
 }
 

@@ -14,7 +14,7 @@ test("admin starts, restarts, and closes a round while participants receive stat
     },
   });
   await page.getByLabel("Título").fill(title);
-  await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("2");
+  await page.getByRole("textbox", { name: "Votantes presentes", exact: true }).fill("2");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
@@ -123,5 +123,5 @@ async function loginAsAdmin(page: Page) {
   await page.locator("form").getByRole("button", { name: "Entrar" }).click();
   await expect(page).toHaveURL(/\/admin\/salas$/);
   await expect(page.getByRole("button", { name: "Criar sala" })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("34");
+  await expect(page.getByRole("textbox", { name: "Votantes presentes", exact: true })).toHaveValue("34");
 }

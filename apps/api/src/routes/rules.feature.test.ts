@@ -9,6 +9,16 @@ describe("rules feature", () => {
       method: "POST",
       url: "/v1/rules/quorum",
       payload: {
+        presentCount: 34,
+        eligibleCount: 100,
+        quorumValue: 34,
+        quorumUnit: "absolute",
+      },
+    });
+    const over = await app.inject({
+      method: "POST",
+      url: "/v1/rules/quorum",
+      payload: {
         presentCount: 40,
         eligibleCount: 100,
         quorumValue: 34,
@@ -18,6 +28,8 @@ describe("rules feature", () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ reached: true });
+    expect(over.statusCode).toBe(200);
+    expect(over.json()).toEqual({ reached: false });
 
     await app.close();
   });

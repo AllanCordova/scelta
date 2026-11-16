@@ -18,6 +18,7 @@ import {
   STATUS_LABELS,
   describePreset,
   quorumLabel,
+  exactVoterCountMessage,
   quorumStateLabel,
   roomErrorMessage,
   roundErrorMessage,
@@ -383,7 +384,7 @@ export function AdminRooms() {
           <div className="quorum-row">
             <div className="field">
               <label>
-                Quórum
+                Votantes presentes
                 <input
                   inputMode="numeric"
                   value={quorumValue}
@@ -436,6 +437,10 @@ export function AdminRooms() {
             ) : null}
           </div>
 
+          <p className="field-hint">
+            A sala só abre com exatamente este número de pessoas. A maioria de 50% + 1 é calculada
+            sobre os votos desses votantes.
+          </p>
           <p className="field-hint">
             Candidatos: todos os membros comungantes cadastrados na plataforma serão incluídos
             automaticamente.
@@ -703,14 +708,14 @@ function RoomRow({
           {isActive ? (
             <div className="quorum-block" aria-live="polite">
               <div className="quorum-block-top">
-                <span className="quorum-block-label">Presença &amp; Votação</span>
+                <span className="quorum-block-label">Votantes presentes</span>
                 {presence !== undefined ? (
                   <span
                     className={
                       presence.quorumMet ? "quorum-state badge-met" : "quorum-state badge-below"
                     }
                   >
-                    {quorumStateLabel(presence.quorumMet)}
+                    {quorumStateLabel(presence.presentCount, presence.requiredCount)}
                   </span>
                 ) : null}
               </div>
@@ -722,7 +727,7 @@ function RoomRow({
                     <span className="presence-count">
                       {quorumLabel(presence.presentCount, presence.requiredCount)}
                     </span>
-                    <span className="presence-caption">presentes / mínimo</span>
+                    <span className="presence-caption">presentes / definidos</span>
                   </>
                 )}
               </div>
@@ -751,7 +756,7 @@ function RoomRow({
               {room.quorumValue !== undefined ? (
                 <div className="draft-room-meta">
                   <span>
-                    Quórum: {room.quorumValue}
+                    Votantes presentes: {room.quorumValue}
                     {room.quorumUnit === "percent" ? "%" : ""}
                   </span>
                 </div>
@@ -841,7 +846,10 @@ function RoomRow({
               disabled={isBusy || (!openRoundId && !presence?.quorumMet)}
               title={
                 !openRoundId && !presence?.quorumMet
-                  ? "Quórum mínimo não atingido para abrir o escrutínio."
+                  ? exactVoterCountMessage(
+                      presence?.presentCount ?? 0,
+                      presence?.requiredCount ?? 0,
+                    )
                   : undefined
               }
               onClick={() => (openRoundId ? onClose(openRoundId) : onOpen())}

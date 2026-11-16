@@ -77,7 +77,7 @@ describe("resolveQuorumRequired", () => {
 });
 
 describe("hasReachedQuorum", () => {
-  it("is true when present meets required", () => {
+  it("is true only when present equals the required count", () => {
     expect(
       hasReachedQuorum({
         presentCount: 34,
@@ -94,6 +94,17 @@ describe("hasReachedQuorum", () => {
         presentCount: 10,
         eligibleCount: 100,
         quorumValue: 34,
+        quorumUnit: "absolute",
+      }),
+    ).toBe(false);
+  });
+
+  it("is false when more people are present than the defined number", () => {
+    expect(
+      hasReachedQuorum({
+        presentCount: 6,
+        eligibleCount: 0,
+        quorumValue: 5,
         quorumUnit: "absolute",
       }),
     ).toBe(false);

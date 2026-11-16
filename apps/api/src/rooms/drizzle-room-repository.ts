@@ -15,6 +15,7 @@ import {
 import {
   canCastBallot,
   canOpenRound,
+  resolveQuorumRequired,
   isChatRateLimited,
   isMemberEligibleVoter,
   isReactionRateLimited,
@@ -396,10 +397,14 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             title: rooms.title,
             status: rooms.status,
             churchId: rooms.churchId,
+            quorumValue: rooms.quorumValue,
+            quorumUnit: rooms.quorumUnit,
+            eligibleCount: rooms.eligibleCount,
           })
           .from(rooms)
           .where(eq(rooms.id, roomId))
-          .limit(1);
+          .limit(1)
+          .for("update");
         const room = roomRows[0];
 
         const codeRows = await tx
@@ -433,6 +438,22 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
                 .limit(1)
             : [];
         const existing = existingByCode[0] ?? existingByMember[0];
+        const addsSeat = existing?.isPresent !== true;
+        if (addsSeat && room) {
+          const presentRows = await tx
+            .select({ value: count() })
+            .from(participants)
+            .where(and(eq(participants.roomId, roomId), eq(participants.isPresent, true)));
+          const presentCount = Number(presentRows[0]?.value ?? 0);
+          const requiredCount = resolveQuorumRequired({
+            eligibleCount: room.eligibleCount,
+            quorumValue: room.quorumValue,
+            quorumUnit: room.quorumUnit,
+          });
+          if (requiredCount > 0 && presentCount >= requiredCount) {
+            return { ok: false as const, reason: "voter_limit_reached" as const };
+          }
+        }
 
         if (existing) {
           const updated = await tx
