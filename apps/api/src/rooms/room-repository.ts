@@ -42,6 +42,7 @@ export type StoredCandidate = {
   roomId: string;
   displayName: string;
   photoUrl?: string | null;
+  birthDate?: string | null;
   isEligible: boolean;
 };
 
@@ -62,6 +63,8 @@ export type StoredRound = {
   status: StoredRoundStatus;
   outcome: RoundResult | null;
   declinedCandidateId?: string | null;
+  winnerCandidateId?: string | null;
+  tieBreakReason?: "age" | "admin_tiebreak" | null;
   openedAt: Date | null;
   closedAt: Date | null;
   restartCount?: number;
@@ -70,6 +73,8 @@ export type StoredRound = {
 export type StoredAuditEvent = {
   id: string;
   roomId: string;
+  roomTitle?: string | null;
+  roomStatus?: RoomStatus | null;
   actorRole: string;
   action: string;
   payload: Record<string, unknown>;
@@ -111,7 +116,13 @@ export type StoredAccessCode = {
 
 export type JoinWithCodeResult =
   | { ok: true; participant: JoinedParticipant }
-  | { ok: false; reason: "invalid_access_code" | "revoked_access_code" };
+  | {
+      ok: false;
+      reason:
+        | "invalid_access_code"
+        | "revoked_access_code"
+        | "simulation_requires_test_room";
+    };
 
 export type UpdateRoomInput = {
   title?: string;
@@ -187,12 +198,25 @@ export type RoomRepository = {
   deleteRoom(roomId: string): Promise<boolean>;
   joinRoomWithCode(roomId: string, code: string, joinKeyHash: string): Promise<JoinWithCodeResult>;
   generateMemberAccessCodes(roomId: string): Promise<StoredAccessCode[]>;
+  issueMemberAccessCode?(
+    roomId: string,
+    memberId: string,
+    replace: boolean,
+  ): Promise<
+    | { ok: true; accessCode: StoredAccessCode; created: boolean }
+    | { ok: false; reason: "room_not_found" | "member_not_found" | "member_ineligible" }
+  >;
   createSimulatedAccessCodes(roomId: string, count: number): Promise<StoredAccessCode[]>;
   listAccessCodes(roomId: string): Promise<StoredAccessCode[]>;
   revokeAccessCode(roomId: string, codeId: string): Promise<StoredAccessCode | null>;
   revokeAllAccessCodes(roomId: string): Promise<number>;
   deleteAccessCode(roomId: string, codeId: string): Promise<boolean>;
   removePresentParticipants(roomId: string, limit: number): Promise<number>;
+  expelParticipants?(roomId: string, participantId?: string): Promise<number>;
+  describeVoterSession?(
+    roomId: string,
+    joinKeyHash: string,
+  ): Promise<"present" | "absent" | "revoked" | "missing">;
   countPresent(roomId: string): Promise<number>;
   listCandidates(roomId: string): Promise<StoredCandidate[]>;
   listAllCandidates(roomId: string): Promise<StoredCandidate[]>;
@@ -207,6 +231,15 @@ export type RoomRepository = {
     roomId: string,
     roundId: string,
     outcome: RoundResult | null,
+    options?: {
+      winnerCandidateId?: string | null;
+      tieBreakReason?: "age" | "admin_tiebreak" | null;
+    },
+  ): Promise<StoredRound | null>;
+  resolveRoundTie?(
+    roomId: string,
+    roundId: string,
+    winnerCandidateId: string,
   ): Promise<StoredRound | null>;
   restartRound(roomId: string, roundId: string): Promise<StoredRound | null>;
   declineRound(
@@ -218,6 +251,8 @@ export type RoomRepository = {
   latestRounds(roomIds: string[]): Promise<StoredRound[]>;
   latestClosedRound(roomId: string): Promise<StoredRound | null>;
   listAuditEvents(roomId: string): Promise<StoredAuditEvent[]>;
+  listAllAuditEvents?(roomId?: string): Promise<StoredAuditEvent[]>;
+  hasSimulatedAccessCodes?(roomId: string): Promise<boolean>;
   recordAuditEvent?(
     roomId: string,
     action: string,

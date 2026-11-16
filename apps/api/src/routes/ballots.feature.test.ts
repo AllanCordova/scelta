@@ -393,15 +393,35 @@ describe("anonymous single ballot and automatic tally", () => {
   async function join(
     app: Awaited<ReturnType<typeof buildApp>>,
     token: string,
-    _displayName: string,
+    displayName: string,
     joinKey: string,
   ) {
     const room = await repository.findRoomByInviteToken(token);
-    const [simCode] = room ? await repository.createSimulatedAccessCodes(room.id, 1) : [];
+    if (!room) {
+      return app.inject({
+        method: "POST",
+        url: `/v1/join/${token}`,
+        payload: { code: "ZZZZZZ", joinKey },
+      });
+    }
+    const memberName = `${displayName} (${joinKey.slice(-6)})`;
+    let generated = await repository.generateMemberAccessCodes(room.id);
+    let memberCode = generated.find((item) => item.displayName === memberName && !item.revokedAt);
+    if (!memberCode) {
+      await repository.createMember({
+        fullName: memberName,
+        isCommunicant: true,
+        isMale: true,
+        birthDate: "1990-01-01",
+        societyFlags: { upaActive: true, umpActive: true },
+      });
+      generated = await repository.generateMemberAccessCodes(room.id);
+      memberCode = generated.find((item) => item.displayName === memberName && !item.revokedAt);
+    }
     return app.inject({
       method: "POST",
       url: `/v1/join/${token}`,
-      payload: { code: simCode?.code ?? "ZZZZZZ", joinKey },
+      payload: { code: memberCode?.code ?? "ZZZZZZ", joinKey },
     });
   }
 

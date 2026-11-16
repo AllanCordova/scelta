@@ -11,7 +11,7 @@ type EditRoomModalProps = {
   onSaved: (updated: RoomSummary) => void;
 };
 
-type EditableRoomStatus = "draft" | "open" | "closed";
+type EditableRoomStatus = "draft" | "open" | "test" | "closed";
 
 const editRoomSchema = z
   .object({
@@ -19,7 +19,7 @@ const editRoomSchema = z
     quorumUnit: z.enum(["absolute", "percent"]),
     quorumValue: z.number().int().min(1, "Informe um quórum mínimo válido."),
     eligibleCount: z.number().int().min(0, "Informe um número válido de aptos."),
-    status: z.enum(["draft", "open", "closed"]),
+    status: z.enum(["draft", "open", "test", "closed"]),
   })
   .superRefine((data, ctx) => {
     if (data.quorumUnit === "percent" && data.quorumValue > 100) {
@@ -34,6 +34,9 @@ const editRoomSchema = z
 function initialEditableStatus(status: RoomSummary["status"]): EditableRoomStatus {
   if (status === "draft") {
     return "draft";
+  }
+  if (status === "test") {
+    return "test";
   }
   if (status === "closed") {
     return "closed";
@@ -99,6 +102,8 @@ function EditRoomForm({
     } catch (err) {
       if (err instanceof RoomRequestError && err.details[0]?.field === "quorumValue") {
         setError("Quórum inválido para a unidade selecionada.");
+      } else if (err instanceof RoomRequestError && err.errorCode === "cannot_open_test_room") {
+        setError("Salas com entradas ou votos simulados não podem ser mudadas para Aberta.");
       } else {
         setError("Não foi possível atualizar a sala.");
       }
@@ -145,6 +150,7 @@ function EditRoomForm({
               >
                 <option value="draft">Rascunho</option>
                 <option value="open">Aberta</option>
+                <option value="test">Teste</option>
                 <option value="closed">Completa</option>
               </select>
             </div>

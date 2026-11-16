@@ -94,11 +94,10 @@ async function createSimulatedCodes(page: Page, roomTitle: string, count: number
     throw new Error(`Room not found: ${roomTitle}`);
   }
   const simRes = await page.request.post(
-    `http://127.0.0.1:3334/v1/admin/rooms/${room.id}/access-codes/simulate`,
-    { data: { count } },
+    `http://127.0.0.1:3334/v1/admin/rooms/${room.id}/access-codes/generate`,
   );
   const { accessCodes } = (await simRes.json()) as { accessCodes: Array<{ code: string }> };
-  return accessCodes.map((c) => c.code);
+  return accessCodes.slice(0, count).map((c) => c.code);
 }
 
 async function loginAsAdmin(page: Page) {

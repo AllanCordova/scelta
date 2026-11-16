@@ -65,6 +65,21 @@ export function voterStandingLabel(displayName: string, votes: number): string {
   return `${displayName}: ${votes === 1 ? "1 voto" : `${votes} votos`}`;
 }
 
+export function isJoinableRoomStatus(status: string): boolean {
+  return status === "open" || status === "test" || status === "voting";
+}
+
+export function voterSessionMessage(access: "absent" | "revoked" | "missing"): string {
+  switch (access) {
+    case "absent":
+      return "Você foi removido da sala. Seu código continua válido — entre novamente quando a mesa liberar.";
+    case "revoked":
+      return "Seu código de acesso foi revogado. Peça um código novo, só para você.";
+    case "missing":
+      return "Sua entrada não vale mais nesta sala. Entre de novo com o seu código.";
+  }
+}
+
 export function voterRoundStateNotice(status: string, restartCount?: number): string {
   if (status === "open") {
     if ((restartCount ?? 0) > 0) {

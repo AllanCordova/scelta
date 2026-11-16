@@ -13,6 +13,7 @@ import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
 import { PaginationBar, paginateItems } from "../shell/PaginationBar";
 import { RoomChatPanel } from "../shell/RoomChatPanel";
 import { EditRoomModal } from "./EditRoomModal";
+import { RoomPresencePanel } from "./RoomPresencePanel";
 import { ShareBoardPaper, type ShareBoardEntry } from "./ShareBoardPaper";
 import {
   CLOSE_ROUND_LABEL,
@@ -40,6 +41,7 @@ import {
   deleteRoom,
   openRound,
   removeParticipants,
+  resolveRoundTie,
   restartRound,
   setRoomOfficeBanner,
   updateRoom,
@@ -200,6 +202,29 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       await declineRound(apiBase, room.id, roundId);
       setRefreshTick((current) => current + 1);
       toast.info("Cargo declinado.");
+    } catch (error) {
+      const msg = messageFromRoundError(error);
+      setActionError(msg);
+      toast.error(msg);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleResolveTie(
+    targetRoundId: string,
+    winnerCandidateId: string,
+    winnerDisplayName: string,
+  ) {
+    if (!room) {
+      return;
+    }
+    setActionError(null);
+    setIsBusy(true);
+    try {
+      await resolveRoundTie(apiBase, room.id, targetRoundId, winnerCandidateId);
+      setRefreshTick((current) => current + 1);
+      toast.success(`Desempate confirmado: ${winnerDisplayName} eleito (critério de idade).`);
     } catch (error) {
       const msg = messageFromRoundError(error);
       setActionError(msg);
@@ -417,6 +442,9 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
 
   const isActive = showsPresence(room.status);
   const openRoundId = room.round?.status === "open" ? room.round.id : null;
+  const tieBreakRequired = Boolean(
+    room.round?.status === "closed" && room.round.tally?.tieBreakRequired,
+  );
   const offices = room.offices ?? [];
   const unelectedOffices = offices.filter((item) => item.status !== "elected");
   const effectiveSelectedOffice =
@@ -639,14 +667,17 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                   type="button"
                   disabled={
                     isBusy ||
-                    (!openRoundId && (!room.presence.quorumMet || allOfficesElected))
+                    (!openRoundId &&
+                      (!room.presence.quorumMet || allOfficesElected || tieBreakRequired))
                   }
                   title={
-                    !openRoundId && allOfficesElected
-                      ? "Todos os cargos da diretoria já foram eleitos."
-                      : !openRoundId && !room.presence.quorumMet
-                        ? "Quórum mínimo não atingido para abrir o escrutínio."
-                        : undefined
+                    !openRoundId && tieBreakRequired
+                      ? "Limite de 3 escrutínios atingido. Resolva o desempate pelo mais velho abaixo."
+                      : !openRoundId && allOfficesElected
+                        ? "Todos os cargos da diretoria já foram eleitos."
+                        : !openRoundId && !room.presence.quorumMet
+                          ? "Quórum mínimo não atingido para abrir o escrutínio."
+                          : undefined
                   }
                   onClick={() =>
                     openRoundId
@@ -656,11 +687,13 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                 >
                   {openRoundId
                     ? CLOSE_ROUND_LABEL
-                    : allOfficesElected
-                      ? "Todos os cargos eleitos"
-                      : offices.length > 0 && effectiveSelectedOffice
-                        ? `${OPEN_ROUND_LABEL} — ${effectiveSelectedOffice}`
-                        : OPEN_ROUND_LABEL}
+                    : tieBreakRequired
+                      ? "Desempate pendente (3º escrutínio)"
+                      : allOfficesElected
+                        ? "Todos os cargos eleitos"
+                        : offices.length > 0 && effectiveSelectedOffice
+                          ? `${OPEN_ROUND_LABEL} — ${effectiveSelectedOffice}`
+                          : OPEN_ROUND_LABEL}
                 </button>
               </>
             ) : null}
@@ -847,6 +880,14 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
         </div>
       </section>
 
+      {isActive ? (
+        <RoomPresencePanel
+          roomId={room.id}
+          refreshKey={refreshTick}
+          onChanged={() => setRefreshTick((current) => current + 1)}
+        />
+      ) : null}
+
       {isElectedWinner && tally?.winnerName && room.round ? (
         showWinnerHero ? (
           <section className="panel voter-winner-hero admin-winner-hero" aria-label="Candidato eleito">
@@ -959,6 +1000,43 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                   <li key={item.candidateId}>{standingLabel(item.displayName, item.votes)}</li>
                 ))}
               </ul>
+            </div>
+          ) : null}
+
+          {tieBreakRequired && tally?.tiedCandidates && room.round ? (
+            <div
+              className="tiebreak-admin-box"
+              role="region"
+              aria-label="Desempate do 3º escrutínio"
+            >
+              <div className="tiebreak-admin-header">
+                <strong>Desempate do 3º Escrutínio — Critério de Idade (Mais Velho)</strong>
+                <p className="muted">
+                  O limite máximo de 3 escrutínios da IPB foi atingido com empate. Pela regra
+                  regimental, vence o candidato mais velho. Como os candidatos empatados não possuem
+                  data de nascimento cadastrada (ou possuem a mesma data), verifique na assembleia
+                  quem é o mais velho e confirme o eleito abaixo:
+                </p>
+              </div>
+              <div className="tiebreak-admin-actions">
+                {tally.tiedCandidates.map((tiedCandidate) => (
+                  <button
+                    key={tiedCandidate.id}
+                    type="button"
+                    className="round-action"
+                    disabled={isBusy}
+                    onClick={() =>
+                      void handleResolveTie(
+                        room.round!.id,
+                        tiedCandidate.id,
+                        tiedCandidate.displayName,
+                      )
+                    }
+                  >
+                    Declarar {tiedCandidate.displayName} eleito (mais velho)
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
 
@@ -1116,12 +1194,13 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             ) : null}
           </section>
 
-          {isActive ? (
+          {room.status === "test" ? (
             <section className="panel simulator-card" aria-labelledby="simulator-heading">
               <div className="simulator-header">
                 <h2 id="simulator-heading">Simulador de Assembleia (Teste)</h2>
                 <p className="muted">
-                  Simula participantes entrando na fila e votando aleatoriamente em candidatos.
+                  Disponível exclusivamente em salas de Teste. Simula participantes entrando na fila e
+                  votando aleatoriamente em candidatos.
                 </p>
               </div>
               <div className="simulator-controls">
@@ -1243,8 +1322,34 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                   </div>
                 ))}
               </div>
+              <div className="audit-logs-cta">
+                <a
+                  className="ghost round-action"
+                  href={`/admin/logs?roomId=${encodeURIComponent(room.id)}`}
+                >
+                  Logs Inapagáveis &amp; Exportar PDF
+                </a>
+              </div>
             </section>
-          ) : null}
+          ) : (
+            <section className="panel audit-feed-card" aria-labelledby="room-audit-log-heading">
+              <div className="audit-feed-header">
+                <h2 id="room-audit-log-heading">Auditoria e Integridade</h2>
+              </div>
+              <p className="audit-privacy-footer">
+                Histórico inapagável comprovando que somente pessoas autenticadas votaram, sem
+                intervenção do administrador.
+              </p>
+              <div className="audit-logs-cta">
+                <a
+                  className="ghost round-action"
+                  href={`/admin/logs?roomId=${encodeURIComponent(room.id)}`}
+                >
+                  Logs Inapagáveis &amp; Exportar PDF
+                </a>
+              </div>
+            </section>
+          )}
         </div>
       </div>
 
@@ -1415,6 +1520,7 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   round_closed: "Escrutínio encerrado",
   round_restarted: "Escrutínio reiniciado",
   office_declined: "Cargo declinado",
+  tie_break_resolved: "Desempate decidido pela mesa (mais velho)",
   result_published: "Resultado publicado",
 };
 

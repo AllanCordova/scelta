@@ -101,6 +101,7 @@ describe("AdminAccessCodes", () => {
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("/join/token-initial?code=123456"));
 
     fireEvent.click(screen.getByRole("button", { name: "Rotacionar convite" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rotacionar mesmo assim" }));
     await waitFor(() => {
       fireEvent.click(screen.getByRole("button", { name: "Copiar link" }));
       expect(writeText).toHaveBeenCalledWith(

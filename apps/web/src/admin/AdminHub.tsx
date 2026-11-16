@@ -24,6 +24,15 @@ export function AdminHub() {
           </p>
           <span className="admin-hub-cta">Gerenciar membros →</span>
         </a>
+
+        <a className="panel admin-hub-card" href="/admin/logs">
+          <h2>Logs de Auditoria e Integridade</h2>
+          <p className="muted">
+            Histórico inapagável comprovando que somente pessoas votaram, sem intervenção do admin,
+            com exportação para PDF.
+          </p>
+          <span className="admin-hub-cta">Ver logs e exportar PDF →</span>
+        </a>
       </section>
     </div>
   );

@@ -51,13 +51,14 @@ export function describePreset(preset: RulesPreset, majorityRule?: string): {
 export const STATUS_LABELS: Record<RoomStatus, string> = {
   draft: "Rascunho",
   open: "Aberta",
+  test: "Teste",
   voting: "Em votação",
   closed: "Completa",
   cancelled: "Cancelada",
 };
 
 export function showsPresence(status: RoomStatus): boolean {
-  return status === "open" || status === "voting";
+  return status === "open" || status === "test" || status === "voting";
 }
 
 export function quorumLabel(presentCount: number, requiredCount: number): string {
@@ -81,7 +82,16 @@ export const FAILED_QUORUM_MESSAGE =
 
 export function tallySummaryLabel(tally: RoundTally): string {
   if (tally.outcome === "elected" && tally.winnerName) {
+    if (tally.tieBreakReason === "age") {
+      return `Eleito por critério de desempate (mais velho): ${tally.winnerName}`;
+    }
+    if (tally.tieBreakReason === "admin_tiebreak") {
+      return `Eleito por desempate de idade (decisão da mesa): ${tally.winnerName}`;
+    }
     return `Eleito por maioria absoluta: ${tally.winnerName}`;
+  }
+  if (tally.tieBreakRequired) {
+    return "Empate no 3º escrutínio — aguardando desempate pelo mais velho (decisão da mesa).";
   }
   return "Sem maioria absoluta neste escrutínio.";
 }
@@ -168,6 +178,18 @@ export function roundErrorMessage(errorCode: string): string {
       return "Há mais votos registrados do que membros presentes. Reinicie o escrutínio.";
     case "invalid_candidate_subset":
       return "Conjunto de candidatos inválido para o próximo escrutínio.";
+    case "max_rounds_reached":
+      return "Limite máximo de 3 escrutínios atingido. O desempate deve ser decidido pelo critério de idade (mais velho).";
+    case "tie_break_not_required":
+      return "Este escrutínio não aguarda desempate manual.";
+    case "invalid_tie_break_candidate":
+      return "Candidato inválido para o desempate.";
+    case "simulation_requires_test_room":
+      return "A ferramenta de simulação de entrada e votos só é permitida em salas com status Teste.";
+    case "cannot_open_test_room":
+      return "Salas com entradas ou votos simulados não podem ser mudadas para Aberta.";
+    case "logs_are_immutable":
+      return "Os logs de integridade são inapagáveis e não podem ser alterados.";
     default:
       return "Não foi possível atualizar o escrutínio.";
   }

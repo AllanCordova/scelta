@@ -85,7 +85,7 @@ describe("multi-office IPB board elections", () => {
         rulesPreset: "ipb_society_board",
         quorumValue: 3,
         quorumUnit: "absolute",
-        status: "open",
+        status: "test",
         candidates: ["Ana", "Bia", "Caio", "Davi"],
       },
     });
@@ -235,7 +235,7 @@ describe("multi-office IPB board elections", () => {
         rulesPreset: "ipb_society_board",
         quorumValue: 1,
         quorumUnit: "absolute",
-        status: "open",
+        status: "test",
         candidates: ["Davi Jovem", "Ester Jovem", "Filipe", "Gideão", "Hannah", "Isaque"],
       },
     });
@@ -330,7 +330,7 @@ describe("multi-office IPB board elections", () => {
         rulesPreset: "ipb_society_board",
         quorumValue: 1,
         quorumUnit: "absolute",
-        status: "open",
+        status: "test",
         candidates: ["Kamila", "Ana", "Bia"],
       },
     });

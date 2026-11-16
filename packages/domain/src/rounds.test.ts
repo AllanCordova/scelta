@@ -199,6 +199,21 @@ describe("resolveNextRoundCandidateIds", () => {
       }),
     ).toEqual({ ok: false, reason: "winner_already_elected" });
   });
+
+  it("rejects opening a 4th round when 3 rounds have already been held without a winner", () => {
+    expect(
+      resolveNextRoundCandidateIds({
+        preset: "ipb_society_board",
+        previousRoundNumber: 3,
+        previousOutcome: "no_majority",
+        eligibleCandidateIds: ["a", "b"],
+        previousTallies: [
+          { candidateId: "a", votes: 1 },
+          { candidateId: "b", votes: 1 },
+        ],
+      }),
+    ).toEqual({ ok: false, reason: "max_rounds_reached" });
+  });
 });
 
 describe("canRestartRound", () => {

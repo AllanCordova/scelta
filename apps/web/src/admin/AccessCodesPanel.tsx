@@ -5,11 +5,13 @@ import { ConfirmDialog } from "../shell/ConfirmDialog";
 import {
   deleteAccessCode,
   generateAccessCodes,
+  issueMemberAccessCode,
   listAccessCodes,
+  listMembersPage,
   revokeAccessCode,
   revokeAllAccessCodes,
 } from "./rooms-api";
-import type { MemberAccessCodeItem } from "./types";
+import type { MemberAccessCodeItem, StoredMemberItem } from "./types";
 
 const apiBase = apiUrl("");
 const PAGE_SIZE = 10;
@@ -37,8 +39,12 @@ export function AccessCodesPanel({
     | { type: "revoke-single"; code: MemberAccessCodeItem }
     | { type: "revoke-all" }
     | { type: "delete-single"; code: MemberAccessCodeItem }
+    | { type: "replace-one"; code: MemberAccessCodeItem }
     | null
   >(null);
+  const [memberQuery, setMemberQuery] = useState("");
+  const [memberHits, setMemberHits] = useState<StoredMemberItem[]>([]);
+  const [memberSearchNote, setMemberSearchNote] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -164,6 +170,59 @@ export function AccessCodesPanel({
     }
   }
 
+  async function handleSearchMembers() {
+    const query = memberQuery.trim();
+    if (query.length < 2) {
+      setMemberSearchNote("Digite pelo menos 2 letras do nome.");
+      setMemberHits([]);
+      return;
+    }
+    setError(null);
+    setMemberSearchNote(null);
+    setIsBusy(true);
+    try {
+      const page = await listMembersPage(apiBase, { search: query, page: 1, pageSize: 8 });
+      setMemberHits(page.members);
+      if (page.members.length === 0) {
+        setMemberSearchNote("Nenhum membro encontrado com esse nome.");
+      }
+    } catch {
+      setMemberSearchNote("Não foi possível buscar o rol.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function handleIssueOne(memberId: string, replace = false) {
+    if (isBusy) {
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setIsBusy(true);
+    try {
+      const issued = await issueMemberAccessCode(apiBase, roomId, memberId, replace);
+      const next = await listAccessCodes(apiBase, roomId);
+      setAccessCodes(next);
+      const message = issued.created
+        ? replace
+          ? `Novo código só para ${issued.accessCode.displayName}. Os outros códigos não mudaram.`
+          : `Código gerado só para ${issued.accessCode.displayName}.`
+        : `${issued.accessCode.displayName} já tinha um código ativo. Ninguém mais foi alterado.`;
+      setNotice(message);
+      toast.success(message);
+      onCodesChanged?.();
+    } catch {
+      setError(
+        replace
+          ? "Não foi possível trocar o código desta pessoa."
+          : "Não foi possível gerar o código desta pessoa.",
+      );
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   async function handleDeleteSingle(codeId: string) {
     if (isBusy) {
       return;
@@ -190,9 +249,49 @@ export function AccessCodesPanel({
         <span className="detail-kpi-pill">{activeCodes.length} ativos</span>
       </div>
       <p className="muted">
-        Gere os códigos individuais do rol para imprimir a folha A4 e entregue na entrada.
-        Revogue códigos perdidos ou ao fim da assembleia.
+        Gere o código de uma pessoa por vez. O botão do rol inteiro só cria o que ainda falta e
+        não troca o código de quem já entrou. Revogar tira o acesso; expulsar da sala é outra
+        ação e fica no painel da sala.
       </p>
+      <form
+        className="access-codes-issue"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void handleSearchMembers();
+        }}
+      >
+        <label htmlFor="issue-member-search">Gerar código para uma pessoa</label>
+        <div className="token-input-row">
+          <input
+            id="issue-member-search"
+            type="search"
+            value={memberQuery}
+            onChange={(event) => setMemberQuery(event.target.value)}
+            placeholder="Nome no rol"
+          />
+          <button type="submit" className="ghost round-action" disabled={isBusy}>
+            Buscar
+          </button>
+        </div>
+      </form>
+      {memberSearchNote ? <p className="muted">{memberSearchNote}</p> : null}
+      {memberHits.length > 0 ? (
+        <ul className="access-codes-list" aria-label="Membros encontrados">
+          {memberHits.map((member) => (
+            <li key={member.id} className="access-code-row">
+              <span className="access-code-name">{member.fullName}</span>
+              <button
+                type="button"
+                className="ghost round-action"
+                disabled={isBusy}
+                onClick={() => void handleIssueOne(member.id, false)}
+              >
+                Gerar código desta pessoa
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="access-codes-actions">
         <button
           type="button"
@@ -291,6 +390,16 @@ export function AccessCodesPanel({
                           Copiar link
                         </button>
                       ) : null}
+                      {!isRevoked && item.memberId ? (
+                        <button
+                          type="button"
+                          className="ghost access-code-replace-btn"
+                          disabled={isBusy}
+                          onClick={() => setPendingAction({ type: "replace-one", code: item })}
+                        >
+                          Novo código
+                        </button>
+                      ) : null}
                       {!isRevoked ? (
                         <button
                           type="button"
@@ -346,23 +455,29 @@ export function AccessCodesPanel({
             ? "Revogar todos os códigos"
             : pendingAction?.type === "delete-single"
               ? "Remover código de acesso"
-              : "Revogar código de acesso"
+              : pendingAction?.type === "replace-one"
+                ? "Novo código só desta pessoa"
+                : "Revogar código de acesso"
         }
         description={
           pendingAction?.type === "revoke-all"
             ? `Tem certeza que deseja revogar todos os ${activeCodes.length} códigos ativos desta sala?`
             : pendingAction?.type === "delete-single"
               ? `Tem certeza que deseja remover permanentemente o código de "${pendingAction.code.displayName}"?`
-              : pendingAction
-                ? `Tem certeza que deseja revogar o código de "${pendingAction.code.displayName}"?`
-                : ""
+              : pendingAction?.type === "replace-one"
+                ? `O código de "${pendingAction.code.displayName}" será trocado. Os outros códigos continuam iguais.`
+                : pendingAction
+                  ? `Tem certeza que deseja revogar o código de "${pendingAction.code.displayName}"?`
+                  : ""
         }
         confirmLabel={
           pendingAction?.type === "revoke-all"
             ? "Revogar todos"
             : pendingAction?.type === "delete-single"
               ? "Remover"
-              : "Revogar"
+              : pendingAction?.type === "replace-one"
+                ? "Gerar novo código"
+                : "Revogar"
         }
         busy={isBusy}
         onCancel={() => setPendingAction(null)}
@@ -376,6 +491,10 @@ export function AccessCodesPanel({
             void handleRevokeAll();
           } else if (target.type === "delete-single") {
             void handleDeleteSingle(target.code.id);
+          } else if (target.type === "replace-one") {
+            if (target.code.memberId) {
+              void handleIssueOne(target.code.memberId, true);
+            }
           } else {
             void handleRevokeSingle(target.code.id);
           }

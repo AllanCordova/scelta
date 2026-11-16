@@ -88,6 +88,71 @@ describe("tallyRoundVotes", () => {
       "Ballot references an unknown candidate",
     );
   });
+
+  it("breaks a 3rd-round tie automatically in favor of the oldest candidate when birth dates are available", () => {
+    const candidatesWithAge = [
+      { id: "cand-young", displayName: "Jovem", birthDate: "2008-05-10" },
+      { id: "cand-old", displayName: "Veterano", birthDate: "2005-02-01" },
+    ];
+    const tally = tallyRoundVotes(candidatesWithAge, ["cand-young", "cand-old"], {
+      roundNumber: 3,
+    });
+    expect(tally).toEqual({
+      totalVotes: 2,
+      nullVotes: 0,
+      threshold: 2,
+      outcome: "elected",
+      winnerId: "cand-old",
+      winnerName: "Veterano",
+      standings: [
+        { candidateId: "cand-young", displayName: "Jovem", votes: 1 },
+        { candidateId: "cand-old", displayName: "Veterano", votes: 1 },
+      ],
+      tieBreakReason: "age",
+    });
+  });
+
+  it("marks tieBreakRequired in 3rd round when tied candidates lack birthDate or have equal birthDate", () => {
+    const tally = tallyRoundVotes(candidates, ["cand-1", "cand-2"], { roundNumber: 3 });
+    expect(tally).toEqual({
+      totalVotes: 2,
+      nullVotes: 0,
+      threshold: 2,
+      outcome: "no_majority",
+      winnerId: null,
+      winnerName: null,
+      standings: [
+        { candidateId: "cand-1", displayName: "Paulo", votes: 1 },
+        { candidateId: "cand-2", displayName: "Silas", votes: 1 },
+      ],
+      tieBreakRequired: true,
+      tiedCandidates: [
+        { id: "cand-1", displayName: "Paulo", birthDate: null },
+        { id: "cand-2", displayName: "Silas", birthDate: null },
+      ],
+    });
+  });
+
+  it("honors winnerOverrideId when admin resolves a 3rd-round tie", () => {
+    const tally = tallyRoundVotes(candidates, ["cand-1", "cand-2"], {
+      roundNumber: 3,
+      winnerOverrideId: "cand-2",
+      tieBreakReason: "admin_tiebreak",
+    });
+    expect(tally).toEqual({
+      totalVotes: 2,
+      nullVotes: 0,
+      threshold: 2,
+      outcome: "elected",
+      winnerId: "cand-2",
+      winnerName: "Silas",
+      standings: [
+        { candidateId: "cand-1", displayName: "Paulo", votes: 1 },
+        { candidateId: "cand-2", displayName: "Silas", votes: 1 },
+      ],
+      tieBreakReason: "admin_tiebreak",
+    });
+  });
 });
 
 describe("selectTopCandidates", () => {

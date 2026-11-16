@@ -264,6 +264,7 @@ describe("join room", () => {
     const app = await buildApp({
       userRepository,
       roomRepository: {
+        ...repository,
         async createRoom() {
           throw new Error("not implemented");
         },
@@ -398,10 +399,174 @@ describe("join room", () => {
     await openRoom.close();
   });
 
+  it("issues one access code without replacing the others and expels presence without revoking codes", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+    const room = await createRoom(app, "Credenciamento", "open");
+
+    const ana = await app.inject({
+      method: "POST",
+      url: "/v1/admin/members",
+      headers: { cookie: adminCookie },
+      payload: {
+        fullName: "Ana Individual",
+        isCommunicant: true,
+        isMale: true,
+        birthDate: "1990-01-01",
+      },
+    });
+    const bia = await app.inject({
+      method: "POST",
+      url: "/v1/admin/members",
+      headers: { cookie: adminCookie },
+      payload: {
+        fullName: "Bia Individual",
+        isCommunicant: true,
+        isMale: true,
+        birthDate: "1991-02-02",
+      },
+    });
+    expect(ana.statusCode).toBe(201);
+    expect(bia.statusCode).toBe(201);
+    const anaId = (ana.json().member as { id: string }).id;
+    const biaId = (bia.json().member as { id: string }).id;
+
+    const issued = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/issue`,
+      headers: { cookie: adminCookie },
+      payload: { memberId: anaId },
+    });
+    expect(issued.statusCode).toBe(200);
+    expect(issued.json().created).toBe(true);
+    const anaCode = issued.json().accessCode as { id: string; code: string; displayName: string };
+
+    const again = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/issue`,
+      headers: { cookie: adminCookie },
+      payload: { memberId: anaId },
+    });
+    expect(again.statusCode).toBe(200);
+    expect(again.json().created).toBe(false);
+    expect(again.json().accessCode.code).toBe(anaCode.code);
+
+    const generated = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/generate`,
+      headers: { cookie: adminCookie },
+    });
+    expect(generated.statusCode).toBe(200);
+    const codes = generated.json().accessCodes as Array<{
+      memberId: string | null;
+      code: string;
+      revokedAt: string | null;
+    }>;
+    const anaAfter = codes.find((item) => item.memberId === anaId && item.revokedAt === null);
+    const biaAfter = codes.find((item) => item.memberId === biaId && item.revokedAt === null);
+    expect(anaAfter?.code).toBe(anaCode.code);
+    expect(biaAfter?.code).toBeTruthy();
+
+    const anaJoin = await join(app, room.inviteToken, anaCode.code, anaKey);
+    const biaJoin = await join(app, room.inviteToken, biaAfter!.code, biaKey);
+    expect(anaJoin.statusCode).toBe(200);
+    expect(biaJoin.statusCode).toBe(200);
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/v1/admin/rooms/${room.id}/participants`,
+      headers: { cookie: adminCookie },
+    });
+    expect(listed.statusCode).toBe(200);
+    const present = listed.json().participants as Array<{ id: string; displayName: string }>;
+    expect(present.map((person) => person.displayName).sort()).toEqual([
+      "Ana Individual",
+      "Bia Individual",
+    ]);
+    const anaParticipant = present.find((person) => person.displayName === "Ana Individual");
+
+    const expelled = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/participants/expel`,
+      headers: { cookie: adminCookie },
+      payload: { participantId: anaParticipant!.id },
+    });
+    expect(expelled.statusCode).toBe(200);
+    expect(expelled.json().expelledCount).toBe(1);
+    expect(expelled.json().presence.presentCount).toBe(1);
+
+    const anaBallot = await app.inject({
+      method: "GET",
+      url: `/v1/join/${room.inviteToken}/ballot`,
+      headers: { "x-scelta-join-key": anaKey },
+    });
+    expect(anaBallot.statusCode).toBe(200);
+    expect(anaBallot.json().viewerAccess).toBe("absent");
+
+    const biaBallot = await app.inject({
+      method: "GET",
+      url: `/v1/join/${room.inviteToken}/ballot`,
+      headers: { "x-scelta-join-key": biaKey },
+    });
+    expect(biaBallot.json().viewerAccess).toBe("present");
+
+    const cleared = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/participants/expel`,
+      headers: { cookie: adminCookie },
+      payload: { all: true },
+    });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().presence.presentCount).toBe(0);
+
+    const stillActive = await db
+      .select()
+      .from(roomMemberCodes)
+      .where(eq(roomMemberCodes.roomId, room.id));
+    expect(stillActive.filter((row) => row.revokedAt === null).length).toBeGreaterThanOrEqual(2);
+
+    const replaced = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/issue`,
+      headers: { cookie: adminCookie },
+      payload: { memberId: anaId, replace: true },
+    });
+    expect(replaced.statusCode).toBe(200);
+    expect(replaced.json().created).toBe(true);
+    expect(replaced.json().accessCode.code).not.toBe(anaCode.code);
+    const biaStill = (
+      await db.select().from(roomMemberCodes).where(eq(roomMemberCodes.roomId, room.id))
+    ).find((row) => row.memberId === biaId && row.revokedAt === null);
+    expect(biaStill?.code).toBe(biaAfter!.code);
+
+    const restored = await join(app, room.inviteToken, replaced.json().accessCode.code, anaKey);
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().presentCount).toBe(1);
+
+    await app.close();
+  });
+
+  it("keeps a single presence row when the same code joins twice at once", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+    const room = await createRoom(app, "Concorrência", "open");
+    const [codeItem] = await createSimCodes(app, room.id, 1, adminCookie);
+
+    const [first, second] = await Promise.all([
+      join(app, room.inviteToken, codeItem!.code, anaKey),
+      join(app, room.inviteToken, codeItem!.code, biaKey),
+    ]);
+    expect(first.statusCode).toBe(200);
+    expect(second.statusCode).toBe(200);
+    const stored = await db.select().from(participants);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.isPresent).toBe(true);
+
+    await app.close();
+  });
+
   async function createRoom(
     app: Awaited<ReturnType<typeof buildApp>>,
     title: string,
-    status: "draft" | "open",
+    status: "draft" | "open" | "test",
   ) {
     const response = await app.inject({
       method: "POST",
@@ -440,15 +605,27 @@ async function createSimCodes(
   count: number,
   cookie: string,
 ) {
+  for (let i = 0; i < count; i += 1) {
+    await app.inject({
+      method: "POST",
+      url: "/v1/admin/members",
+      headers: { cookie },
+      payload: {
+        fullName: `Membro Teste ${i + 1}`,
+        isCommunicant: true,
+        isMale: true,
+        birthDate: "1990-01-01",
+      },
+    });
+  }
   const response = await app.inject({
     method: "POST",
-    url: `/v1/admin/rooms/${roomId}/access-codes/simulate`,
+    url: `/v1/admin/rooms/${roomId}/access-codes/generate`,
     headers: { cookie },
-    payload: { count },
   });
   expect(response.statusCode).toBe(200);
   return (response.json() as { accessCodes: Array<{ id: string; code: string; displayName: string }> })
-    .accessCodes;
+    .accessCodes.slice(0, count);
 }
 
 function join(

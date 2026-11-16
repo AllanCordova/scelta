@@ -1,4 +1,4 @@
-const JOINABLE_ROOM_STATUSES = ["open", "voting"] as const;
+const JOINABLE_ROOM_STATUSES = ["open", "test", "voting"] as const;
 
 export const DISPLAY_NAME_MAX_LENGTH = 80;
 export const JOIN_KEY_MIN_LENGTH = 16;

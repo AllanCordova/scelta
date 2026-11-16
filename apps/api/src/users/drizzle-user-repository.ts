@@ -95,6 +95,10 @@ export function createDrizzleUserRepository(db: Db, churchName: string): UserRep
       return row ? toPublicUser(row) : null;
     },
 
+    async updateUserPassword(userId, passwordHash) {
+      await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    },
+
     async createSession(userId, token, expiresAt) {
       await db.insert(sessions).values({
         userId,

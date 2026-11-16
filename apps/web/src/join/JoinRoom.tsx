@@ -11,9 +11,11 @@ import { RoomChatPanel } from "../shell/RoomChatPanel";
 import { BALLOT_WISDOM_VERSE, officeGuidanceForBallot } from "./ballot-guidance";
 import {
   ballotErrorMessage,
+  isJoinableRoomStatus,
   joinBlockedMessage,
   joinErrorMessage,
   voterRoundStateNotice,
+  voterSessionMessage,
   voterStandingLabel,
   voterTallyOutcome,
 } from "./copy";
@@ -28,6 +30,7 @@ import {
 import { createJoinKey, isJoinKey, readJoinIdentity, writeJoinIdentity } from "./join-identity";
 
 const BALLOT_POLL_MS = 1000;
+const DOOR_POLL_MS = 2000;
 const NULL_VOTE_CHOICE = "__NULL__";
 
 const joinCodeSchema = z.object({
@@ -62,6 +65,7 @@ export function JoinRoom({ token }: { token: string }) {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors<"code">>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [doorRetry, setDoorRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,7 +148,27 @@ export function JoinRoom({ token }: { token: string }) {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, doorRetry]);
+
+  useEffect(() => {
+    if (phase.kind !== "blocked") {
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void fetchJoinPreview(apiUrl(""), token)
+        .then((preview) => {
+          if (!cancelled && preview.canJoin) {
+            setDoorRetry((current) => current + 1);
+          }
+        })
+        .catch(() => undefined);
+    }, DOOR_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [phase.kind, token]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -298,16 +322,29 @@ function JoinedRoomView({
   const [voteError, setVoteError] = useState<string | null>(null);
   const [isVoting, setIsVoting] = useState(false);
   const [isGuidanceExpanded, setIsGuidanceExpanded] = useState(false);
+  const [inviteMissing, setInviteMissing] = useState(false);
+  const [ballotNotice, setBallotNotice] = useState<string | null>(null);
+  const [isReentering, setIsReentering] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     const checkedRoundKeys = new Set<string>();
 
     async function poll() {
-      const next = await fetchBallotState(apiUrl(""), token);
-      if (cancelled || !next) {
+      const loaded = await fetchBallotState(apiUrl(""), token, joinKey);
+      if (cancelled) {
         return;
       }
+      if (loaded.status === "missing") {
+        setInviteMissing(true);
+        return;
+      }
+      if (loaded.status !== "ok") {
+        setBallotNotice("A cédula não atualizou. Tentando de novo…");
+        return;
+      }
+      setBallotNotice(null);
+      const next = loaded.state;
       setBallotState(next);
 
       if (next.round?.status === "open") {
@@ -442,6 +479,61 @@ function JoinedRoomView({
   const boardOffices = ballotState?.offices ?? [];
   const allBoardOfficesElected =
     boardOffices.length > 0 && boardOffices.every((office) => office.status === "elected");
+  const roomShut = ballotState != null && !isJoinableRoomStatus(ballotState.roomStatus);
+  const viewerAccess = ballotState?.viewerAccess ?? "unknown";
+  const blockedAccess =
+    viewerAccess === "absent" || viewerAccess === "revoked" || viewerAccess === "missing"
+      ? viewerAccess
+      : null;
+  const showResults =
+    !allBoardOfficesElected && round?.status === "closed" && Boolean(round.tally);
+  const showBallotForm =
+    !roomShut && !blockedAccess && round?.status === "open" && candidates.length > 0;
+  const showShut = roomShut && !showResults && !allBoardOfficesElected;
+  const showWaiting =
+    ballotState != null &&
+    !roomShut &&
+    !blockedAccess &&
+    !showBallotForm &&
+    !showResults &&
+    !allBoardOfficesElected;
+
+  async function handleReenter() {
+    const stored = readStored(token);
+    const accessCode = stored?.accessCode?.trim();
+    if (!accessCode) {
+      setBallotNotice("Abra de novo o link do seu cartão e informe o código.");
+      return;
+    }
+    setIsReentering(true);
+    try {
+      await submitJoin(apiUrl(""), token, { code: accessCode, joinKey });
+      setBallotNotice(null);
+      const loaded = await fetchBallotState(apiUrl(""), token, joinKey);
+      if (loaded.status === "ok") {
+        setBallotState(loaded.state);
+      }
+    } catch (error) {
+      setBallotNotice(joinErrorMessage(error));
+    } finally {
+      setIsReentering(false);
+    }
+  }
+
+  if (inviteMissing) {
+    return (
+      <div className="join-page">
+        <header className="page-intro">
+          <h1>Convite</h1>
+        </header>
+        <section className="panel">
+          <p className="form-error" role="alert">
+            Convite inválido ou expirado.
+          </p>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="join-page voter-flow">
@@ -462,16 +554,55 @@ function JoinedRoomView({
         </div>
       </header>
 
-      <section className="voter-presence-pill panel">
-        <div className="voter-presence-check" aria-hidden="true">
-          ✓
-        </div>
-        <div className="voter-presence-copy">
-          <span className="voter-presence-kicker">Presença validada</span>
-          <p>Sua presença foi registrada.</p>
-        </div>
-        <span className="voter-secret-badge">Voto Secreto</span>
-      </section>
+      {!blockedAccess && !showShut ? (
+        <section className="voter-presence-pill panel">
+          <div className="voter-presence-check" aria-hidden="true">
+            ✓
+          </div>
+          <div className="voter-presence-copy">
+            <span className="voter-presence-kicker">Presença validada</span>
+            <p>Sua presença foi registrada.</p>
+          </div>
+          <span className="voter-secret-badge">Voto Secreto</span>
+        </section>
+      ) : null}
+
+      {ballotNotice ? (
+        <p className="form-error" role="status">
+          {ballotNotice}
+        </p>
+      ) : null}
+
+      {blockedAccess ? (
+        <section className="panel" aria-live="polite">
+          <p className="form-error" role="alert">
+            {voterSessionMessage(blockedAccess)}
+          </p>
+          {blockedAccess !== "revoked" ? (
+            <button type="button" disabled={isReentering} onClick={() => void handleReenter()}>
+              Entrar novamente
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
+      {showShut ? (
+        <section className="panel">
+          <p className="form-error" role="alert">
+            {joinBlockedMessage(ballotState?.roomStatus ?? "")}
+          </p>
+        </section>
+      ) : null}
+
+      {showWaiting ? (
+        <section className="panel" aria-live="polite">
+          <h2>Aguardando a votação</h2>
+          <p>
+            A sala está aberta. A cédula aparece aqui para todo mundo no mesmo instante em que o
+            escrutínio for aberto.
+          </p>
+        </section>
+      ) : null}
 
       {allBoardOfficesElected ? (
         <ShareBoardSheet
@@ -485,7 +616,7 @@ function JoinedRoomView({
         />
       ) : null}
 
-      {round?.status === "open" && candidates.length > 0 ? (
+      {showBallotForm ? (
         <section className="voter-ballot-section" aria-label="Cédula">
           <div className="panel voter-scrutiny-brief">
             <div className="voter-scrutiny-top">
@@ -711,7 +842,7 @@ function JoinedRoomView({
         </section>
       ) : null}
 
-      {!allBoardOfficesElected && round?.status === "closed" && round.tally ? (
+      {showResults && round?.tally ? (
         <section className="voter-result-section" aria-label="Resultado do escrutínio">
           <div
             className={

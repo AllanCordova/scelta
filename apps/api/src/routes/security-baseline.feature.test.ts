@@ -180,7 +180,7 @@ describe("B4.2 security baseline for voting", () => {
         rulesPreset: "ipb_local_officers",
         quorumValue: 2,
         quorumUnit: "absolute",
-        status: "open",
+        status: "test",
         candidates: ["Presb. Lucas", "Presb. André"],
       },
     });

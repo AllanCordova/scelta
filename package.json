@@ -12,6 +12,7 @@
     "test": "pnpm -r --filter @scelta/domain --filter @scelta/api --filter @scelta/web test",
     "test:unit": "pnpm test",
     "test:feature": "pnpm --filter @scelta/api test:feature",
+    "load:assembly": "pnpm --filter @scelta/api load:assembly",
     "test:e2e": "pnpm --filter @scelta/web test:e2e",
     "db:generate": "pnpm --filter @scelta/db generate",
     "db:migrate": "pnpm --filter @scelta/db migrate"

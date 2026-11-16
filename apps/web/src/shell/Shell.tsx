@@ -1,5 +1,6 @@
 import { AdminAccessCodes } from "../admin/AdminAccessCodes";
 import { AdminHub } from "../admin/AdminHub";
+import { AdminLogs } from "../admin/AdminLogs";
 import { AdminMembers } from "../admin/AdminMembers";
 import { AdminProfile } from "../admin/AdminProfile";
 import { AdminRoomDetail } from "../admin/AdminRoomDetail";
@@ -33,6 +34,7 @@ export function Shell() {
           ) : null}
           {page === "admin-codes" ? <AdminGate view="codes" /> : null}
           {page === "admin-members" ? <AdminGate view="members" /> : null}
+          {page === "admin-logs" ? <AdminGate view="logs" /> : null}
           {page === "admin-profile" ? <AdminGate view="profile" /> : null}
           {page === "account" ? <AccountPage /> : null}
           {page === "join" && joinToken ? <JoinRoom token={joinToken} /> : null}
@@ -58,7 +60,7 @@ function AdminGate({
   view,
   roomId,
 }: {
-  view: "hub" | "rooms" | "members" | "codes" | "room-detail" | "profile";
+  view: "hub" | "rooms" | "members" | "codes" | "logs" | "room-detail" | "profile";
   roomId?: string;
 }) {
   const auth = useAuth();
@@ -74,11 +76,13 @@ function AdminGate({
         ? "Membros"
         : view === "codes"
           ? "Códigos de Acesso"
-          : view === "profile"
-            ? "Perfil"
-            : view === "hub"
-              ? "Administração"
-              : "Salas";
+          : view === "logs"
+            ? "Logs de Integridade"
+            : view === "profile"
+              ? "Perfil"
+              : view === "hub"
+                ? "Administração"
+                : "Salas";
     return (
       <section className="panel">
         <h2>{heading}</h2>
@@ -94,6 +98,9 @@ function AdminGate({
   }
   if (view === "members") {
     return <AdminMembers />;
+  }
+  if (view === "logs") {
+    return <AdminLogs />;
   }
   if (view === "profile") {
     return <AdminProfile />;
@@ -118,6 +125,7 @@ function pageFor(
   | "admin-room-detail"
   | "admin-codes"
   | "admin-members"
+  | "admin-logs"
   | "admin-profile"
   | "account"
   | "join" {
@@ -139,6 +147,9 @@ function pageFor(
   }
   if (path === "/admin/membros") {
     return "admin-members";
+  }
+  if (path === "/admin/logs") {
+    return "admin-logs";
   }
   if (path === "/admin/perfil") {
     return "admin-profile";

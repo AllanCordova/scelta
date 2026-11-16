@@ -148,12 +148,11 @@ async function createSimulatedCodes(page: Page, roomTitle: string, count: number
   }
 
   const simRes = await page.request.post(
-    `${apiBaseUrl}/v1/admin/rooms/${room.id}/access-codes/simulate`,
-    { data: { count } },
+    `${apiBaseUrl}/v1/admin/rooms/${room.id}/access-codes/generate`,
   );
   expect(simRes.ok()).toBe(true);
   const simBody = (await simRes.json()) as {
     accessCodes: Array<{ code: string }>;
   };
-  return simBody.accessCodes.map((entry) => entry.code);
+  return simBody.accessCodes.slice(0, count).map((entry) => entry.code);
 }

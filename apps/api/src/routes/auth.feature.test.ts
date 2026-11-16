@@ -249,7 +249,7 @@ describe("account sessions", () => {
     await app.close();
   });
 
-  it("creates a bootstrap admin once and does not promote an existing member", async () => {
+  it("creates or syncs the bootstrap admin password and does not promote an existing member", async () => {
     const app = await buildApp({ userRepository });
     await ensureBootstrapAdmin(userRepository, {
       name: "Administrador",
@@ -267,15 +267,15 @@ describe("account sessions", () => {
       url: "/v1/auth/login",
       payload: { email: "admin@church.test", password: "bootstrap-password" },
     });
-    expect(firstPassword.statusCode).toBe(200);
-    expect(firstPassword.json().user.role).toBe("admin");
+    expect(firstPassword.statusCode).toBe(401);
 
     const replaced = await app.inject({
       method: "POST",
       url: "/v1/auth/login",
       payload: { email: "admin@church.test", password: "replacement-password" },
     });
-    expect(replaced.statusCode).toBe(401);
+    expect(replaced.statusCode).toBe(200);
+    expect(replaced.json().user.role).toBe("admin");
 
     await userRepository.insertUser({
       name: "Mia",

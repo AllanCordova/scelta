@@ -62,6 +62,7 @@ export type BallotState = {
   activeBannerUrl?: string | null;
   reactionsEnabled?: boolean;
   chatMuted?: boolean;
+  viewerAccess?: "unknown" | "present" | "absent" | "revoked" | "missing";
   allowedReactions?: string[];
   candidates: BallotCandidate[];
   offices?: BallotOfficeSummary[];
@@ -116,21 +117,47 @@ export async function submitJoin(
   };
 }
 
+export type BallotLoad =
+  | { status: "ok"; state: BallotState }
+  | { status: "missing" }
+  | { status: "unavailable" };
+
 export async function fetchBallotState(
   apiBase: string,
   token: string,
-): Promise<BallotState | null> {
-  const response = await fetch(`${apiBase}/v1/join/${encodeURIComponent(token)}/ballot`);
+  joinKey?: string,
+): Promise<BallotLoad> {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}/v1/join/${encodeURIComponent(token)}/ballot`, {
+      headers: joinKey ? { "x-scelta-join-key": joinKey } : undefined,
+    });
+  } catch {
+    return { status: "unavailable" };
+  }
+  if (response.status === 404) {
+    return { status: "missing" };
+  }
   if (!response.ok) {
-    return null;
+    return { status: "unavailable" };
   }
 
   const body = (await response.json().catch(() => null)) as Partial<BallotState> | null;
   if (!body || !Array.isArray(body.candidates)) {
-    return null;
+    return { status: "unavailable" };
   }
 
+  const viewerAccess =
+    body.viewerAccess === "present" ||
+    body.viewerAccess === "absent" ||
+    body.viewerAccess === "revoked" ||
+    body.viewerAccess === "missing"
+      ? body.viewerAccess
+      : "unknown";
+
   return {
+    status: "ok",
+    state: {
     roomId: typeof body.roomId === "string" ? body.roomId : undefined,
     roomStatus: typeof body.roomStatus === "string" ? body.roomStatus : "open",
     roomType: typeof body.roomType === "string" ? body.roomType : undefined,
@@ -141,10 +168,12 @@ export async function fetchBallotState(
     activeBannerUrl: typeof body.activeBannerUrl === "string" ? body.activeBannerUrl : null,
     reactionsEnabled: typeof body.reactionsEnabled === "boolean" ? body.reactionsEnabled : true,
     chatMuted: body.chatMuted === true,
+    viewerAccess,
     allowedReactions: Array.isArray(body.allowedReactions) ? body.allowedReactions : undefined,
     candidates: body.candidates,
     offices: Array.isArray(body.offices) ? body.offices : undefined,
     round: body.round ?? null,
+    },
   };
 }
 
