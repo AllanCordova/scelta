@@ -121,7 +121,8 @@ export type JoinWithCodeResult =
       reason:
         | "invalid_access_code"
         | "revoked_access_code"
-        | "simulation_requires_test_room";
+        | "simulation_requires_test_room"
+        | "voter_limit_reached";
     };
 
 export type UpdateRoomInput = {

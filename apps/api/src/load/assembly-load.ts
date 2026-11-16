@@ -231,7 +231,7 @@ async function createAssembly(baseUrl: string, cookie: string, users: number) {
       roomType: "custom",
       rulesPreset: "custom",
       status: "open",
-      quorumValue: 1,
+      quorumValue: users,
       quorumUnit: "absolute",
       eligibleCount: users,
       candidates: ["Ana Costa", "Bruno Lima", "Carla Dias"],

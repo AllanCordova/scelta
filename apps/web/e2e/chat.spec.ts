@@ -16,7 +16,7 @@ test("live room chat supports text + emotes, 2 msgs/5s rate limit, and admin mut
     },
   });
   await page.getByLabel("Título").fill(title);
-  await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("1");
+  await page.getByRole("textbox", { name: "Votantes presentes", exact: true }).fill("1");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();

@@ -70,7 +70,7 @@ describe("anonymous single ballot and automatic tally", () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoomWithCandidates(app, {
       title: "Eleição de presbítero",
-      quorumValue: 2,
+      quorumValue: 3,
       candidates: ["Paulo", "Silas"],
     });
     const paulo = room.candidates.find((c) => c.displayName === "Paulo")!;
@@ -162,7 +162,7 @@ describe("anonymous single ballot and automatic tally", () => {
           ],
         },
       },
-      quorum: { presentCount: 3, eligibleCount: 0, requiredCount: 2, quorumMet: true },
+      quorum: { presentCount: 3, eligibleCount: 0, requiredCount: 3, quorumMet: true },
     });
     expect(closed.body).not.toContain("Ana");
     expect(closed.body).not.toContain("Bia");
@@ -292,7 +292,7 @@ describe("anonymous single ballot and automatic tally", () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoomWithCandidates(app, {
       title: "Assembleia com voto nulo",
-      quorumValue: 2,
+      quorumValue: 3,
       candidates: ["Paulo", "Barnabé"],
     });
     const paulo = room.candidates.find((c) => c.displayName === "Paulo")!;

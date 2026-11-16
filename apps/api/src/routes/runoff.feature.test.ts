@@ -75,7 +75,7 @@ describe("multi-round and runoff elections", () => {
       title: "Diretoria UPA — Presidente",
       roomType: "upa_board",
       rulesPreset: "ipb_society_board",
-      quorumValue: 2,
+      quorumValue: 3,
       candidates: ["Ana", "Bia", "Caio"],
     });
     const ana = room.candidates.find((c) => c.displayName === "Ana")!;

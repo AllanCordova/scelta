@@ -25,6 +25,9 @@ export function joinErrorMessage(error: unknown): string {
     if (error.errorCode === "revoked_access_code") {
       return "Este código de acesso foi revogado pelo administrador.";
     }
+    if (error.errorCode === "voter_limit_reached") {
+      return "A sala já está com o número exato de votantes presentes.";
+    }
     if (error.errorCode === "invalid_join") {
       return "Código inválido. Digite os 6 caracteres do seu cartão.";
     }

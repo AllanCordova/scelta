@@ -16,7 +16,7 @@ test("admin clicks a room card to open the room detail view and manages the scru
   });
 
   await page.getByLabel("Título").fill(title);
-  await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("1");
+  await page.getByRole("textbox", { name: "Votantes presentes", exact: true }).fill("1");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByLabel("Aptos").fill("2");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Teste" }).click();
@@ -154,5 +154,5 @@ async function loginAsAdmin(page: Page) {
   await page.locator("form").getByRole("button", { name: "Entrar" }).click();
   await expect(page).toHaveURL(/\/admin\/salas$/);
   await expect(page.getByRole("button", { name: "Criar sala" })).toBeVisible();
-  await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("34");
+  await expect(page.getByRole("textbox", { name: "Votantes presentes", exact: true })).toHaveValue("34");
 }

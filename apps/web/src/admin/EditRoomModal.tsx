@@ -17,7 +17,7 @@ const editRoomSchema = z
   .object({
     title: z.string().trim().min(1, "Informe o título da sala.").max(200),
     quorumUnit: z.enum(["absolute", "percent"]),
-    quorumValue: z.number().int().min(1, "Informe um quórum mínimo válido."),
+    quorumValue: z.number().int().min(1, "Informe o número de votantes presentes."),
     eligibleCount: z.number().int().min(0, "Informe um número válido de aptos."),
     status: z.enum(["draft", "open", "test", "closed"]),
   })
@@ -101,7 +101,7 @@ function EditRoomForm({
       onClose();
     } catch (err) {
       if (err instanceof RoomRequestError && err.details[0]?.field === "quorumValue") {
-        setError("Quórum inválido para a unidade selecionada.");
+        setError("Número de votantes presentes inválido para a unidade selecionada.");
       } else if (err instanceof RoomRequestError && err.errorCode === "cannot_open_test_room") {
         setError("Salas com entradas ou votos simulados não podem ser mudadas para Aberta.");
       } else {
@@ -155,7 +155,7 @@ function EditRoomForm({
               </select>
             </div>
             <div>
-              <label htmlFor="edit-room-quorum-unit">Unidade do quórum</label>
+              <label htmlFor="edit-room-quorum-unit">Unidade</label>
               <select
                 id="edit-room-quorum-unit"
                 value={quorumUnit}
@@ -166,7 +166,7 @@ function EditRoomForm({
               </select>
             </div>
             <div>
-              <label htmlFor="edit-room-quorum-value">Quórum mínimo</label>
+              <label htmlFor="edit-room-quorum-value">Votantes presentes</label>
               <input
                 id="edit-room-quorum-value"
                 type="number"

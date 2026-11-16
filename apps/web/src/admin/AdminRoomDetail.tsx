@@ -25,6 +25,7 @@ import {
   ROUND_DECLINED_MESSAGE,
   ROUND_RESTARTED_MESSAGE,
   STATUS_LABELS,
+  exactVoterCountMessage,
   quorumLabel,
   quorumStateLabel,
   roundErrorMessage,
@@ -676,7 +677,10 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                       : !openRoundId && allOfficesElected
                         ? "Todos os cargos da diretoria já foram eleitos."
                         : !openRoundId && !room.presence.quorumMet
-                          ? "Quórum mínimo não atingido para abrir o escrutínio."
+                          ? exactVoterCountMessage(
+                              room.presence.presentCount,
+                              room.presence.requiredCount,
+                            )
                           : undefined
                   }
                   onClick={() =>
@@ -847,12 +851,12 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
           </div>
           <div className="detail-kpi-value-row">
             <span className="detail-kpi-status-title">
-              {quorumStateLabel(room.presence.quorumMet)}
+              {quorumStateLabel(room.presence.presentCount, room.presence.requiredCount)}
             </span>
           </div>
           <p className="detail-kpi-footnote">
             {quorumLabel(room.presence.presentCount, room.presence.requiredCount)} (presentes /
-            mínimo)
+            definidos)
           </p>
         </section>
 
@@ -1154,11 +1158,11 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                 <dd>50% + 1 (Absoluta)</dd>
               </div>
               <div className="regimental-row">
-                <dt>Quórum Configurado</dt>
+                <dt>Votantes presentes</dt>
                 <dd>
-                  {room.quorumValue}
-                  {room.quorumUnit === "percent" ? "%" : " presentes"} (mín.{" "}
-                  {room.presence.requiredCount})
+                  {room.quorumUnit === "percent"
+                    ? `${room.quorumValue}% (${room.presence.requiredCount} exatos)`
+                    : `${room.presence.requiredCount} exatos`}
                 </dd>
               </div>
               <div className="regimental-row">

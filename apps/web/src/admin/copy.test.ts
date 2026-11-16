@@ -21,8 +21,9 @@ describe("presence copy", () => {
 
   it("compares presence with the required quorum", () => {
     expect(quorumLabel(1, 4)).toBe("1 / 4");
-    expect(quorumStateLabel(false)).toBe("Abaixo do quórum");
-    expect(quorumStateLabel(true)).toBe("Quórum atingido");
+    expect(quorumStateLabel(1, 4)).toBe("Faltam votantes");
+    expect(quorumStateLabel(4, 4)).toBe("Número completo");
+    expect(quorumStateLabel(5, 4)).toBe("Acima do número definido");
     expect(FAILED_QUORUM_MESSAGE).toBe(
       "Quórum não atingido. O escrutínio foi encerrado sem eleger ninguém.",
     );

@@ -13,7 +13,7 @@ test("admin creates a room and sees the invite link and QR", async ({ page }) =>
   await expect(page.getByText("Ana Admin")).toBeVisible();
   await page.getByLabel("Título").fill("Eleição de presbíteros");
   await page.getByRole("button", { name: "Presbítero" }).click();
-  await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("34");
+  await expect(page.getByRole("textbox", { name: "Votantes presentes", exact: true })).toHaveValue("34");
 
   await page.getByRole("button", { name: "Criar sala" }).click();
 
@@ -29,13 +29,13 @@ test("admin sees an error when the quorum is invalid", async ({ page }) => {
   await loginAsAdmin(page);
   await page.getByLabel("Título").fill("Quórum fora da faixa");
   await page.locator("fieldset", { hasText: "Regras" }).getByRole("button", { name: "Personalizado" }).click();
-  await expect(page.getByRole("textbox", { name: "Quórum", exact: true })).toHaveValue("");
+  await expect(page.getByRole("textbox", { name: "Votantes presentes", exact: true })).toHaveValue("");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("percent");
-  await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("101");
+  await page.getByRole("textbox", { name: "Votantes presentes", exact: true }).fill("101");
 
   await page.getByRole("button", { name: "Criar sala" }).click();
 
-  await expect(page.getByRole("alert").filter({ hasText: "Quórum inválido" })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "Número de votantes presentes inválido" })).toBeVisible();
   await expect(page.getByRole("listitem").filter({ hasText: "Quórum fora da faixa" })).toHaveCount(0);
 });
 

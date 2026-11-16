@@ -99,9 +99,9 @@ describe("AdminRooms", () => {
     });
     fireEvent.click(within(rulesGroup()).getByRole("button", { name: "Personalizado" }));
     await waitFor(() => {
-      expect(screen.getByLabelText("Quórum")).toHaveValue("");
+      expect(screen.getByLabelText("Votantes presentes")).toHaveValue("");
     });
-    fireEvent.change(screen.getByLabelText("Quórum"), {
+    fireEvent.change(screen.getByLabelText("Votantes presentes"), {
       target: { value: "101" },
     });
     fireEvent.change(screen.getByLabelText("Unidade do quórum"), {
@@ -109,7 +109,7 @@ describe("AdminRooms", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Quórum inválido.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Número de votantes presentes inválido.");
   });
 
   it("does not submit a blank quorum as the hidden preset default", async () => {
@@ -119,12 +119,12 @@ describe("AdminRooms", () => {
     fireEvent.change(screen.getByLabelText("Título"), {
       target: { value: "Assembleia" },
     });
-    fireEvent.change(screen.getByLabelText("Quórum"), {
+    fireEvent.change(screen.getByLabelText("Votantes presentes"), {
       target: { value: "" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Quórum inválido.");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Número de votantes presentes inválido.");
     const fetchMock = vi.mocked(fetch);
     const posted = fetchMock.mock.calls.some(([, init]) => init?.method === "POST");
     expect(posted).toBe(false);
@@ -168,7 +168,7 @@ describe("AdminRooms", () => {
     const item = await screen.findByRole("listitem");
     expect(item).toHaveTextContent("Assembleia aberta");
     expect(await within(item).findByText("1 / 4")).toBeInTheDocument();
-    expect(item).toHaveTextContent("Abaixo do quórum");
+    expect(item).toHaveTextContent("Faltam votantes");
     expect(within(item).getByRole("button", { name: "Abrir escrutínio" })).toBeDisabled();
     expect(item).toHaveTextContent("Aberta");
   });
@@ -257,7 +257,7 @@ describe("AdminRooms", () => {
     render(<AdminRooms />);
     const item = await screen.findByRole("listitem");
     expect(await within(item).findByText("4 / 4")).toBeInTheDocument();
-    expect(item).toHaveTextContent("Quórum atingido");
+    expect(item).toHaveTextContent("Número completo");
 
     fireEvent.click(within(item).getByRole("button", { name: "Abrir escrutínio" }));
     expect(await within(item).findByRole("alert")).toHaveTextContent(

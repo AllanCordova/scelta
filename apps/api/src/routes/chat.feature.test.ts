@@ -35,7 +35,7 @@ async function createAndJoinRoom(
       title: "Assembleia com Chat",
       roomType: "elder",
       rulesPreset: "ipb_local_officers",
-      quorumValue: 1,
+      quorumValue: joinKeys.length,
       quorumUnit: "absolute",
       status: "test",
       candidates: ["Presb. João"],
