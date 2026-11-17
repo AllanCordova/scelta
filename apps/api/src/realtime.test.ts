@@ -1,6 +1,15 @@
+import { EventEmitter } from "node:events";
+import { createServer } from "node:http";
 import type { Server } from "socket.io";
 import { describe, expect, it, vi } from "vitest";
-import { createSocketPresencePublisher, isRoomChannelId } from "./realtime.js";
+import {
+  attachRealtime,
+  createSocketPresencePublisher,
+  isRoomChannelId,
+} from "./realtime.js";
+import { hashJoinKey } from "./rooms/join-key.js";
+import type { RoomRepository } from "./rooms/room-repository.js";
+import type { UserRepository } from "./users/user-repository.js";
 
 describe("isRoomChannelId", () => {
   it("accepts a room uuid and rejects other channel names", () => {
@@ -61,5 +70,73 @@ describe("createSocketPresencePublisher", () => {
       roomId,
       reactionsEnabled: false,
     });
+  });
+});
+
+function createMockSocket(cookie?: string) {
+  const emitter = new EventEmitter();
+  const joinedRooms = new Set<string>();
+  const emitted: Array<[string, unknown]> = [];
+  const socket = Object.assign(emitter, {
+    handshake: { headers: cookie ? { cookie } : {} },
+    join: vi.fn((room: string) => {
+      joinedRooms.add(room);
+    }),
+    emit: vi.fn((event: string, payload?: unknown) => {
+      emitted.push([event, payload]);
+      return true;
+    }),
+  });
+  return {
+    socket,
+    joinedRooms,
+    emitted,
+    triggerJoin: async (payload: unknown) => {
+      for (const listener of emitter.listeners("room:join")) {
+        await (listener as (arg: unknown) => Promise<void> | void)(payload);
+      }
+    },
+  };
+}
+
+describe("attachRealtime end-to-end auth", () => {
+  it("denies unauthenticated sockets and joins only authorized sockets to the room channel", async () => {
+    const roomId = "11111111-2222-4333-8444-555555555555";
+    const httpServer = createServer();
+    const userRepository = {
+      findBySessionToken: vi.fn(async (token?: string) =>
+        token === "admin-tok" ? { id: "a1", role: "admin" } : null,
+      ),
+    } as unknown as UserRepository;
+    const roomRepository = {
+      describeVoterSession: vi.fn(async (_id: string, hash: string) =>
+        hash === hashJoinKey("voter-key") ? "present" : "missing",
+      ),
+    } as unknown as RoomRepository;
+
+    const io = attachRealtime(httpServer, "*", { roomRepository, userRepository });
+
+    const anon = createMockSocket();
+    const voter = createMockSocket();
+    const admin = createMockSocket("scelta_session=admin-tok");
+
+    EventEmitter.prototype.emit.call(io.sockets, "connection", anon.socket);
+    EventEmitter.prototype.emit.call(io.sockets, "connection", voter.socket);
+    EventEmitter.prototype.emit.call(io.sockets, "connection", admin.socket);
+
+    await anon.triggerJoin(roomId);
+    await voter.triggerJoin({ roomId, joinKey: "voter-key" });
+    await admin.triggerJoin(roomId);
+
+    expect(anon.joinedRooms.size).toBe(0);
+    expect(anon.emitted).toEqual([["room:denied", { roomId }]]);
+
+    expect(voter.joinedRooms.has(`room:${roomId}`)).toBe(true);
+    expect(voter.emitted).toEqual([["room:joined", { roomId }]]);
+
+    expect(admin.joinedRooms.has(`room:${roomId}`)).toBe(true);
+    expect(admin.emitted).toEqual([["room:joined", { roomId }]]);
+
+    await new Promise<void>((resolve) => io.close(() => resolve()));
   });
 });

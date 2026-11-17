@@ -1,6 +1,10 @@
 import type { Server as HttpServer } from "node:http";
 import type { QuorumStatus } from "@scelta/domain";
 import { Server } from "socket.io";
+import { readSessionToken } from "./auth/session-cookie.js";
+import { hashJoinKey } from "./rooms/join-key.js";
+import type { RoomRepository } from "./rooms/room-repository.js";
+import type { UserRepository } from "./users/user-repository.js";
 
 const ROOM_CHANNEL_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -92,21 +96,91 @@ export function createSocketPresencePublisher(io: Server): PresencePublisher {
   };
 }
 
-export function attachRealtime(httpServer: HttpServer, corsOrigin: string) {
+export type RealtimeAuthDeps = {
+  roomRepository?: RoomRepository;
+  userRepository?: UserRepository;
+};
+
+export type RoomJoinRequest = { roomId: string; joinKey?: string };
+
+export function parseRoomJoinRequest(payload: unknown): RoomJoinRequest | null {
+  if (typeof payload === "string") {
+    return isRoomChannelId(payload) ? { roomId: payload } : null;
+  }
+  if (typeof payload !== "object" || payload === null) {
+    return null;
+  }
+  const { roomId, joinKey } = payload as { roomId?: unknown; joinKey?: unknown };
+  if (typeof roomId !== "string" || !isRoomChannelId(roomId)) {
+    return null;
+  }
+  if (joinKey === undefined) {
+    return { roomId };
+  }
+  if (typeof joinKey !== "string" || joinKey.length === 0 || joinKey.length > 128) {
+    return null;
+  }
+  return { roomId, joinKey: joinKey.trim() };
+}
+
+/** A socket may subscribe with an admin session cookie or a joinKey of a participant of that room. */
+export async function authorizeRoomJoin(
+  request: RoomJoinRequest,
+  cookieHeader: string | undefined,
+  deps: RealtimeAuthDeps,
+): Promise<boolean> {
+  if (deps.userRepository) {
+    const user = await deps.userRepository.findBySessionToken(readSessionToken(cookieHeader));
+    if (user?.role === "admin") {
+      return true;
+    }
+  }
+
+  const repository = deps.roomRepository;
+  if (!request.joinKey || !repository) {
+    return false;
+  }
+  const joinKeyHash = hashJoinKey(request.joinKey);
+  if (repository.describeVoterSession) {
+    const access = await repository.describeVoterSession(request.roomId, joinKeyHash);
+    return access === "present" || access === "absent";
+  }
+  if (repository.findParticipantChatStatus) {
+    return (await repository.findParticipantChatStatus(request.roomId, joinKeyHash)) !== null;
+  }
+  return false;
+}
+
+export function attachRealtime(
+  httpServer: HttpServer,
+  corsOrigin: string,
+  deps: RealtimeAuthDeps = {},
+) {
   const io = new Server(httpServer, {
     cors: {
       origin: corsOrigin,
+      credentials: true,
     },
   });
 
   io.on("connection", (socket) => {
-    socket.on("room:join", (roomId: string) => {
+    socket.on("room:join", async (payload: unknown) => {
       // Channel names are room ids, so a client cannot subscribe to an arbitrary socket.io room.
-      if (typeof roomId !== "string" || !isRoomChannelId(roomId)) {
+      const request = parseRoomJoinRequest(payload);
+      if (!request) {
         return;
       }
-      void socket.join(`room:${roomId}`);
-      socket.emit("room:joined", { roomId });
+      try {
+        if (!(await authorizeRoomJoin(request, socket.handshake.headers.cookie, deps))) {
+          socket.emit("room:denied", { roomId: request.roomId });
+          return;
+        }
+      } catch {
+        socket.emit("room:denied", { roomId: request.roomId });
+        return;
+      }
+      void socket.join(`room:${request.roomId}`);
+      socket.emit("room:joined", { roomId: request.roomId });
     });
   });
 

@@ -7,12 +7,35 @@ import {
   validateChatMessage,
 } from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { requireAdmin } from "../auth/require-admin.js";
+import { readSessionToken } from "../auth/session-cookie.js";
 import type { PresencePublisher } from "../realtime.js";
 import { hashJoinKey } from "../rooms/join-key.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import {
+  CHAT_BURST_RATE_LIMIT,
+  CHAT_REQUEST_RATE_LIMIT,
+  enforceRateLimit,
+} from "../security/rate-limiter.js";
 import type { UserRepository } from "../users/user-repository.js";
+
+function readJoinKeyHeader(value: string | string[] | undefined): string | undefined {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const trimmed = raw?.trim();
+  return trimmed && trimmed.length <= 128 ? trimmed : undefined;
+}
+
+async function hasAdminSession(
+  request: FastifyRequest,
+  userRepository: UserRepository | undefined,
+): Promise<boolean> {
+  if (!userRepository) {
+    return false;
+  }
+  const user = await userRepository.findBySessionToken(readSessionToken(request.headers.cookie));
+  return user?.role === "admin";
+}
 
 const TokenParams = Type.Object({
   token: Type.String({ minLength: 1, maxLength: 200 }),
@@ -90,9 +113,6 @@ export const chatRoutes: FastifyPluginAsync<ChatRouteOptions> = async (app, opti
     {
       schema: {
         params: TokenParams,
-        querystring: Type.Object({
-          joinKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-        }),
       },
     },
     async (request, reply) => {
@@ -101,19 +121,22 @@ export const chatRoutes: FastifyPluginAsync<ChatRouteOptions> = async (app, opti
         return reply.code(503).send({ error: "persistence_unavailable" });
       }
       const { token } = request.params as { token: string };
-      const query = request.query as { joinKey?: string };
+      const joinKey = readJoinKeyHeader(request.headers["x-scelta-join-key"]);
 
       try {
         const room = await repository.findRoomByInviteToken(token);
         if (!room) {
           return reply.code(404).send({ error: "invite_not_found" });
         }
-        const [messages, participantStatus] = await Promise.all([
-          repository.listChatMessages?.(room.id) ?? Promise.resolve([]),
-          query.joinKey && repository.findParticipantChatStatus
-            ? repository.findParticipantChatStatus(room.id, hashJoinKey(query.joinKey.trim()))
-            : Promise.resolve(null),
-        ]);
+
+        const participantStatus =
+          joinKey && repository.findParticipantChatStatus
+            ? await repository.findParticipantChatStatus(room.id, hashJoinKey(joinKey))
+            : null;
+        if (!participantStatus && !(await hasAdminSession(request, options.userRepository))) {
+          return reply.code(joinKey ? 403 : 401).send({ error: "unauthorized" });
+        }
+        const messages = (await repository.listChatMessages?.(room.id)) ?? [];
 
         return {
           roomId: room.id,
@@ -159,6 +182,13 @@ export const chatRoutes: FastifyPluginAsync<ChatRouteOptions> = async (app, opti
       const trimmedJoinKey = body.joinKey.trim();
       if (trimmedJoinKey.length === 0) {
         return reply.code(400).send({ error: "invalid_join_key" });
+      }
+      const joinKeyHash = hashJoinKey(trimmedJoinKey);
+      if (
+        !(await enforceRateLimit(request, reply, CHAT_BURST_RATE_LIMIT, token)) ||
+        !(await enforceRateLimit(request, reply, CHAT_REQUEST_RATE_LIMIT, `${token}:${joinKeyHash}`))
+      ) {
+        return;
       }
 
       try {

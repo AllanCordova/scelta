@@ -77,7 +77,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   const [isSharePaperOpen, setIsSharePaperOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<
-    "delete-room" | "close-room" | "remove-participants" | null
+    "delete-room" | "close-room" | "remove-participants" | "close-pending-round" | null
   >(null);
 
   const { room, loadError, lastSyncedAt } = useRoomDetail(roomId, refreshTick);
@@ -154,17 +154,26 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
-  async function handleCloseRound(roundId: string) {
+  async function handleCloseRound(roundId: string, confirmPending?: boolean) {
     if (!room) {
       return;
     }
     setActionError(null);
     setIsBusy(true);
     try {
-      await closeRound(apiBase, room.id, roundId);
+      await closeRound(
+        apiBase,
+        room.id,
+        roundId,
+        confirmPending ? { confirmPending: true } : undefined,
+      );
       setRefreshTick((current) => current + 1);
       toast.success("Escrutínio encerrado.");
     } catch (error) {
+      if (error instanceof RoomRequestError && error.errorCode === "voting_incomplete") {
+        setPendingConfirm("close-pending-round");
+        return;
+      }
       const msg = messageFromRoundError(error);
       setActionError(msg);
       toast.error(msg);
@@ -604,7 +613,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
               Editar
             </button>
 
-            {room.status !== "closed" && room.status !== "cancelled" ? (
+            {room.status !== "closed" ? (
               <button
                 type="button"
                 className="ghost round-action"
@@ -1132,6 +1141,12 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             </p>
           ) : null}
 
+          {(tally?.didNotVoteCount ?? room.round?.didNotVoteCount ?? 0) > 0 ? (
+            <p className="muted" role="status">
+              Não votaram: <strong>{tally?.didNotVoteCount ?? room.round?.didNotVoteCount}</strong>
+            </p>
+          ) : null}
+
           <div className="secrecy-notice-box">
             <strong>Cédula Secreta — Votos criptografados e anônimos</strong>
             <p className="muted">
@@ -1381,23 +1396,29 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             ? "Excluir sala"
             : pendingConfirm === "close-room"
               ? "Fechar sala"
-              : "Remover participantes"
+              : pendingConfirm === "close-pending-round"
+                ? "Encerrar com votantes pendentes"
+                : "Remover participantes"
         }
         description={
           pendingConfirm === "delete-room"
             ? `Tem certeza que deseja excluir a sala "${room.title}"? Essa ação não pode ser desfeita.`
             : pendingConfirm === "close-room"
               ? `Deseja fechar a sala "${room.title}" e marcá-la como Completa para histórico?`
-              : "Tem certeza que deseja remover os participantes presentes da sala?"
+              : pendingConfirm === "close-pending-round"
+                ? "Nem todos os membros presentes votaram. Deseja encerrar o escrutínio assim mesmo? Os membros pendentes serão registrados como 'não votaram'."
+                : "Tem certeza que deseja remover os participantes presentes da sala?"
         }
         confirmLabel={
           pendingConfirm === "delete-room"
             ? "Excluir"
             : pendingConfirm === "close-room"
               ? "Fechar sala"
-              : "Remover participantes"
+              : pendingConfirm === "close-pending-round"
+                ? "Encerrar escrutínio"
+                : "Remover participantes"
         }
-        tone={pendingConfirm === "close-room" ? "default" : "danger"}
+        tone={pendingConfirm === "close-room" || pendingConfirm === "close-pending-round" ? "default" : "danger"}
         busy={isBusy || isSimulating}
         onCancel={() => setPendingConfirm(null)}
         onConfirm={() => {
@@ -1407,6 +1428,10 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             void handleDeleteRoom();
           } else if (target === "close-room") {
             void handleCloseRoomStatus();
+          } else if (target === "close-pending-round") {
+            if (openRoundId) {
+              void handleCloseRound(openRoundId, true);
+            }
           } else if (target === "remove-participants") {
             void handleSimulateRemove();
           }

@@ -23,6 +23,7 @@ export type BallotCandidate = {
 export type BallotTally = {
   totalVotes: number;
   nullVotes?: number;
+  didNotVoteCount?: number;
   threshold: number;
   outcome: "elected" | "no_majority";
   winnerId: string | null;

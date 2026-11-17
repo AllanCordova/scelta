@@ -5,6 +5,14 @@ import type { PresencePublisher, PresenceSnapshot } from "../realtime.js";
 import { hashJoinKey } from "../rooms/join-key.js";
 import { quorumStatus } from "../rooms/quorum-status.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import {
+  enforceRateLimit,
+  isRateLimited,
+  JOIN_BURST_RATE_LIMIT,
+  JOIN_RATE_LIMIT,
+  recordRateLimitHit,
+  replyRateLimited,
+} from "../security/rate-limiter.js";
 
 const TokenParams = Type.Object({
   token: Type.String({ minLength: 1, maxLength: 200 }),
@@ -67,6 +75,14 @@ export const joinRoutes: FastifyPluginAsync<JoinRouteOptions> = async (app, opti
       }
 
       const { token } = request.params as { token: string };
+      const failureScope = `${request.ip || "unknown"}:${token}`;
+      if (!(await enforceRateLimit(request, reply, JOIN_BURST_RATE_LIMIT, token))) {
+        return;
+      }
+      if (isRateLimited(JOIN_RATE_LIMIT, failureScope)) {
+        await replyRateLimited(reply, JOIN_RATE_LIMIT);
+        return;
+      }
       const body = request.body as JoinBodyType;
 
       try {
@@ -89,7 +105,12 @@ export const joinRoutes: FastifyPluginAsync<JoinRouteOptions> = async (app, opti
           hashJoinKey(validated.value.joinKey),
         );
         if (!joinedResult.ok) {
-          return reply.code(403).send({ error: joinedResult.reason });
+          recordRateLimitHit(JOIN_RATE_LIMIT, failureScope);
+          // Revoked and unknown codes share one answer so codes cannot be told apart.
+          return reply.code(403).send({
+            error: "invalid_access_code",
+            message: "Código de acesso inválido ou revogado.",
+          });
         }
         const joined = joinedResult.participant;
         const presentCount = await repository.countPresent(room.id);

@@ -12,6 +12,12 @@ import { hashJoinKey } from "../rooms/join-key.js";
 import { loadRoomOfficeState } from "../rooms/office-state.js";
 import type { RoomRepository, StoredRound } from "../rooms/room-repository.js";
 import { toRoundSummary } from "../rooms/round-summary.js";
+import { toCandidatePhotoUrl, toPublicOfficeBanners } from "./media.js";
+import {
+  BALLOT_BURST_RATE_LIMIT,
+  BALLOT_RATE_LIMIT,
+  enforceRateLimit,
+} from "../security/rate-limiter.js";
 
 const TokenParams = Type.Object({
   token: Type.String({ minLength: 1, maxLength: 200 }),
@@ -84,15 +90,21 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
         ]);
         const round = selectCurrentRound(allRounds);
         const officeRoundNumber = round ? countOfficeRoundNumber(allRounds, round) : undefined;
-        let tally: RoundTally | null = null;
-
-        if (
+        const shouldLoadCurrentTally =
           round &&
           round.status === "closed" &&
           (round.outcome === "elected" || round.outcome === "no_majority") &&
-          allCandidates.length > 0
-        ) {
-          const ballotCandidateIds = await repository.listRoundBallotCandidateIds(round.id);
+          allCandidates.length > 0;
+
+        const [ballotCandidateIds, officeState] = await Promise.all([
+          shouldLoadCurrentTally
+            ? repository.listRoundBallotCandidateIds(round.id)
+            : Promise.resolve(null),
+          loadRoomOfficeState(repository, room, allCandidates, allRounds),
+        ]);
+
+        let tally: RoundTally | null = null;
+        if (shouldLoadCurrentTally && ballotCandidateIds) {
           const eligibleIds = new Set(candidates.map((candidate) => candidate.id));
           const useEligibleOnly =
             candidates.length > 0 &&
@@ -104,12 +116,14 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
               roundNumber: officeRoundNumber,
               winnerOverrideId: round.winnerCandidateId,
               tieBreakReason: round.tieBreakReason,
+              ...(round.didNotVoteCount !== undefined && round.didNotVoteCount > 0
+                ? { didNotVoteCount: round.didNotVoteCount }
+                : {}),
             },
           );
         }
 
-        const officeState = await loadRoomOfficeState(repository, room, allCandidates, allRounds);
-        const officeBanners = room.officeBanners ?? {};
+        const officeBanners = toPublicOfficeBanners(room.id, room.officeBanners);
         const activeBannerUrl = round?.officeLabel
           ? (officeBanners[round.officeLabel] ?? null)
           : (officeBanners.default ?? null);
@@ -127,7 +141,7 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           candidates: candidates.map((candidate) => ({
             id: candidate.id,
             displayName: candidate.displayName,
-            photoUrl: candidate.photoUrl ?? null,
+            photoUrl: toCandidatePhotoUrl(room.id, candidate.id, candidate.photoUrl),
           })),
           offices: officeState.offices.map(
             ({ officeLabel, order, status, winnerCandidateId, winnerName }) => {
@@ -139,7 +153,9 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
                 order,
                 status,
                 winnerName,
-                winnerPhotoUrl: winnerCandidate?.photoUrl ?? null,
+                winnerPhotoUrl: winnerCandidate
+                  ? toCandidatePhotoUrl(room.id, winnerCandidate.id, winnerCandidate.photoUrl)
+                  : null,
                 bannerUrl: officeBanners[officeLabel] ?? null,
               };
             },
@@ -207,6 +223,13 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
       const joinKey = body.joinKey.trim();
       if (joinKey.length === 0) {
         return reply.code(400).send({ error: "invalid_join_key" });
+      }
+      const joinKeyHash = hashJoinKey(joinKey);
+      if (
+        !(await enforceRateLimit(request, reply, BALLOT_BURST_RATE_LIMIT, token)) ||
+        !(await enforceRateLimit(request, reply, BALLOT_RATE_LIMIT, `${token}:${joinKeyHash}`))
+      ) {
+        return;
       }
 
       try {

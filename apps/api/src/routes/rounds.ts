@@ -6,6 +6,7 @@ import {
   closeRoundOutcome,
   countOfficeRoundNumber,
   isMultiOfficeRoomType,
+  isRoundAnnulled,
   resolveNextRoundCandidateIds,
   resolveTargetOffice,
   tallyRoundVotes,
@@ -94,7 +95,9 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         }
 
         const targetOffice = officeResolution.officeLabel;
-        const officeRounds = allRounds.filter((round) => round.officeLabel === targetOffice);
+        const officeRounds = allRounds.filter(
+          (round) => round.officeLabel === targetOffice && !isRoundAnnulled(round),
+        );
         const latestClosedForOffice = [...officeRounds]
           .filter((round) => round.status === "closed")
           .sort((a, b) => b.number - a.number)[0] ?? null;
@@ -227,8 +230,46 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         return;
       }
 
+      const parsedClose = parseCloseRoundInput(request.body, request.query);
+      if (!parsedClose.ok) {
+        return reply.code(400).send({ error: "invalid_close_options" });
+      }
+
       const { roomId, roundId } = request.params as { roomId: string; roundId: string };
       try {
+        if (repository.closeAndTallyRound) {
+          const result = await repository.closeAndTallyRound(roomId, roundId, {
+            confirmPending: parsedClose.confirmPending,
+          });
+          if (!result.ok) {
+            if (result.reason === "room_not_found" || result.reason === "round_not_found") {
+              return reply.code(404).send({ error: result.reason });
+            }
+            if (result.reason === "voting_incomplete") {
+              return reply.code(409).send({
+                error: "voting_incomplete",
+                votedCount: result.votedCount,
+                presentCount: result.presentCount,
+              });
+            }
+            return reply.code(409).send({ error: result.reason });
+          }
+
+          options.presencePublisher?.publishRoundState?.(roomId, {
+            roundId: result.round.id,
+            roundNumber: result.round.number,
+            ...(result.round.officeLabel !== null
+              ? { officeLabel: result.round.officeLabel, officeRoundNumber: result.officeRoundNumber }
+              : {}),
+            state: "closed",
+          });
+
+          return {
+            round: toRoundSummary(result.round, result.tally, result.officeRoundNumber),
+            quorum: result.quorum,
+          };
+        }
+
         const room = await repository.findRoomById(roomId);
         if (!room) {
           return reply.code(404).send({ error: "room_not_found" });
@@ -246,6 +287,7 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         const quorum = quorumStatus(room, presentCount);
         let tally: RoundTally | null = null;
         let outcome: RoundResult | null = closeRoundOutcome(quorum.quorumMet);
+        let didNotVoteCount = 0;
 
         const allRoundsBeforeClose = await repository.listRounds(room.id);
         const officeRoundNumber = countOfficeRoundNumber(allRoundsBeforeClose, round);
@@ -253,25 +295,21 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         if (quorum.quorumMet) {
           const ballotCandidateIds = await repository.listRoundBallotCandidateIds(roundId);
           const votedCount = ballotCandidateIds.length;
-          if (votedCount < presentCount) {
+          if (votedCount < presentCount && !parsedClose.confirmPending) {
             return reply.code(409).send({
               error: "voting_incomplete",
               votedCount,
               presentCount,
             });
           }
-          if (votedCount > presentCount) {
-            return reply.code(409).send({
-              error: "vote_count_mismatch",
-              votedCount,
-              presentCount,
-            });
-          }
+
+          didNotVoteCount = Math.max(0, presentCount - votedCount);
 
           const candidates = await repository.listCandidates(roomId);
           if (candidates.length > 0) {
             tally = tallyRoundVotes(candidates, ballotCandidateIds, {
               roundNumber: officeRoundNumber,
+              ...(didNotVoteCount > 0 ? { didNotVoteCount } : {}),
             });
             outcome = tally.outcome;
           }
@@ -280,6 +318,7 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         const closed = await repository.closeRound(roomId, roundId, outcome, {
           winnerCandidateId: tally?.winnerId ?? null,
           tieBreakReason: tally?.tieBreakReason ?? null,
+          didNotVoteCount,
         });
         if (!closed) {
           return reply.code(409).send({ error: "round_not_open" });
@@ -493,6 +532,9 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           roundNumber: officeRoundNumber,
           winnerOverrideId: winnerCandidateId,
           tieBreakReason: "admin_tiebreak",
+          ...(resolved.didNotVoteCount !== undefined && resolved.didNotVoteCount > 0
+            ? { didNotVoteCount: resolved.didNotVoteCount }
+            : {}),
         });
 
         options.presencePublisher?.publishRoundState?.(room.id, {
@@ -619,4 +661,41 @@ function parseOpenRoundBody(
     ...(candidateIds === undefined ? {} : { candidateIds }),
     ...(officeLabel === undefined ? {} : { officeLabel }),
   };
+}
+
+function parseCloseRoundInput(
+  body: unknown,
+  query: unknown,
+): { ok: true; confirmPending: boolean } | { ok: false } {
+  let confirmPending = false;
+
+  if (query && typeof query === "object" && !Array.isArray(query)) {
+    const rawQuery = (query as Record<string, unknown>).confirmPending;
+    if (rawQuery === "true" || rawQuery === true) {
+      confirmPending = true;
+    }
+  }
+
+  if (body === undefined || body === null) {
+    return { ok: true, confirmPending };
+  }
+  if (typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false };
+  }
+
+  const record = body as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (key !== "confirmPending") {
+      return { ok: false };
+    }
+  }
+
+  if (record.confirmPending !== undefined) {
+    if (typeof record.confirmPending !== "boolean") {
+      return { ok: false };
+    }
+    confirmPending = record.confirmPending;
+  }
+
+  return { ok: true, confirmPending };
 }

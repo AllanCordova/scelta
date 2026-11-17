@@ -52,13 +52,11 @@ export const STATUS_LABELS: Record<RoomStatus, string> = {
   draft: "Rascunho",
   open: "Aberta",
   test: "Teste",
-  voting: "Em votação",
   closed: "Completa",
-  cancelled: "Cancelada",
 };
 
 export function showsPresence(status: RoomStatus): boolean {
-  return status === "open" || status === "test" || status === "voting";
+  return status === "open" || status === "test";
 }
 
 export function quorumLabel(presentCount: number, requiredCount: number): string {

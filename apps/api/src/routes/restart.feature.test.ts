@@ -1,5 +1,4 @@
 import {
-  auditEvents,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -10,6 +9,7 @@ import {
   voteReceipts,
   type Db,
 } from "@scelta/db";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
 import { hashPassword } from "../auth/password.js";
@@ -17,6 +17,7 @@ import { buildApp } from "../app.js";
 import type { RoundStateSnapshot } from "../realtime.js";
 import { createDrizzleRoomRepository } from "../rooms/drizzle-room-repository.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import { clearAuditEvents } from "../testing/database.js";
 import { createDrizzleUserRepository } from "../users/drizzle-user-repository.js";
 import type { UserRepository } from "../users/user-repository.js";
 
@@ -66,7 +67,7 @@ describe("round lifecycle and restart", () => {
 
   beforeEach(async () => {
     resetAuthAttempts();
-    await db.delete(auditEvents);
+    await clearAuditEvents(db);
     await db.delete(ballots);
     await db.delete(voteReceipts);
     await db.delete(candidates);
@@ -76,7 +77,7 @@ describe("round lifecycle and restart", () => {
     await db.delete(rooms);
   });
 
-  it("clears ballots and receipts on restart, records an audit event, notifies state changes, and tallies only post-restart votes", async () => {
+  it("annuls the restarted round while preserving its ballots and receipts, opens a new round with the next number, and records annulled totals in the audit log", async () => {
     const roundStateEvents: { roomId: string; snapshot: RoundStateSnapshot }[] = [];
     const app = await buildApp({
       roomRepository: repository,
@@ -115,21 +116,33 @@ describe("round lifecycle and restart", () => {
     // Admin restarts the open round
     const restarted = await restartRound(app, room.id, roundId);
     expect(restarted.statusCode).toBe(200);
+    const newRoundId = restarted.json().round.id as string;
+    expect(newRoundId).not.toBe(roundId);
     expect(restarted.json()).toEqual({
       round: {
-        id: roundId,
-        number: 1,
+        id: newRoundId,
+        number: 2,
         status: "open",
         outcome: null,
         restartCount: 1,
       },
     });
 
-    // Ballots and receipts are cleared in DB
-    expect(await db.select().from(ballots)).toEqual([]);
-    expect(await db.select().from(voteReceipts)).toEqual([]);
+    // Previous round is marked restarted + annulled, and its ballots and receipts are preserved in DB
+    const annulledRound = await repository.findRound(room.id, roundId);
+    expect(annulledRound).toMatchObject({
+      id: roundId,
+      number: 1,
+      status: "restarted",
+      outcome: "annulled",
+    });
+    expect(annulledRound?.closedAt).toBeInstanceOf(Date);
+    expect(await db.select().from(ballots).where(eq(ballots.roundId, roundId))).toHaveLength(2);
+    expect(
+      await db.select().from(voteReceipts).where(eq(voteReceipts.roundId, roundId)),
+    ).toHaveLength(2);
 
-    // Audit event is written without any voter choice or PII
+    // Audit event records the annulled round, new round, and annulled totals without voter PII
     const events = await repository.listAuditEvents(room.id);
     const restartEvents = events.filter((event) => event.action === "round_restarted");
     expect(restartEvents).toHaveLength(1);
@@ -138,37 +151,44 @@ describe("round lifecycle and restart", () => {
       actorRole: "admin",
       action: "round_restarted",
       payload: {
-        roundId,
-        roundNumber: 1,
+        roundId: newRoundId,
+        roundNumber: 2,
+        annulledRoundId: roundId,
+        annulledRoundNumber: 1,
+        annulledTotals: {
+          totalBallots: 2,
+          blankVotes: 0,
+          byCandidate: { [paulo.id]: 2 },
+        },
       },
     });
 
-    // Voter ballot state exposes restartCount and receipt resets to hasVoted: false
+    // Voter ballot state exposes the new open round and receipt resets to hasVoted: false for the new round
     const ballotState = await app.inject({
       method: "GET",
       url: `/v1/join/${room.inviteToken}/ballot`,
     });
     expect(ballotState.statusCode).toBe(200);
     expect(ballotState.json().round).toEqual({
-      id: roundId,
-      number: 1,
+      id: newRoundId,
+      number: 2,
       status: "open",
       outcome: null,
       restartCount: 1,
     });
 
     const receiptAfterRestart = await checkReceipt(app, room.inviteToken, anaKey);
-    expect(receiptAfterRestart.json()).toEqual({ roundId, hasVoted: false });
+    expect(receiptAfterRestart.json()).toEqual({ roundId: newRoundId, hasVoted: false });
 
-    // Both voters now vote for Silas after restart
+    // Both voters now vote for Silas in the new round
     expect((await castVote(app, room.inviteToken, anaKey, silas.id)).statusCode).toBe(201);
     expect((await castVote(app, room.inviteToken, biaKey, silas.id)).statusCode).toBe(201);
 
-    const closed = await closeRound(app, room.id, roundId);
+    const closed = await closeRound(app, room.id, newRoundId);
     expect(closed.statusCode).toBe(200);
     expect(closed.json().round).toEqual({
-      id: roundId,
-      number: 1,
+      id: newRoundId,
+      number: 2,
       status: "closed",
       outcome: "elected",
       restartCount: 1,
@@ -189,22 +209,23 @@ describe("round lifecycle and restart", () => {
     // Realtime publisher notified open, restarted, and closed state transitions
     expect(roundStateEvents).toEqual([
       { roomId: room.id, snapshot: { roundId, roundNumber: 1, state: "open" } },
-      { roomId: room.id, snapshot: { roundId, roundNumber: 1, state: "restarted" } },
-      { roomId: room.id, snapshot: { roundId, roundNumber: 1, state: "closed" } },
+      { roomId: room.id, snapshot: { roundId: newRoundId, roundNumber: 2, state: "restarted" } },
+      { roomId: room.id, snapshot: { roundId: newRoundId, roundNumber: 2, state: "closed" } },
     ]);
 
     await app.close();
   });
 
-  it("resets round number back to 1 and restores all candidates when restarting a later round", async () => {
+  it("keeps closed rounds intact when restarting a later round and preserves the 3-round office limit", async () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoom(app, {
-      title: "Reinício para marca 1",
+      title: "Reinício sem apagar histórico",
       quorumValue: 2,
       candidates: ["Paulo", "Silas", "Barnabé"],
     });
     const paulo = room.candidates.find((c) => c.displayName === "Paulo")!;
     const silas = room.candidates.find((c) => c.displayName === "Silas")!;
+    const barnabe = room.candidates.find((c) => c.displayName === "Barnabé")!;
 
     await join(app, room.inviteToken, "Ana", anaKey);
     await join(app, room.inviteToken, "Bia", biaKey);
@@ -214,45 +235,71 @@ describe("round lifecycle and restart", () => {
     const r1Id = r1.json().round.id as string;
     await castVote(app, room.inviteToken, anaKey, paulo.id);
     await castVote(app, room.inviteToken, biaKey, silas.id);
-    await app.inject({
-      method: "POST",
-      url: `/v1/admin/rooms/${room.id}/rounds/${r1Id}/close`,
-      headers: { cookie: adminCookie },
-    });
+    await closeRound(app, room.id, r1Id);
 
-    // 2nd round: tie -> no_majority
+    // 2nd round: open, cast 1 vote, then restart -> 1st round stays intact, 2nd round is annulled, new round #3 opens as the 2nd valid ballot
     const r2 = await openRound(app, room.id);
     const r2Id = r2.json().round.id as string;
-    await castVote(app, room.inviteToken, anaKey, paulo.id);
-    await castVote(app, room.inviteToken, biaKey, silas.id);
-    await app.inject({
-      method: "POST",
-      url: `/v1/admin/rooms/${room.id}/rounds/${r2Id}/close`,
-      headers: { cookie: adminCookie },
+    await castVote(app, room.inviteToken, anaKey, barnabe.id);
+
+    const restartedR2 = await restartRound(app, room.id, r2Id);
+    expect(restartedR2.statusCode).toBe(200);
+    const r2ReplacementId = restartedR2.json().round.id as string;
+    expect(restartedR2.json().round).toMatchObject({
+      id: r2ReplacementId,
+      number: 3,
+      status: "open",
+      outcome: null,
+      restartCount: 1,
     });
 
-    // 3rd round: narrowed to top 2 (Paulo, Silas), Barnabé eliminated
+    // 1st closed round and its 2 ballots remain untouched
+    const storedR1 = await repository.findRound(room.id, r1Id);
+    expect(storedR1).toMatchObject({
+      id: r1Id,
+      number: 1,
+      status: "closed",
+      outcome: "no_majority",
+    });
+    expect(await db.select().from(ballots).where(eq(ballots.roundId, r1Id))).toHaveLength(2);
+
+    // Complete the 2nd valid ballot (round #3) with a tie -> no_majority
+    await castVote(app, room.inviteToken, anaKey, paulo.id);
+    await castVote(app, room.inviteToken, biaKey, silas.id);
+    await closeRound(app, room.id, r2ReplacementId);
+
+    // 3rd valid ballot (round #4): narrowed to top 2 (Paulo, Silas), Barnabé eliminated
     const r3 = await openRound(app, room.id);
     expect(r3.statusCode).toBe(201);
-    expect(r3.json().round.number).toBe(3);
+    expect(r3.json().round.number).toBe(4);
     expect(r3.json().candidates).toHaveLength(2);
     const r3Id = r3.json().round.id as string;
 
-    // Restarting 3rd round resets back to round 1 and restores all 3 candidates
-    const restarted = await restartRound(app, room.id, r3Id);
-    expect(restarted.statusCode).toBe(200);
-    expect(restarted.json()).toEqual({
-      round: {
-        id: r3Id,
-        number: 1,
-        status: "open",
-        outcome: null,
-        restartCount: 1,
-      },
+    // Restarting the 3rd valid ballot annuls round #4 and opens round #5 while keeping the narrowed candidate pool (Paulo, Silas) and still counting as the 3rd valid ballot
+    const restartedR3 = await restartRound(app, room.id, r3Id);
+    expect(restartedR3.statusCode).toBe(200);
+    const r3ReplacementId = restartedR3.json().round.id as string;
+    expect(restartedR3.json().round).toMatchObject({
+      id: r3ReplacementId,
+      number: 5,
+      status: "open",
+      outcome: null,
+      restartCount: 2,
     });
 
     const eligibleAfterRestart = await repository.listCandidates(room.id);
-    expect(eligibleAfterRestart.map((c) => c.displayName)).toEqual(["Barnabé", "Paulo", "Silas"]);
+    expect(eligibleAfterRestart.map((c) => c.displayName)).toEqual(["Paulo", "Silas"]);
+
+    // Tie on the 3rd valid ballot (round #5) triggers 3rd-round tie-break rules and blocks opening a 4th valid ballot
+    await castVote(app, room.inviteToken, anaKey, paulo.id);
+    await castVote(app, room.inviteToken, biaKey, silas.id);
+    const closedR3 = await closeRound(app, room.id, r3ReplacementId);
+    expect(closedR3.statusCode).toBe(200);
+    expect(closedR3.json().round.tally.tieBreakRequired).toBe(true);
+
+    const blockedFourth = await openRound(app, room.id);
+    expect(blockedFourth.statusCode).toBe(409);
+    expect(blockedFourth.json()).toEqual({ error: "max_rounds_reached" });
 
     await app.close();
   });

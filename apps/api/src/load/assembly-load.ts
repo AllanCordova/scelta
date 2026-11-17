@@ -64,12 +64,12 @@ async function main() {
   const started = performance.now();
   const server = await startServer();
   const problems: string[] = [];
-  const samples: Record<string, Sample[]> = {
-    entrar: [],
-    início: [],
-    voto: [],
-    cédula: [],
-    resultado: [],
+  const samples = {
+    entrar: [] as Sample[],
+    início: [] as Sample[],
+    voto: [] as Sample[],
+    cédula: [] as Sample[],
+    resultado: [] as Sample[],
   };
 
   try {
@@ -310,6 +310,10 @@ async function pollPhase(baseUrl: string, token: string, voters: Voter[], bucket
   for (let waveIndex = 0; waveIndex < POLL_WAVES; waveIndex += 1) {
     const waveResult = await wave(voters, async (voter) => {
       const timed = await time(() => readBallot(baseUrl, token, voter));
+      if (!timed.value) {
+        bucket.push(sampleOf(timed.ms, false, 0, "sem resposta"));
+        return { name: voter.name, screen: { phase: "desconhecida" as const } };
+      }
       bucket.push(sampleOf(timed.ms, timed.value.ok, timed.value.status, timed.value.error));
       return { name: voter.name, screen: timed.value.screen };
     });
@@ -346,7 +350,7 @@ async function readBallot(baseUrl: string, token: string, voter: Voter): Promise
 
 function screenOf(body: BallotBody): Screen {
   const roomStatus = body.roomStatus ?? "";
-  const joinable = roomStatus === "open" || roomStatus === "test" || roomStatus === "voting";
+  const joinable = roomStatus === "open" || roomStatus === "test";
   const round = body.round ?? null;
   const access = body.viewerAccess ?? "unknown";
   if (access === "absent" || access === "revoked" || access === "missing") {

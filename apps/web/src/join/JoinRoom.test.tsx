@@ -127,7 +127,7 @@ describe("JoinRoom", () => {
         const url = String(input);
         if (url.endsWith("/ballot")) {
           return json({
-            roomStatus: "voting",
+            roomStatus: "open",
             viewerAccess,
             candidates: [{ id: "cand-1", displayName: "Paulo" }],
             round: { id: "round-1", number: 1, status: "open", outcome: null },
@@ -140,14 +140,14 @@ describe("JoinRoom", () => {
           }
           return json({
             title: "Assembleia",
-            status: "voting",
+            status: "open",
             displayName: "Ana",
             presentCount: 1,
             alreadyJoined: true,
           });
         }
         if (url.endsWith("/live-token")) {
-          return json({ title: "Assembleia", status: "voting", canJoin: true });
+          return json({ title: "Assembleia", status: "open", canJoin: true });
         }
         if (url.endsWith("/ballot/receipt")) {
           return json({ roundId: "round-1", hasVoted: false });
@@ -572,12 +572,12 @@ describe("JoinRoom", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.endsWith("/v1/join/paged-token") && !init) {
-          return json({ title: "Assembleia Geral", status: "voting", canJoin: true });
+          return json({ title: "Assembleia Geral", status: "open", canJoin: true });
         }
         if (url.endsWith("/v1/join/paged-token") && init?.method === "POST") {
           return json({
             title: "Assembleia Geral",
-            status: "voting",
+            status: "open",
             displayName: "Ana",
             presentCount: 20,
             alreadyJoined: true,
@@ -586,14 +586,14 @@ describe("JoinRoom", () => {
         if (url.endsWith("/v1/join/paged-token/ballot")) {
           if (!isClosed) {
             return json({
-              roomStatus: "voting",
+              roomStatus: "open",
               roomType: "elder",
               candidates: manyCandidates,
               round: { id: "round-1", number: 1, status: "open", outcome: null },
             });
           }
           return json({
-            roomStatus: "voting",
+            roomStatus: "open",
             roomType: "elder",
             candidates: manyCandidates,
             round: {

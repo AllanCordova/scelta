@@ -47,6 +47,8 @@ export {
 export {
   canOpenRound,
   canSimulateInRoom,
+  canTransitionRoomStatus,
+  canUpdateRoomQuorum,
   CREATE_ROOM_STATUSES,
   PRESET_DEFINITIONS,
   ROOM_STATUSES,
@@ -58,7 +60,9 @@ export {
   type MajorityRule,
   type PresetDefinition,
   type RoomFieldError,
+  type RoomQuorumUpdateRejectionReason,
   type RoomStatus,
+  type RoomStatusTransitionRejectionReason,
   type RoomType,
   type ValidRoomConfig,
 } from "./room.js";
@@ -101,6 +105,7 @@ export {
   countOfficeRoundNumber,
   getElectedCandidateIds,
   isMultiOfficeRoomType,
+  isRoundAnnulled,
   isValidOfficeForRoomType,
   officesForRoomType,
   resolveTargetOffice,

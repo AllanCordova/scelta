@@ -2,10 +2,12 @@ import type {
   BallotRejectionReason,
   CreateRoomStatus,
   MemberSocietyFlags,
+  QuorumStatus,
   QuorumUnit,
   RoomStatus,
   RoomType,
   RoundResult,
+  RoundTally,
   RulesPreset,
   ValidMemberImportRow,
 } from "@scelta/domain";
@@ -65,6 +67,7 @@ export type StoredRound = {
   declinedCandidateId?: string | null;
   winnerCandidateId?: string | null;
   tieBreakReason?: "age" | "admin_tiebreak" | null;
+  didNotVoteCount?: number;
   openedAt: Date | null;
   closedAt: Date | null;
   restartCount?: number;
@@ -78,8 +81,33 @@ export type StoredAuditEvent = {
   actorRole: string;
   action: string;
   payload: Record<string, unknown>;
+  prevHash?: string | null;
+  integrityHash?: string;
   createdAt: Date;
 };
+
+export type AuditChainVerificationResult = {
+  chainValid: boolean;
+  totalEvents: number;
+  chainTipHash: string;
+  brokenAtEventId?: string | null;
+};
+
+export type AtomicCloseRoundResult =
+  | {
+      ok: true;
+      round: StoredRound;
+      tally: RoundTally | null;
+      quorum: QuorumStatus;
+      officeRoundNumber: number;
+      didNotVoteCount: number;
+    }
+  | {
+      ok: false;
+      reason: "room_not_found" | "round_not_found" | "round_not_open" | "voting_incomplete";
+      votedCount?: number;
+      presentCount?: number;
+    };
 
 export type StoredMember = {
   id: string;
@@ -159,10 +187,6 @@ export type SendVoterChatResult =
       reason: "participant_not_in_room" | "participant_muted" | "room_chat_muted" | "rate_limited";
     };
 
-export type SendReactionResult =
-  | { ok: true; emoji: string; createdAt: Date }
-  | { ok: false; reason: "participant_not_in_room" | "rate_limited" };
-
 export type RoomRepository = {
   createRoom(room: NewRoom): Promise<StoredRoom>;
   updateRoom(roomId: string, input: UpdateRoomInput): Promise<StoredRoom | null>;
@@ -234,8 +258,14 @@ export type RoomRepository = {
     options?: {
       winnerCandidateId?: string | null;
       tieBreakReason?: "age" | "admin_tiebreak" | null;
+      didNotVoteCount?: number;
     },
   ): Promise<StoredRound | null>;
+  closeAndTallyRound?(
+    roomId: string,
+    roundId: string,
+    options?: { confirmPending?: boolean },
+  ): Promise<AtomicCloseRoundResult>;
   resolveRoundTie?(
     roomId: string,
     roundId: string,
@@ -252,6 +282,7 @@ export type RoomRepository = {
   latestClosedRound(roomId: string): Promise<StoredRound | null>;
   listAuditEvents(roomId: string): Promise<StoredAuditEvent[]>;
   listAllAuditEvents?(roomId?: string): Promise<StoredAuditEvent[]>;
+  verifyAuditChain?(roomId?: string): Promise<AuditChainVerificationResult>;
   hasSimulatedAccessCodes?(roomId: string): Promise<boolean>;
   recordAuditEvent?(
     roomId: string,
@@ -291,11 +322,4 @@ export type RoomRepository = {
   ): Promise<StoredMember | null>;
   deleteMember(memberId: string): Promise<boolean>;
   listMembers(): Promise<StoredMember[]>;
-  sendReaction(input: {
-    roomId: string;
-    joinKeyHash: string;
-    emoji: string;
-    since: Date;
-    maxPerWindow: number;
-  }): Promise<SendReactionResult>;
 };

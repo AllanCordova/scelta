@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { canOpenRound, canSimulateInRoom, findPreset, validateCreateRoom } from "./room.js";
+import {
+  canOpenRound,
+  canSimulateInRoom,
+  canTransitionRoomStatus,
+  canUpdateRoomQuorum,
+  findPreset,
+  validateCreateRoom,
+} from "./room.js";
 
 describe("validateCreateRoom", () => {
   it("pre-fills quorum, majority, and round behavior from the local officers preset", () => {
@@ -208,20 +215,79 @@ describe("validateCreateRoom", () => {
     });
   });
 
-  it("allows a round only in an open, test, or voting room and restricts simulation to test rooms", () => {
+  it("allows a round only in an open or test room and restricts simulation to test rooms", () => {
     expect(canOpenRound("open")).toBe(true);
     expect(canOpenRound("test")).toBe(true);
-    expect(canOpenRound("voting")).toBe(true);
     expect(canOpenRound("draft")).toBe(false);
     expect(canOpenRound("closed")).toBe(false);
-    expect(canOpenRound("cancelled")).toBe(false);
 
     expect(canSimulateInRoom("test")).toBe(true);
     expect(canSimulateInRoom("open")).toBe(false);
     expect(canSimulateInRoom("draft")).toBe(false);
-    expect(canSimulateInRoom("voting")).toBe(false);
     expect(canSimulateInRoom("closed")).toBe(false);
-    expect(canSimulateInRoom("cancelled")).toBe(false);
+  });
+
+  it("enforces room status transition state machine and blocks changes while a round is open", () => {
+    expect(canTransitionRoomStatus("draft", "open")).toEqual({ ok: true });
+    expect(canTransitionRoomStatus("draft", "test")).toEqual({ ok: true });
+    expect(canTransitionRoomStatus("draft", "closed")).toEqual({ ok: true });
+    expect(canTransitionRoomStatus("open", "draft")).toEqual({ ok: true });
+    expect(canTransitionRoomStatus("open", "test")).toEqual({ ok: true });
+    expect(canTransitionRoomStatus("open", "closed")).toEqual({ ok: true });
+    expect(canTransitionRoomStatus("test", "open")).toEqual({ ok: true });
+    expect(canTransitionRoomStatus("test", "closed")).toEqual({ ok: true });
+    expect(canTransitionRoomStatus("closed", "closed")).toEqual({ ok: true });
+
+    // Closed rooms cannot be reopened
+    expect(canTransitionRoomStatus("closed", "open")).toEqual({
+      ok: false,
+      reason: "room_already_closed",
+    });
+    expect(canTransitionRoomStatus("closed", "draft")).toEqual({
+      ok: false,
+      reason: "room_already_closed",
+    });
+    expect(canTransitionRoomStatus("closed", "test")).toEqual({
+      ok: false,
+      reason: "room_already_closed",
+    });
+
+    // Status transitions are blocked while a round is open
+    expect(canTransitionRoomStatus("open", "closed", { hasOpenRound: true })).toEqual({
+      ok: false,
+      reason: "round_currently_open",
+    });
+    expect(canTransitionRoomStatus("open", "draft", { hasOpenRound: true })).toEqual({
+      ok: false,
+      reason: "round_currently_open",
+    });
+    expect(canTransitionRoomStatus("test", "open", { hasOpenRound: true })).toEqual({
+      ok: false,
+      reason: "round_currently_open",
+    });
+    expect(canTransitionRoomStatus("open", "open", { hasOpenRound: true })).toEqual({
+      ok: true,
+    });
+  });
+
+  it("blocks quorum updates when a round is open or the room is closed", () => {
+    expect(canUpdateRoomQuorum({ roomStatus: "draft", hasOpenRound: false })).toEqual({
+      ok: true,
+    });
+    expect(canUpdateRoomQuorum({ roomStatus: "open", hasOpenRound: false })).toEqual({
+      ok: true,
+    });
+    expect(canUpdateRoomQuorum({ roomStatus: "test", hasOpenRound: false })).toEqual({
+      ok: true,
+    });
+    expect(canUpdateRoomQuorum({ roomStatus: "open", hasOpenRound: true })).toEqual({
+      ok: false,
+      reason: "round_currently_open",
+    });
+    expect(canUpdateRoomQuorum({ roomStatus: "closed", hasOpenRound: false })).toEqual({
+      ok: false,
+      reason: "room_closed",
+    });
   });
 
   it("accepts creating a room with status test", () => {

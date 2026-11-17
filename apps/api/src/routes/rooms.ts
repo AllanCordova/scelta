@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   canSimulateInRoom,
+  canTransitionRoomStatus,
+  canUpdateRoomQuorum,
   countOfficeRoundNumber,
   findPreset,
   isMemberEligibleForRoomType,
@@ -19,6 +21,11 @@ import { requireAdmin } from "../auth/require-admin.js";
 import type { PresencePublisher } from "../realtime.js";
 import { loadRoomOfficeState } from "../rooms/office-state.js";
 import { quorumStatus } from "../rooms/quorum-status.js";
+import {
+  toCandidatePhotoUrl,
+  toOfficeBannerUrl,
+  toPublicOfficeBanners,
+} from "./media.js";
 import type {
   RoomRepository,
   StoredCandidate,
@@ -70,7 +77,7 @@ type CreateRoomBodyType = {
 const UpdateRoomBody = Type.Object(
   {
     title: Type.Optional(Type.String({ minLength: 1, maxLength: 200 })),
-    quorumValue: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
+    quorumValue: Type.Optional(Type.Integer({ minimum: 1, maximum: 100_000 })),
     quorumUnit: Type.Optional(Type.Union([Type.Literal("absolute"), Type.Literal("percent")])),
     eligibleCount: Type.Optional(Type.Integer({ minimum: 0, maximum: 100_000 })),
     status: Type.Optional(
@@ -373,8 +380,14 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
                 : undefined;
               return {
                 ...office,
-                winnerPhotoUrl: winnerCandidate?.photoUrl ?? null,
-                bannerUrl: room.officeBanners?.[office.officeLabel] ?? null,
+                winnerPhotoUrl: winnerCandidate
+                  ? toCandidatePhotoUrl(room.id, winnerCandidate.id, winnerCandidate.photoUrl)
+                  : null,
+                bannerUrl: toOfficeBannerUrl(
+                  room.id,
+                  office.officeLabel,
+                  room.officeBanners?.[office.officeLabel],
+                ),
               };
             }),
             recommendedOffice: officeState.recommendedOffice,
@@ -416,8 +429,15 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           return reply.code(404).send({ error: "room_not_found" });
         }
 
-        const events = await options.roomRepository.listAuditEvents(roomId);
+        const [events, verification] = await Promise.all([
+          options.roomRepository.listAuditEvents(roomId),
+          options.roomRepository.verifyAuditChain
+            ? options.roomRepository.verifyAuditChain(roomId)
+            : Promise.resolve({ chainValid: true, totalEvents: 0, chainTipHash: "GENESIS" }),
+        ]);
         return {
+          chainValid: verification.chainValid,
+          chainTipHash: verification.chainTipHash,
           events: events.map((event) => ({
             roomId: event.roomId,
             ...toAuditEventResponse(event),
@@ -425,6 +445,40 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         };
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to list audit events");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.get(
+    "/v1/admin/rooms/:roomId/audit/verify",
+    {
+      schema: {
+        params: RoomIdParams,
+      },
+    },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+
+      if (!options.roomRepository) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const room = await options.roomRepository.findRoomById(roomId);
+        if (!room) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        const verification = options.roomRepository.verifyAuditChain
+          ? await options.roomRepository.verifyAuditChain(roomId)
+          : { chainValid: true, totalEvents: 0, chainTipHash: "GENESIS" };
+        return verification;
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to verify audit chain");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },
@@ -506,6 +560,45 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
             error: "invalid_room",
             details: [{ field: "quorumValue", code: "out_of_range" }],
           });
+        }
+
+        const roomRounds = await options.roomRepository.listRounds(roomId);
+        const hasOpenRound = roomRounds.some((round) => round.status === "open");
+
+        if (body.status !== undefined) {
+          const transition = canTransitionRoomStatus(existing.status, body.status, {
+            hasOpenRound,
+          });
+          if (!transition.ok) {
+            return reply.code(409).send({
+              error: transition.reason,
+              message:
+                transition.reason === "room_already_closed"
+                  ? "Sala já encerrada não pode ser reaberta."
+                  : "Não é possível alterar o status da sala com um escrutínio aberto.",
+            });
+          }
+        }
+
+        const isUpdatingQuorum =
+          (body.quorumValue !== undefined && body.quorumValue !== existing.quorumValue) ||
+          (body.quorumUnit !== undefined && body.quorumUnit !== existing.quorumUnit) ||
+          (body.eligibleCount !== undefined && body.eligibleCount !== existing.eligibleCount);
+
+        if (isUpdatingQuorum) {
+          const quorumCheck = canUpdateRoomQuorum({
+            roomStatus: existing.status,
+            hasOpenRound,
+          });
+          if (!quorumCheck.ok) {
+            return reply.code(409).send({
+              error: quorumCheck.reason,
+              message:
+                quorumCheck.reason === "room_closed"
+                  ? "Não é possível alterar o quórum de uma sala encerrada."
+                  : "Não é possível alterar o quórum ou o total de eleitores com um escrutínio aberto.",
+            });
+          }
         }
 
         if (
@@ -1029,13 +1122,16 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
     }
 
     try {
-      const [events, allRooms] = await Promise.all([
+      const [events, allRooms, verification] = await Promise.all([
         options.roomRepository.listAllAuditEvents
           ? options.roomRepository.listAllAuditEvents(roomIdFilter)
           : roomIdFilter
             ? options.roomRepository.listAuditEvents(roomIdFilter)
             : Promise.resolve([]),
         options.roomRepository.listRooms(),
+        options.roomRepository.verifyAuditChain
+          ? options.roomRepository.verifyAuditChain(roomIdFilter)
+          : Promise.resolve({ chainValid: true, totalEvents: 0, chainTipHash: "GENESIS" }),
       ]);
 
       const roomMap = new Map(allRooms.map((r) => [r.id, r]));
@@ -1077,11 +1173,13 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         }
 
         const iso = event.createdAt.toISOString();
-        const integrityHash = createHash("sha256")
-          .update(`${previousHash}:${event.id}:${event.roomId}:${event.actorRole}:${event.action}:${iso}`)
-          .digest("hex")
-          .slice(0, 16)
-          .toUpperCase();
+        const integrityHash =
+          event.integrityHash ??
+          createHash("sha256")
+            .update(`${previousHash}:${event.id}:${event.roomId}:${event.actorRole}:${event.action}:${iso}`)
+            .digest("hex")
+            .slice(0, 16)
+            .toUpperCase();
         previousHash = integrityHash;
 
         return {
@@ -1094,6 +1192,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           action: event.action,
           payload: event.payload,
           createdAt: iso,
+          ...(event.prevHash ? { prevHash: event.prevHash } : {}),
           integrityHash,
         };
       });
@@ -1120,6 +1219,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           simulatedParticipantsJoined,
           adminVoteInterventions: 0,
           immutable: true,
+          chainValid: verification.chainValid,
           chainTipHash: previousHash,
         },
         rooms: Array.from(distinctRooms.values()),
@@ -1199,7 +1299,7 @@ function toRoomResponse(
     quorumValue: room.quorumValue,
     quorumUnit: room.quorumUnit,
     eligibleCount: room.eligibleCount,
-    officeBanners: room.officeBanners ?? {},
+    officeBanners: toPublicOfficeBanners(room.id, room.officeBanners),
     status: room.status,
     reactionsEnabled: room.reactionsEnabled,
     chatMuted: room.chatMuted ?? false,
@@ -1208,7 +1308,7 @@ function toRoomResponse(
           candidates: candidates.map((candidate) => ({
             id: candidate.id,
             displayName: candidate.displayName,
-            photoUrl: candidate.photoUrl ?? null,
+            photoUrl: toCandidatePhotoUrl(room.id, candidate.id, candidate.photoUrl),
           })),
         }
       : {}),
@@ -1267,6 +1367,9 @@ async function loadTalliesForClosedRounds(
         roundNumber,
         winnerOverrideId: round.winnerCandidateId,
         tieBreakReason: round.tieBreakReason,
+        ...(round.didNotVoteCount !== undefined && round.didNotVoteCount > 0
+          ? { didNotVoteCount: round.didNotVoteCount }
+          : {}),
       }),
     );
   }
@@ -1278,6 +1381,8 @@ function toAuditEventResponse(event: {
   actorRole: string;
   action: string;
   payload: Record<string, unknown>;
+  prevHash?: string | null;
+  integrityHash?: string;
   createdAt: Date;
 }) {
   return {
@@ -1285,6 +1390,8 @@ function toAuditEventResponse(event: {
     actorRole: event.actorRole,
     action: event.action,
     payload: event.payload,
+    ...(event.prevHash ? { prevHash: event.prevHash } : {}),
+    ...(event.integrityHash ? { integrityHash: event.integrityHash } : {}),
     createdAt: event.createdAt.toISOString(),
   };
 }

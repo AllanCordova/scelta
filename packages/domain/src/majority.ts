@@ -36,6 +36,7 @@ export type TallyRoundOptions = {
   roundNumber?: number;
   winnerOverrideId?: string | null;
   tieBreakReason?: TieBreakReason | null;
+  didNotVoteCount?: number;
 };
 
 export type RoundTally = {
@@ -46,6 +47,7 @@ export type RoundTally = {
   winnerId: string | null;
   winnerName: string | null;
   standings: CandidateStanding[];
+  didNotVoteCount?: number;
   tieBreakReason?: TieBreakReason;
   tieBreakRequired?: boolean;
   tiedCandidates?: TiedCandidateOption[];
@@ -106,6 +108,9 @@ export function tallyRoundVotes(
     votes: entry.votes,
   }));
 
+  const didNotVoteExtra =
+    options?.didNotVoteCount !== undefined ? { didNotVoteCount: options.didNotVoteCount } : {};
+
   if (options?.winnerOverrideId) {
     const overrideWinner = byId.get(options.winnerOverrideId);
     if (overrideWinner) {
@@ -117,6 +122,7 @@ export function tallyRoundVotes(
         winnerId: overrideWinner.id,
         winnerName: overrideWinner.displayName,
         standings,
+        ...didNotVoteExtra,
         ...(options.tieBreakReason ? { tieBreakReason: options.tieBreakReason } : {}),
       };
     }
@@ -134,6 +140,7 @@ export function tallyRoundVotes(
       winnerId,
       winnerName,
       standings,
+      ...didNotVoteExtra,
     };
   }
 
@@ -162,6 +169,7 @@ export function tallyRoundVotes(
         winnerId: singleWinner.id,
         winnerName: singleWinner.displayName,
         standings,
+        ...didNotVoteExtra,
       };
     }
 
@@ -186,6 +194,7 @@ export function tallyRoundVotes(
             winnerId: oldest.id,
             winnerName: oldest.displayName,
             standings,
+            ...didNotVoteExtra,
             tieBreakReason: "age",
           };
         }
@@ -199,6 +208,7 @@ export function tallyRoundVotes(
         winnerId: null,
         winnerName: null,
         standings,
+        ...didNotVoteExtra,
         tieBreakRequired: true,
         tiedCandidates: tiedCandidates.map((candidate) => ({
           id: candidate.id,
@@ -217,6 +227,7 @@ export function tallyRoundVotes(
     winnerId: null,
     winnerName: null,
     standings,
+    ...didNotVoteExtra,
   };
 }
 

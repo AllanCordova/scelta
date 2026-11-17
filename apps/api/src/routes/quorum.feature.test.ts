@@ -1,5 +1,4 @@
 import {
-  auditEvents,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -18,6 +17,7 @@ import { buildApp } from "../app.js";
 import type { PresenceSnapshot } from "../realtime.js";
 import { createDrizzleRoomRepository } from "../rooms/drizzle-room-repository.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import { clearAuditEvents } from "../testing/database.js";
 import { createDrizzleUserRepository } from "../users/drizzle-user-repository.js";
 import type { UserRepository } from "../users/user-repository.js";
 
@@ -71,7 +71,7 @@ describe("quorum gate", () => {
     await db.delete(candidates);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
-    await db.delete(auditEvents);
+    await clearAuditEvents(db);
     await db.delete(rooms);
   });
 
@@ -311,7 +311,6 @@ describe("quorum gate", () => {
     });
     await join(app, room.inviteToken, "Ana", "join-key-ana-0001");
     await join(app, room.inviteToken, "Bia", "join-key-bia-0002");
-    await db.update(rooms).set({ status: "voting" }).where(eq(rooms.id, room.id));
 
     const opened = await openRound(app, room.id);
     expect(opened.statusCode).toBe(201);

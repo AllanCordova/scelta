@@ -4,8 +4,6 @@ export function joinBlockedMessage(status: string): string {
       return "Esta sala ainda não está aberta.";
     case "closed":
       return "Esta sala foi encerrada.";
-    case "cancelled":
-      return "Esta sala foi cancelada.";
     default:
       return "Não é possível entrar nesta sala.";
   }
@@ -20,10 +18,10 @@ export function joinErrorMessage(error: unknown): string {
       return joinBlockedMessage(error.roomStatus ?? "");
     }
     if (error.errorCode === "invalid_access_code") {
-      return "Código de acesso inválido. Confira o código no seu cartão.";
+      return "Código de acesso inválido ou revogado. Confira o código no seu cartão.";
     }
     if (error.errorCode === "revoked_access_code") {
-      return "Este código de acesso foi revogado pelo administrador.";
+      return "Código de acesso inválido ou revogado. Confira o código no seu cartão.";
     }
     if (error.errorCode === "invalid_join") {
       return "Código inválido. Digite os 6 caracteres do seu cartão.";
@@ -66,7 +64,7 @@ export function voterStandingLabel(displayName: string, votes: number): string {
 }
 
 export function isJoinableRoomStatus(status: string): boolean {
-  return status === "open" || status === "test" || status === "voting";
+  return status === "open" || status === "test";
 }
 
 export function voterSessionMessage(access: "absent" | "revoked" | "missing"): string {

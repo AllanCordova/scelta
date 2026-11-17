@@ -9,6 +9,7 @@ import { ballotRoutes } from "./routes/ballots.js";
 import { chatRoutes } from "./routes/chat.js";
 import { healthRoutes } from "./routes/health.js";
 import { joinRoutes } from "./routes/join.js";
+import { mediaRoutes } from "./routes/media.js";
 import { memberRoutes } from "./routes/members.js";
 import { roomRoutes, type RoomRouteOptions } from "./routes/rooms.js";
 import { roundRoutes } from "./routes/rounds.js";
@@ -71,6 +72,9 @@ export async function buildApp(dependencies: AppDependencies = {}) {
   await app.register(ballotRoutes, {
     roomRepository: dependencies.roomRepository,
     presencePublisher: dependencies.presencePublisher,
+  });
+  await app.register(mediaRoutes, {
+    roomRepository: dependencies.roomRepository,
   });
   await app.register(chatRoutes, {
     roomRepository: dependencies.roomRepository,

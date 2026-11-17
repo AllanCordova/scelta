@@ -9,7 +9,7 @@ export type RoomType =
   | "ump_board"
   | "custom";
 export type CreatableRoomStatus = "draft" | "open" | "test";
-export type RoomStatus = CreatableRoomStatus | "voting" | "closed" | "cancelled";
+export type RoomStatus = CreatableRoomStatus | "closed";
 
 export type PresetDefinition = {
   preset: RulesPreset;
@@ -91,6 +91,7 @@ export type RoundTally = {
   winnerId: string | null;
   winnerName: string | null;
   standings: CandidateStanding[];
+  didNotVoteCount?: number;
   tieBreakReason?: TieBreakReason;
   tieBreakRequired?: boolean;
   tiedCandidates?: TiedCandidateOption[];
@@ -200,6 +201,7 @@ export type RoomRound = {
   status: RoundStatus;
   outcome: RoundResult | null;
   restartCount?: number;
+  didNotVoteCount?: number;
   tally?: RoundTally;
 };
 

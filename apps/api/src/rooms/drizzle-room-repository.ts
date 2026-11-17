@@ -1,10 +1,10 @@
+import { createHash, randomUUID } from "node:crypto";
 import {
   auditEvents,
   ballots,
   candidates,
   members,
   participants,
-  reactions,
   roomChatMessages,
   roomMemberCodes,
   rooms,
@@ -15,24 +15,28 @@ import {
 import {
   canCastBallot,
   canOpenRound,
+  closeRoundOutcome,
+  countOfficeRoundNumber,
+  evaluateQuorum,
   isChatRateLimited,
   isMemberEligibleVoter,
-  isReactionRateLimited,
   normalizeAccessCode,
   ROUND_RESULTS,
+  tallyRoundVotes,
   type MemberSocietyFlags,
   type QuorumUnit,
   type RoomStatus,
   type RoomType,
   type RoundResult,
+  type RoundTally,
   type RulesPreset,
 } from "@scelta/domain";
-import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, or } from "drizzle-orm";
 import { findChurchByName, getOrCreateChurch, isUniqueViolation } from "../churches/church-store.js";
 import { generateAccessCode } from "./access-code.js";
-import { createBallotToken } from "./ballot-token.js";
 import { createInviteToken } from "./invite-token.js";
 import type {
+  AuditChainVerificationResult,
   RoomRepository,
   StoredAccessCode,
   StoredAuditEvent,
@@ -282,14 +286,13 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             if (!updated) {
               return null;
             }
-            await tx.insert(auditEvents).values({
-              churchId: church.id,
-              roomId: updated.id,
-              roomTitle: updated.title,
-              actorRole: "admin",
-              action: "invite_rotated",
-              payload: {},
-            });
+            await insertAuditEvent(
+              tx,
+              updated.id,
+              "invite_rotated",
+              {},
+              { churchId: church.id, roomTitle: updated.title },
+            );
             return toStoredRoom(updated);
           });
         } catch (error) {
@@ -345,11 +348,6 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         }
 
         // Preserve audit/integrity logs permanently even when the room is deleted.
-        await tx
-          .update(auditEvents)
-          .set({ churchId: church.id, roomTitle: existing.title })
-          .where(eq(auditEvents.roomId, roomId));
-
         await insertAuditEvent(
           tx,
           roomId,
@@ -372,7 +370,6 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         }
 
         await tx.delete(roomChatMessages).where(eq(roomChatMessages.roomId, roomId));
-        await tx.delete(reactions).where(eq(reactions.roomId, roomId));
         await tx.delete(rounds).where(eq(rounds.roomId, roomId));
         await tx.delete(candidates).where(eq(candidates.roomId, roomId));
         await tx.delete(participants).where(eq(participants.roomId, roomId));
@@ -1002,18 +999,21 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .limit(1);
         const roomMeta = roomRows[0];
 
-        await tx.insert(auditEvents).values({
-          churchId: roomMeta?.churchId ?? null,
+        await insertAuditEvent(
+          tx,
           roomId,
-          roomTitle: roomMeta?.title ?? null,
-          actorRole: "admin",
-          action: "round_opened",
-          payload: {
+          "round_opened",
+          {
             roundId: row.id,
             roundNumber: row.number,
             ...(row.officeLabel !== null ? { officeLabel: row.officeLabel } : {}),
           },
-        });
+          {
+            churchId: roomMeta?.churchId ?? null,
+            roomTitle: roomMeta?.title ?? null,
+            actorRole: "admin",
+          },
+        );
 
             return { ok: true as const, round: toStoredRound(row) };
           });
@@ -1029,6 +1029,17 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
 
     async closeRound(roomId, roundId, outcome, closeOptions) {
       return db.transaction(async (tx) => {
+        const lockedRows = await tx
+          .select()
+          .from(rounds)
+          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId)))
+          .for("update")
+          .limit(1);
+        const lockedRound = lockedRows[0];
+        if (!lockedRound || lockedRound.status !== "open") {
+          return null;
+        }
+
         const updated = await tx
           .update(rounds)
           .set({
@@ -1036,6 +1047,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             outcome,
             winnerCandidateId: closeOptions?.winnerCandidateId ?? null,
             tieBreakReason: closeOptions?.tieBreakReason ?? null,
+            didNotVoteCount: closeOptions?.didNotVoteCount ?? null,
             closedAt: new Date(),
           })
           .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId), eq(rounds.status, "open")))
@@ -1052,24 +1064,184 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .limit(1);
         const roomMeta = roomRows[0];
 
-        await tx.insert(auditEvents).values({
-          churchId: roomMeta?.churchId ?? null,
+        await insertAuditEvent(
+          tx,
           roomId,
-          roomTitle: roomMeta?.title ?? null,
-          actorRole: "admin",
-          action: "round_closed",
-          payload: {
+          "round_closed",
+          {
             roundId: row.id,
             roundNumber: row.number,
             outcome: row.outcome,
             ...(row.officeLabel !== null ? { officeLabel: row.officeLabel } : {}),
             ...(row.tieBreakReason ? { tieBreakReason: row.tieBreakReason } : {}),
             ...(row.winnerCandidateId ? { winnerCandidateId: row.winnerCandidateId } : {}),
+            ...(closeOptions?.didNotVoteCount !== undefined
+              ? { didNotVoteCount: closeOptions.didNotVoteCount }
+              : {}),
           },
-        });
+          {
+            churchId: roomMeta?.churchId ?? null,
+            roomTitle: roomMeta?.title ?? null,
+            actorRole: "admin",
+          },
+        );
 
         const restartCounts = await loadRestartCountsByRoom(tx, [roomId]);
         return toStoredRound(row, restartCounts.get(row.id) ?? 0);
+      });
+    },
+
+    async closeAndTallyRound(roomId, roundId, closeOptions) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return { ok: false as const, reason: "room_not_found" as const };
+      }
+
+      return db.transaction(async (tx) => {
+
+        const roomRows = await tx
+          .select()
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .limit(1);
+        const roomRow = roomRows[0];
+        if (!roomRow) {
+          return { ok: false as const, reason: "room_not_found" as const };
+        }
+
+        const roundRows = await tx
+          .select()
+          .from(rounds)
+          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId)))
+          .for("update")
+          .limit(1);
+        const roundRow = roundRows[0];
+        if (!roundRow) {
+          return { ok: false as const, reason: "round_not_found" as const };
+        }
+        if (roundRow.status !== "open") {
+          return { ok: false as const, reason: "round_not_open" as const };
+        }
+
+        const presentRows = await tx
+          .select({ value: count() })
+          .from(participants)
+          .where(and(eq(participants.roomId, roomId), eq(participants.isPresent, true)));
+        const presentCount = Number(presentRows[0]?.value ?? 0);
+
+        const quorum = evaluateQuorum({
+          presentCount,
+          eligibleCount: roomRow.eligibleCount,
+          quorumValue: roomRow.quorumValue,
+          quorumUnit: roomRow.quorumUnit,
+        });
+
+        const allRoundRows = await tx
+          .select()
+          .from(rounds)
+          .where(eq(rounds.roomId, roomId))
+          .orderBy(asc(rounds.number));
+        const allStoredRounds = allRoundRows.map((item) => toStoredRound(item));
+        const currentStoredRound = toStoredRound(roundRow);
+        const officeRoundNumber = countOfficeRoundNumber(allStoredRounds, currentStoredRound);
+
+        let tally: RoundTally | null = null;
+        let outcome: RoundResult | null = closeRoundOutcome(quorum.quorumMet);
+        let didNotVoteCount = 0;
+
+        if (quorum.quorumMet) {
+          const ballotRows = await tx
+            .select({ candidateId: ballots.candidateId })
+            .from(ballots)
+            .where(eq(ballots.roundId, roundId))
+            .orderBy(asc(ballots.candidateId));
+          const ballotCandidateIds = ballotRows.map((item) => item.candidateId);
+          const votedCount = ballotCandidateIds.length;
+
+          if (votedCount < presentCount && !closeOptions?.confirmPending) {
+            return {
+              ok: false as const,
+              reason: "voting_incomplete" as const,
+              votedCount,
+              presentCount,
+            };
+          }
+
+          didNotVoteCount = Math.max(0, presentCount - votedCount);
+
+          const candidateRows = await tx
+            .select({
+              id: candidates.id,
+              roomId: candidates.roomId,
+              displayName: candidates.displayName,
+              photoUrl: candidates.photoUrl,
+              memberPhotoUrl: members.photoUrl,
+              memberBirthDate: members.birthDate,
+              isEligible: candidates.isEligible,
+            })
+            .from(candidates)
+            .leftJoin(members, eq(candidates.memberId, members.id))
+            .where(and(eq(candidates.roomId, roomId), eq(candidates.isEligible, true)))
+            .orderBy(asc(candidates.displayName));
+          const eligibleCandidates = candidateRows.map(toStoredCandidate);
+
+          if (eligibleCandidates.length > 0) {
+            tally = tallyRoundVotes(eligibleCandidates, ballotCandidateIds, {
+              roundNumber: officeRoundNumber,
+              ...(didNotVoteCount > 0 ? { didNotVoteCount } : {}),
+            });
+            outcome = tally.outcome;
+          }
+        }
+
+        const updated = await tx
+          .update(rounds)
+          .set({
+            status: "closed",
+            outcome,
+            winnerCandidateId: tally?.winnerId ?? null,
+            tieBreakReason: tally?.tieBreakReason ?? null,
+            didNotVoteCount: quorum.quorumMet ? didNotVoteCount : null,
+            closedAt: new Date(),
+          })
+          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId), eq(rounds.status, "open")))
+          .returning();
+        const closedRow = updated[0];
+        if (!closedRow) {
+          return { ok: false as const, reason: "round_not_open" as const };
+        }
+
+        await insertAuditEvent(
+          tx,
+          roomId,
+          "round_closed",
+          {
+            roundId: closedRow.id,
+            roundNumber: closedRow.number,
+            outcome: closedRow.outcome,
+            didNotVoteCount,
+            ...(closedRow.officeLabel !== null ? { officeLabel: closedRow.officeLabel } : {}),
+            ...(closedRow.tieBreakReason ? { tieBreakReason: closedRow.tieBreakReason } : {}),
+            ...(closedRow.winnerCandidateId
+              ? { winnerCandidateId: closedRow.winnerCandidateId }
+              : {}),
+          },
+          {
+            churchId: roomRow.churchId,
+            roomTitle: roomRow.title,
+            actorRole: "admin",
+          },
+        );
+
+        const restartCounts = await loadRestartCountsByRoom(tx, [roomId]);
+        return {
+          ok: true as const,
+          round: toStoredRound(closedRow, restartCounts.get(closedRow.id) ?? 0),
+          tally,
+          quorum,
+          officeRoundNumber,
+          didNotVoteCount,
+        };
       });
     },
 
@@ -1103,20 +1275,23 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .limit(1);
         const roomMeta = roomRows[0];
 
-        await tx.insert(auditEvents).values({
-          churchId: roomMeta?.churchId ?? null,
+        await insertAuditEvent(
+          tx,
           roomId,
-          roomTitle: roomMeta?.title ?? null,
-          actorRole: "admin",
-          action: "tie_break_resolved",
-          payload: {
+          "tie_break_resolved",
+          {
             roundId: row.id,
             roundNumber: row.number,
             winnerCandidateId,
             tieBreakReason: "admin_tiebreak",
             ...(row.officeLabel !== null ? { officeLabel: row.officeLabel } : {}),
           },
-        });
+          {
+            churchId: roomMeta?.churchId ?? null,
+            roomTitle: roomMeta?.title ?? null,
+            actorRole: "admin",
+          },
+        );
 
         const restartCounts = await loadRestartCountsByRoom(tx, [roomId]);
         return toStoredRound(row, restartCounts.get(row.id) ?? 0);
@@ -1128,67 +1303,64 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         const existingRows = await tx
           .select()
           .from(rounds)
-          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId), eq(rounds.status, "open")))
+          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId)))
+          .for("update")
           .limit(1);
         const existing = existingRows[0];
-        if (!existing) {
+        if (!existing || existing.status !== "open") {
           return null;
         }
 
-        if (existing.officeLabel === null) {
-          const roomRoundRows = await tx
-            .select({ id: rounds.id })
-            .from(rounds)
-            .where(eq(rounds.roomId, roomId));
-          const roomRoundIds = roomRoundRows.map((item) => item.id);
-          if (roomRoundIds.length > 0) {
-            await tx.delete(ballots).where(inArray(ballots.roundId, roomRoundIds));
-            await tx.delete(voteReceipts).where(inArray(voteReceipts.roundId, roomRoundIds));
-          }
-          await tx.delete(rounds).where(and(eq(rounds.roomId, roomId), ne(rounds.id, roundId)));
-          await tx.update(candidates).set({ isEligible: true }).where(eq(candidates.roomId, roomId));
-        } else {
-          const officeRoundRows = await tx
-            .select({ id: rounds.id })
-            .from(rounds)
-            .where(
-              and(
-                eq(rounds.roomId, roomId),
-                eq(rounds.officeLabel, existing.officeLabel),
-                or(isNull(rounds.outcome), ne(rounds.outcome, "declined")),
-              ),
-            );
-          const officeRoundIds = officeRoundRows.map((item) => item.id);
-          if (officeRoundIds.length > 0) {
-            await tx.delete(ballots).where(inArray(ballots.roundId, officeRoundIds));
-            await tx.delete(voteReceipts).where(inArray(voteReceipts.roundId, officeRoundIds));
-          }
-          await tx
-            .delete(rounds)
-            .where(
-              and(
-                eq(rounds.roomId, roomId),
-                eq(rounds.officeLabel, existing.officeLabel),
-                ne(rounds.id, roundId),
-                or(isNull(rounds.outcome), ne(rounds.outcome, "declined")),
-              ),
-            );
-        }
+        const ballotRows = await tx
+          .select({ candidateId: ballots.candidateId })
+          .from(ballots)
+          .where(eq(ballots.roundId, roundId));
 
-        const updated = await tx
+        let blankVotes = 0;
+        const byCandidate: Record<string, number> = {};
+        for (const row of ballotRows) {
+          if (row.candidateId === null) {
+            blankVotes += 1;
+          } else {
+            byCandidate[row.candidateId] = (byCandidate[row.candidateId] ?? 0) + 1;
+          }
+        }
+        const annulledTotals = {
+          totalBallots: ballotRows.length,
+          blankVotes,
+          byCandidate,
+        };
+
+        const now = new Date();
+        await tx
           .update(rounds)
           .set({
-            ...(existing.officeLabel === null ? { number: 1 } : {}),
+            status: "restarted",
+            outcome: "annulled",
+            closedAt: now,
+          })
+          .where(eq(rounds.id, roundId));
+
+        const roomRoundRows = await tx
+          .select({ number: rounds.number })
+          .from(rounds)
+          .where(eq(rounds.roomId, roomId));
+        const nextNumber = roomRoundRows.reduce((max, item) => Math.max(max, item.number), 0) + 1;
+
+        const inserted = await tx
+          .insert(rounds)
+          .values({
+            roomId,
+            number: nextNumber,
+            officeLabel: existing.officeLabel ?? null,
             status: "open",
             outcome: null,
-            closedAt: null,
-            openedAt: new Date(),
+            openedAt: now,
           })
-          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId), eq(rounds.status, "open")))
           .returning();
-        const row = updated[0];
-        if (!row) {
-          return null;
+        const newRound = inserted[0];
+        if (!newRound) {
+          throw new Error("Restarted round insert returned no row");
         }
 
         const roomRows = await tx
@@ -1198,21 +1370,27 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .limit(1);
         const roomMeta = roomRows[0];
 
-        await tx.insert(auditEvents).values({
-          churchId: roomMeta?.churchId ?? null,
+        await insertAuditEvent(
+          tx,
           roomId,
-          roomTitle: roomMeta?.title ?? null,
-          actorRole: "admin",
-          action: "round_restarted",
-          payload: {
-            roundId: row.id,
-            roundNumber: row.number,
-            ...(row.officeLabel !== null ? { officeLabel: row.officeLabel } : {}),
+          "round_restarted",
+          {
+            roundId: newRound.id,
+            roundNumber: newRound.number,
+            annulledRoundId: existing.id,
+            annulledRoundNumber: existing.number,
+            annulledTotals,
+            ...(newRound.officeLabel !== null ? { officeLabel: newRound.officeLabel } : {}),
           },
-        });
+          {
+            churchId: roomMeta?.churchId ?? null,
+            roomTitle: roomMeta?.title ?? null,
+            actorRole: "admin",
+          },
+        );
 
         const restartCounts = await loadRestartCountsByRoom(tx, [roomId]);
-        return toStoredRound(row, restartCounts.get(row.id) ?? 1);
+        return toStoredRound(newRound, restartCounts.get(newRound.id) ?? 1);
       });
     },
 
@@ -1245,19 +1423,22 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .limit(1);
         const roomMeta = roomRows[0];
 
-        await tx.insert(auditEvents).values({
-          churchId: roomMeta?.churchId ?? null,
+        await insertAuditEvent(
+          tx,
           roomId,
-          roomTitle: roomMeta?.title ?? null,
-          actorRole: "admin",
-          action: "office_declined",
-          payload: {
+          "office_declined",
+          {
             roundId: row.id,
             roundNumber: row.number,
             declinedCandidateId,
             ...(row.officeLabel !== null ? { officeLabel: row.officeLabel } : {}),
           },
-        });
+          {
+            churchId: roomMeta?.churchId ?? null,
+            roomTitle: roomMeta?.title ?? null,
+            actorRole: "admin",
+          },
+        );
 
         return toStoredRound(row);
       });
@@ -1338,6 +1519,8 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           actorRole: auditEvents.actorRole,
           action: auditEvents.action,
           payload: auditEvents.payload,
+          prevHash: auditEvents.prevHash,
+          integrityHash: auditEvents.integrityHash,
           createdAt: auditEvents.createdAt,
         })
         .from(auditEvents)
@@ -1368,6 +1551,8 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           actorRole: auditEvents.actorRole,
           action: auditEvents.action,
           payload: auditEvents.payload,
+          prevHash: auditEvents.prevHash,
+          integrityHash: auditEvents.integrityHash,
           createdAt: auditEvents.createdAt,
         })
         .from(auditEvents)
@@ -1384,6 +1569,39 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         roomTitle: row.joinedRoomTitle ?? row.roomTitle ?? null,
         roomStatus: (row.roomStatus as RoomStatus | null) ?? null,
       }));
+    },
+
+    async verifyAuditChain(roomId) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return {
+          chainValid: true,
+          totalEvents: 0,
+          chainTipHash: "GENESIS",
+        };
+      }
+      const rows = await db
+        .select({
+          id: auditEvents.id,
+          roomId: auditEvents.roomId,
+          actorRole: auditEvents.actorRole,
+          action: auditEvents.action,
+          payload: auditEvents.payload,
+          prevHash: auditEvents.prevHash,
+          integrityHash: auditEvents.integrityHash,
+          createdAt: auditEvents.createdAt,
+        })
+        .from(auditEvents)
+        .leftJoin(rooms, eq(auditEvents.roomId, rooms.id))
+        .where(
+          and(
+            or(eq(auditEvents.churchId, church.id), eq(rooms.churchId, church.id)),
+            ...(roomId ? [eq(auditEvents.roomId, roomId)] : []),
+          ),
+        )
+        .orderBy(asc(auditEvents.createdAt), asc(auditEvents.id));
+
+      return verifyRoomAuditChains(rows);
     },
 
     async hasSimulatedAccessCodes(roomId) {
@@ -1424,6 +1642,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .select()
           .from(rounds)
           .where(and(eq(rounds.id, input.roundId), eq(rounds.roomId, input.roomId)))
+          .for("update")
           .limit(1);
         const round = roundRows[0];
         if (!round || round.status !== "open") {
@@ -1501,7 +1720,6 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         await tx.insert(ballots).values({
           roundId: input.roundId,
           candidateId: input.candidateId,
-          ballotToken: createBallotToken(),
         });
 
         await insertAuditEvent(
@@ -1516,8 +1734,6 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             voterOrigin: isSimulatedVoter ? "test_simulator" : "authenticated_member",
             isSimulated: isSimulatedVoter,
             memberVerified: !isSimulatedVoter && isMemberLinked,
-            sessionFingerprint: input.joinKeyHash.slice(0, 12),
-            receiptFingerprint: insertedReceipt[0].id.slice(0, 8),
             adminIntervention: false,
           },
           {
@@ -1720,62 +1936,6 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .where(eq(members.churchId, church.id))
         .orderBy(asc(members.fullName));
       return rows.map(toStoredMember);
-    },
-
-    async sendReaction({ roomId, joinKeyHash, emoji, since, maxPerWindow }) {
-      return db.transaction(async (tx) => {
-        const [participant] = await tx
-          .select()
-          .from(participants)
-          .where(and(eq(participants.roomId, roomId), eq(participants.joinKeyHash, joinKeyHash)))
-          .for("update")
-          .limit(1);
-
-        if (!participant || !participant.isPresent) {
-          return { ok: false, reason: "participant_not_in_room" } as const;
-        }
-
-        if (participant.accessCodeId) {
-          const [codeRow] = await tx
-            .select({ revokedAt: roomMemberCodes.revokedAt })
-            .from(roomMemberCodes)
-            .where(eq(roomMemberCodes.id, participant.accessCodeId))
-            .limit(1);
-          if (!codeRow || codeRow.revokedAt !== null) {
-            return { ok: false, reason: "participant_not_in_room" } as const;
-          }
-        }
-
-        const [recent] = await tx
-          .select({ total: count() })
-          .from(reactions)
-          .where(
-            and(
-              eq(reactions.roomId, roomId),
-              eq(reactions.participantId, participant.id),
-              gte(reactions.createdAt, since),
-            ),
-          );
-
-        if (isReactionRateLimited(recent?.total ?? 0, maxPerWindow)) {
-          return { ok: false, reason: "rate_limited" } as const;
-        }
-
-        const [inserted] = await tx
-          .insert(reactions)
-          .values({
-            roomId,
-            participantId: participant.id,
-            emoji,
-          })
-          .returning({ createdAt: reactions.createdAt });
-
-        return {
-          ok: true,
-          emoji,
-          createdAt: inserted?.createdAt ?? new Date(),
-        } as const;
-      });
     },
 
     async listChatMessages(roomId, limit = 100) {
@@ -2082,6 +2242,7 @@ function toStoredRound(
     declinedCandidateId?: string | null;
     winnerCandidateId?: string | null;
     tieBreakReason?: string | null;
+    didNotVoteCount?: number | null;
     openedAt: Date | null;
     closedAt: Date | null;
   },
@@ -2100,6 +2261,9 @@ function toStoredRound(
       row.tieBreakReason === "age" || row.tieBreakReason === "admin_tiebreak"
         ? row.tieBreakReason
         : null,
+    ...(row.didNotVoteCount !== undefined && row.didNotVoteCount !== null
+      ? { didNotVoteCount: row.didNotVoteCount }
+      : {}),
     openedAt: row.openedAt,
     closedAt: row.closedAt,
     ...(restartCount > 0 ? { restartCount } : {}),
@@ -2113,6 +2277,8 @@ function toStoredAuditEvent(row: {
   actorRole: string;
   action: string;
   payload: Record<string, unknown> | null;
+  prevHash?: string | null;
+  integrityHash?: string | null;
   createdAt: Date;
 }): StoredAuditEvent {
   return {
@@ -2122,7 +2288,92 @@ function toStoredAuditEvent(row: {
     actorRole: row.actorRole,
     action: row.action,
     payload: row.payload ?? {},
+    ...(row.prevHash !== undefined ? { prevHash: row.prevHash } : {}),
+    ...(row.integrityHash ? { integrityHash: row.integrityHash } : {}),
     createdAt: row.createdAt,
+  };
+}
+
+function stableJsonStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJsonStringify(item)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${stableJsonStringify(record[key])}`)
+    .join(",")}}`;
+}
+
+export function computeAuditIntegrityHash(input: {
+  prevHash: string;
+  id: string;
+  roomId: string;
+  actorRole: string;
+  action: string;
+  payload: Record<string, unknown>;
+  createdAt: Date;
+}): string {
+  const iso = input.createdAt.toISOString();
+  const canonicalPayload = stableJsonStringify(input.payload);
+  return createHash("sha256")
+    .update(
+      `${input.prevHash}:${input.id}:${input.roomId}:${input.actorRole}:${input.action}:${canonicalPayload}:${iso}`,
+    )
+    .digest("hex")
+    .slice(0, 16)
+    .toUpperCase();
+}
+
+function verifyRoomAuditChains(
+  rows: Array<{
+    id: string;
+    roomId: string;
+    actorRole: string;
+    action: string;
+    payload: Record<string, unknown> | null;
+    prevHash: string | null;
+    integrityHash: string;
+    createdAt: Date;
+  }>,
+): AuditChainVerificationResult {
+  const prevByRoom = new Map<string, string>();
+  let chainValid = true;
+  let brokenAtEventId: string | null = null;
+  let chainTipHash = "GENESIS";
+
+  for (const row of rows) {
+    const expectedPrev = prevByRoom.get(row.roomId) ?? "GENESIS";
+    const expectedHash = computeAuditIntegrityHash({
+      prevHash: expectedPrev,
+      id: row.id,
+      roomId: row.roomId,
+      actorRole: row.actorRole,
+      action: row.action,
+      payload: row.payload ?? {},
+      createdAt: row.createdAt,
+    });
+
+    const actualPrev = row.prevHash ?? "GENESIS";
+    if (actualPrev !== expectedPrev || row.integrityHash !== expectedHash) {
+      if (chainValid) {
+        chainValid = false;
+        brokenAtEventId = row.id;
+      }
+    }
+
+    prevByRoom.set(row.roomId, row.integrityHash);
+    chainTipHash = row.integrityHash;
+  }
+
+  return {
+    chainValid,
+    totalEvents: rows.length,
+    chainTipHash,
+    ...(brokenAtEventId !== null ? { brokenAtEventId } : {}),
   };
 }
 
@@ -2136,14 +2387,28 @@ async function loadRestartCountsByRoom(
   }
 
   const rows = await db
-    .select({ payload: auditEvents.payload })
+    .select({ roomId: auditEvents.roomId, payload: auditEvents.payload })
     .from(auditEvents)
     .where(and(inArray(auditEvents.roomId, roomIds), eq(auditEvents.action, "round_restarted")));
 
+  const roomRestartTotals = new Map<string, number>();
+  const officeRestartTotals = new Map<string, number>();
   for (const row of rows) {
+    const officeLabel =
+      typeof row.payload?.officeLabel === "string" ? row.payload.officeLabel : null;
+    if (officeLabel !== null) {
+      const key = `${row.roomId}::${officeLabel}`;
+      officeRestartTotals.set(key, (officeRestartTotals.get(key) ?? 0) + 1);
+    } else {
+      roomRestartTotals.set(row.roomId, (roomRestartTotals.get(row.roomId) ?? 0) + 1);
+    }
     const roundId = row.payload?.roundId;
     if (typeof roundId === "string") {
-      counts.set(roundId, (counts.get(roundId) ?? 0) + 1);
+      const total =
+        officeLabel !== null
+          ? (officeRestartTotals.get(`${row.roomId}::${officeLabel}`) ?? 1)
+          : (roomRestartTotals.get(row.roomId) ?? 1);
+      counts.set(roundId, total);
     }
   }
   return counts;
@@ -2193,7 +2458,7 @@ function toStoredAccessCode(row: {
 }
 
 async function insertAuditEvent(
-  executor: Pick<Db, "insert">,
+  executor: Pick<Db, "insert" | "select">,
   roomId: string,
   action: string,
   payload: Record<string, unknown>,
@@ -2203,15 +2468,47 @@ async function insertAuditEvent(
     actorRole?: string;
   },
 ) {
+  // Serialize concurrent audit inserts for the same room so the hash chain never forks
+  await executor
+    .select({ id: rooms.id })
+    .from(rooms)
+    .where(eq(rooms.id, roomId))
+    .for("update")
+    .limit(1);
+
+  const prevRows = await executor
+    .select({ integrityHash: auditEvents.integrityHash })
+    .from(auditEvents)
+    .where(eq(auditEvents.roomId, roomId))
+    .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
+    .limit(1);
+  const prevHash = prevRows[0]?.integrityHash ?? "GENESIS";
+  const id = randomUUID();
+  const createdAt = new Date();
+  const actorRole = meta?.actorRole ?? "admin";
+  const integrityHash = computeAuditIntegrityHash({
+    prevHash,
+    id,
+    roomId,
+    actorRole,
+    action,
+    payload,
+    createdAt,
+  });
+
   const [inserted] = await executor
     .insert(auditEvents)
     .values({
+      id,
       churchId: meta?.churchId ?? null,
       roomId,
       roomTitle: meta?.roomTitle ?? null,
-      actorRole: meta?.actorRole ?? "admin",
+      actorRole,
       action,
       payload,
+      prevHash,
+      integrityHash,
+      createdAt,
     })
     .returning();
   if (!inserted) {

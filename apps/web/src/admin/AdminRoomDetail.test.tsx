@@ -959,6 +959,88 @@ describe("AdminRoomDetail", () => {
       await screen.findByText(/Eleito por desempate de idade \(decisão da mesa\): Silas/i),
     ).toBeInTheDocument();
   });
+
+  it("prompts confirmation when closing with voting_incomplete and displays didNotVoteCount", async () => {
+    let currentRoom: RoomDetail = {
+      ...sampleRoom,
+      presence: { presentCount: 3, eligibleCount: 3, requiredCount: 2, quorumMet: true },
+      votedCount: 1,
+      round: {
+        id: "round-1",
+        number: 1,
+        status: "open",
+        outcome: null,
+      },
+    };
+    const closeCalls: unknown[] = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: currentRoom });
+        }
+        if (
+          url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/rounds/round-1/close`) &&
+          method === "POST"
+        ) {
+          const body = init?.body ? JSON.parse(String(init.body)) : {};
+          closeCalls.push(body);
+          if (!body.confirmPending) {
+            return json({ error: "voting_incomplete", votedCount: 1, presentCount: 3 }, 409);
+          }
+          const closedRound = {
+            id: "round-1",
+            number: 1,
+            status: "closed" as const,
+            outcome: "no_majority" as const,
+            didNotVoteCount: 2,
+            tally: {
+              totalVotes: 1,
+              threshold: 1,
+              outcome: "no_majority" as const,
+              winnerId: null,
+              winnerName: null,
+              standings: [
+                { candidateId: "cand-1", displayName: "Paulo Apóstolo", votes: 1 },
+                { candidateId: "cand-2", displayName: "Silas", votes: 0 },
+              ],
+              didNotVoteCount: 2,
+            },
+          };
+          currentRoom = { ...currentRoom, round: closedRound };
+          return json({ round: closedRound });
+        }
+        return json({ accessCodes: [] });
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    expect(await screen.findByRole("button", { name: "Encerrar escrutínio" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Encerrar escrutínio" }));
+
+    expect(
+      await screen.findByText("Encerrar com votantes pendentes"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Nem todos os membros presentes votaram/i),
+    ).toBeInTheDocument();
+
+    const dialog = screen.getByRole("dialog");
+    const confirmButton = within(dialog).getByRole("button", { name: "Encerrar escrutínio" });
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(closeCalls).toEqual([{}, { confirmPending: true }]);
+    });
+
+    const notVotedNotice = await screen.findByText(/Não votaram:/i);
+    expect(notVotedNotice).toBeInTheDocument();
+    expect(notVotedNotice).toHaveTextContent("Não votaram: 2");
+  });
 });
 
 function json(body: unknown, status = 200) {

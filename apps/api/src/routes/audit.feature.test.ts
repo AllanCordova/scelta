@@ -10,12 +10,14 @@ import {
   voteReceipts,
   type Db,
 } from "@scelta/db";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
 import { hashPassword } from "../auth/password.js";
 import { createDrizzleRoomRepository } from "../rooms/drizzle-room-repository.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import { clearAuditEvents } from "../testing/database.js";
 import { createDrizzleUserRepository } from "../users/drizzle-user-repository.js";
 import type { UserRepository } from "../users/user-repository.js";
 
@@ -63,7 +65,7 @@ describe("admin audit log", () => {
 
   beforeEach(async () => {
     resetAuthAttempts();
-    await db.delete(auditEvents);
+    await clearAuditEvents(db);
     await db.delete(ballots);
     await db.delete(voteReceipts);
     await db.delete(rounds);
@@ -131,15 +133,16 @@ describe("admin audit log", () => {
     expect(opened.statusCode).toBe(201);
     const roundId = (opened.json().round as { id: string }).id;
 
-    // Restart round
+    // Restart round -> annuls roundId and opens a new round
     const restarted = await app.inject({
       method: "POST",
       url: `/v1/admin/rooms/${room.id}/rounds/${roundId}/restart`,
       headers: { cookie: adminCookie },
     });
     expect(restarted.statusCode).toBe(200);
+    const activeRoundId = (restarted.json().round as { id: string }).id;
 
-    // Cast vote & close round
+    // Cast vote & close the new open round
     const cast = await app.inject({
       method: "POST",
       url: `/v1/join/${room.inviteToken}/ballot`,
@@ -149,7 +152,7 @@ describe("admin audit log", () => {
 
     const closed = await app.inject({
       method: "POST",
-      url: `/v1/admin/rooms/${room.id}/rounds/${roundId}/close`,
+      url: `/v1/admin/rooms/${room.id}/rounds/${activeRoundId}/close`,
       headers: { cookie: adminCookie },
     });
     expect(closed.statusCode).toBe(200);
@@ -455,6 +458,90 @@ describe("admin audit log", () => {
       "ballot_cast",
       "room_deleted",
     ]);
+
+    await app.close();
+  });
+
+  it("enforces database-level immutability with a trigger and detects chain tampering via the verify endpoint", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Cadeia Imutável",
+        roomType: "elder",
+        rulesPreset: "ipb_local_officers",
+        quorumValue: 1,
+        quorumUnit: "absolute",
+        status: "open",
+        candidates: ["Presb. Marcos"],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const room = created.json().room as { id: string };
+
+    await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/rooms/${room.id}`,
+      headers: { cookie: adminCookie },
+      payload: { quorumValue: 2 },
+    });
+
+    const verifyRes = await app.inject({
+      method: "GET",
+      url: `/v1/admin/rooms/${room.id}/audit/verify`,
+      headers: { cookie: adminCookie },
+    });
+    expect(verifyRes.statusCode).toBe(200);
+    expect(verifyRes.json()).toMatchObject({
+      chainValid: true,
+      totalEvents: 2,
+    });
+    expect(verifyRes.json().chainTipHash).toMatch(/^[A-F0-9]{16}$/);
+
+    // Direct SQL UPDATE or DELETE on audit_events is blocked by the PostgreSQL trigger
+    const storedEvents = await db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.roomId, room.id));
+    expect(storedEvents).toHaveLength(2);
+    const firstEventId = storedEvents[0]!.id;
+
+    await expect(
+      db
+        .update(auditEvents)
+        .set({ action: "tampered_action" })
+        .where(eq(auditEvents.id, firstEventId)),
+    ).rejects.toThrow(/audit_events is append-only and immutable/i);
+
+    await expect(
+      db.delete(auditEvents).where(eq(auditEvents.id, firstEventId)),
+    ).rejects.toThrow(/audit_events is append-only and immutable/i);
+
+    // If a privileged DB superuser temporarily disables the trigger and alters a row, chain verification catches it
+    await db.execute(sql`ALTER TABLE audit_events DISABLE TRIGGER audit_events_immutable_trg`);
+    try {
+      await db
+        .update(auditEvents)
+        .set({ payload: { tampered: true } })
+        .where(eq(auditEvents.id, firstEventId));
+    } finally {
+      await db.execute(sql`ALTER TABLE audit_events ENABLE TRIGGER audit_events_immutable_trg`);
+    }
+
+    const verifyAfterTamper = await app.inject({
+      method: "GET",
+      url: `/v1/admin/rooms/${room.id}/audit/verify`,
+      headers: { cookie: adminCookie },
+    });
+    expect(verifyAfterTamper.statusCode).toBe(200);
+    expect(verifyAfterTamper.json()).toMatchObject({
+      chainValid: false,
+      totalEvents: 2,
+      brokenAtEventId: firstEventId,
+    });
 
     await app.close();
   });
