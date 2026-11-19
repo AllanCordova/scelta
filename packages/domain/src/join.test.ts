@@ -12,10 +12,10 @@ import {
 const validKey = "a".repeat(JOIN_KEY_MIN_LENGTH);
 
 describe("canJoinRoom", () => {
-  it("allows open, test, and voting rooms only", () => {
+  it("allows open and test rooms only", () => {
     expect(canJoinRoom("open")).toBe(true);
     expect(canJoinRoom("test")).toBe(true);
-    expect(canJoinRoom("voting")).toBe(true);
+    expect(canJoinRoom("voting")).toBe(false);
     expect(canJoinRoom("draft")).toBe(false);
     expect(canJoinRoom("closed")).toBe(false);
     expect(canJoinRoom("cancelled")).toBe(false);

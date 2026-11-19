@@ -32,9 +32,10 @@ Before pushing or opening a PR, run the **same checks** [`.github/workflows/ci.y
 
 1. Install dependencies with the lockfile.
 2. Build `@scelta/domain` (the API imports its compiled output).
-3. Lint the API and the client.
-4. API unit tests and API feature tests.
-5. Client unit tests and client browser tests.
+3. Typecheck the workspace (`pnpm typecheck`).
+4. Lint the API and the client.
+5. API unit tests and API feature tests.
+6. Client unit tests and client browser tests.
 
 ### Commands
 
@@ -43,6 +44,7 @@ pnpm install --frozen-lockfile
 pnpm --filter @scelta/domain test
 pnpm --filter @scelta/domain build
 pnpm --filter @scelta/db build
+pnpm typecheck
 pnpm --filter @scelta/api lint
 pnpm --filter @scelta/api test
 pnpm --filter @scelta/api test:feature

@@ -202,6 +202,40 @@
 
 ---
 
+## Plano v2 — Quadro Kanban (Etapas 0 a 7)
+
+> Referência detalhada: [`docs/plano-v2.md`](plano-v2.md) · Regras de orquestração: [`antigravity.md`](../antigravity.md) / [`AGENTS.md`](../AGENTS.md)
+
+### Etapa 0 — Fundação e correções críticas (`done`)
+
+| ID | Task | Size | Prioridade | Modelo | Depende de | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| **T0.1** | Migrações versionadas do banco (Drizzle Kit `0000_initial.sql` + `0000_snapshot.json`, `runMigrations` em Postgres e PGlite, removido `SCHEMA_SQL`, docs em `data-model.md`) | L | P0 | `hydrogen` | — | `done` |
+| **T0.2** | Guardas na mudança de status da sala (`canTransitionRoomStatus`, `canUpdateRoomQuorum` em `@scelta/domain`, removido `voting`/`cancelled`, `409 Conflict` na API, `quorumValue >= 1`) | M | P0 | `hydrogen` | T0.1 | `done` |
+| **T0.3** | Reiniciar escrutínio sem apagar histórico (`outcome = 'annulled'`, abre próxima rodada, preserva rodadas encerradas, ignora anulados na contagem de 3 escrutínios, grava `annulledTotals` no log) | L | P0 | `hydrogen` | T0.1 | `done` |
+| **T0.4** | Encerrar escrutínio com pendentes (`confirmPending`, `didNotVoteCount` / `"Não votaram: N"` persistido em `rounds`, `FOR UPDATE` em `castBallot` e `closeRound`, votos de quem saiu continuam válidos) | M | P0 | `hydrogen` | T0.1 | `done` |
+| **T0.5** | Sigilo: removido `created_at` e `ballot_token` de `ballots`, removido fingerprints de `ballot_cast`, documentado em `docs/data-model.md` e testado | S | P0 | `hydrogen` | T0.1 | `done` |
+| **T0.6** | Limite de tentativas na entrada, no voto e no chat (cientes de NAT/assembleia com limite por sessão + teto burst); erro unificado `403 invalid_access_code`; bloqueio de login admin por `IP + email` | M | P0 | `hydrogen` | — | `done` |
+| **T0.7** | Autenticar o canal em tempo real (`room:join` valida cookie admin ou `joinKey` de participante; `room:denied` para anônimos) e exigir `x-scelta-join-key` ou cookie admin no `GET` do chat | M | P1 | `hydrogen` | — | `done` |
+| **T0.8** | Log de auditoria realmente imutável (`prev_hash` e `integrity_hash` SHA-256 encadeados com lock por sala, trigger `audit_events_immutable_trg` bloqueando `UPDATE`/`DELETE`, endpoint `GET /v1/admin/rooms/:id/audit/verify`) | M | P1 | `hydrogen` | T0.1 | `done` |
+| **T0.9** | Aliviar o polling (rotas `/v1/rooms/:roomId/candidates/:candidateId/photo` e `/v1/rooms/:roomId/banners/:officeKey` com `ETag`, `Cache-Control` e `304`, removendo base64 do polling de 1s e 2s) | M | P1 | `hydrogen` | — | `done` |
+| **T0.10** | Typecheck no CI (`pnpm typecheck` adicionado em `.github/workflows/ci.yml` e `agents/git.md`) | XS | P1 | `flash` | — | `done` |
+| **T0.11** | Limpeza de código morto (removida tabela `reactions` e `sendReaction` do repositório) e alinhamento de `docs/voting-rules.md` (quórum de 34% e votos em branco na base da maioria) | XS | P2 | `flash` | T0.1 | `done` |
+
+### Etapas 1 a 7 — Próximas Etapas
+
+| Etapa | Tasks | Foco | Status |
+| --- | --- | --- | --- |
+| **Etapa 1** | `T1.1`–`T1.6` | Acesso confiável (QR, cartão, código curto e sessão única) | `todo` |
+| **Etapa 2** | `T2.1`–`T2.4` | Rol próprio da sala e gestão de candidatos | `todo` |
+| **Etapa 3** | `T3.1`–`T3.3` | Voto em papel e soma na apuração | `todo` |
+| **Etapa 4** | `T4.1`–`T4.3` | Entrada por aprovação da mesa | `todo` |
+| **Etapa 5** | `T5.1`–`T5.4` | Eleição de Oficiais (votar em até N nomes) | `todo` |
+| **Etapa 6** | `T6.1`–`T6.3` | Tela da sala em abas (Preparar / Conduzir / Resultado) e Modo Telão | `todo` |
+| **Etapa 7** | `T7.1`–`T7.4` | Qualidade, E2E de assembleia completa, carga, guia da mesa e hospedagem | `todo` |
+
+---
+
 ## How to add items
 
 1. ID `B{epic}.{n}` + short title  

@@ -901,6 +901,9 @@ function JoinedRoomView({
                   <span>
                     Total de votos: <strong>{totalTallyVotes}</strong>
                   </span>
+                  {round.tally.didNotVoteCount && round.tally.didNotVoteCount > 0 ? (
+                    <span>Não votaram: {round.tally.didNotVoteCount}</span>
+                  ) : null}
                   <span>Critério: 50% + 1</span>
                 </div>
               </div>
@@ -918,6 +921,11 @@ function JoinedRoomView({
               <p className="voter-outcome-status" role="status">
                 {voterTallyOutcome(round.tally.outcome, round.tally.winnerName)}
               </p>
+              {round.tally.didNotVoteCount && round.tally.didNotVoteCount > 0 ? (
+                <p className="muted" role="status">
+                  Não votaram: <strong>{round.tally.didNotVoteCount}</strong>
+                </p>
+              ) : null}
             </div>
           )}
 
@@ -987,6 +995,13 @@ function JoinedRoomView({
                             ? `${Math.round(((round.tally.nullVotes ?? 0) / totalTallyVotes) * 100)}%`
                             : "0%"}
                         </span>
+                      </div>
+                    </li>
+                  ) : null}
+                  {round.tally.didNotVoteCount && round.tally.didNotVoteCount > 0 ? (
+                    <li className="voter-standing-item">
+                      <div className="voter-standing-row">
+                        <span>Não votaram: {round.tally.didNotVoteCount}</span>
                       </div>
                     </li>
                   ) : null}

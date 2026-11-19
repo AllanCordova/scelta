@@ -32,6 +32,7 @@ Convocation must be at least **7 days** in advance.
 ### Majority and rounds (Modelo de Estatuto art. 21)
 
 - Decisions require a majority representing **more than 50%** of the votes of communicant members **present** (absolute majority of votes cast among those present — commonly described in practice as “half + 1”).
+- In Scelta's domain calculation (`packages/domain/src/majority.ts`), blank ballots (`candidate_id = null`) are included in the total ballots denominator (`totalVotes = sum(candidateVotes) + nullVotes`) when calculating absolute majority (`threshold = floor(totalVotes / 2) + 1`).
 - **§1** — More than one ballot (*escrutínio*) may be held to reach that majority.
 - **§2** — In elections for Pastor / Elder / Deacon, when there are **more candidates than vacancies** and the majority is **not** reached on the **second** ballot, the assembly **may** finish by limiting further ballots to the **most voted** candidates.
 - **§3** — Electronic or hybrid assemblies are allowed, **provided vote secrecy is ensured** (CE-2021).
@@ -45,8 +46,8 @@ Convocation must be at least **7 days** in advance.
 
 | Setting | Default suggestion |
 | --- | --- |
-| Quorum | Configurable; preset **1/3 of eligible roll** (1st call) |
-| Win threshold | **> 50%** of valid votes in the round |
+| Quorum | Configurable; preset **34% of eligible roll** (1st call, representing > 1/3 in integer percentage) |
+| Win threshold | Absolute majority (**> 50%** of total ballots cast in the round, including blank ballots) |
 | Rounds | Up to 2 open rounds; then optional runoff limited to top N (N = vacancies or admin choice) |
 | Ballot | Secret; one vote per eligible voter per round |
 | Candidate pool | Communicant members; filter men ≥ 18 for elder/deacon |
@@ -97,7 +98,7 @@ Independent of preset, every voting room should support:
 5. **Start / pause / restart** controlled by admin (restart only with audit trail).
 6. **Automatic tally** and clear winner / runoff / failed-quorum outcomes.
 7. **Join via QR code** (or short link) into the room.
-8. Optional **controlled reactions** (emojis) that must not leak ballot intent.
+8. *(Deprecated / Removed)* The unused `reactions` database table and repository persistence were removed (T0.1 / T0.11) while real-time/chat emoji allowlists remain.
 
 ## D. Quorum gate
 
@@ -110,12 +111,12 @@ Closing while presence is below that count sets `rounds.outcome` to `failed_quor
 
 Closing at or above quorum sets `outcome` to null. A later tally may set `elected` or `no_majority`. Closing does not choose a winner.
 
-Publishing a winner is rejected until the latest **closed** round has outcome `elected`. `failed_quorum`, `no_majority`, a null outcome, or no closed round all fail closed. A later round may be opened while the room is `open` or `voting`. That does not clear a previous `failed_quorum`: publish stays rejected until a closed round is actually `elected`, or the room is reconfigured and a new round meets quorum.
+Publishing a winner is rejected until the latest **closed** round has outcome `elected`. `failed_quorum`, `no_majority`, a null outcome, or no closed round all fail closed. A later round may be opened while the room is `open` or `test`. That does not clear a previous `failed_quorum`: publish stays rejected until a closed round is actually `elected`, or the room is reconfigured and a new round meets quorum.
 
 ## Open legal / product questions
 
-- Confirm each local church’s adopted statute vs the national model (quorum % may differ).
-- Confirm whether blank / null votes count in the denominator for “> 50%”.
-- Tie-breaking when two candidates share “most voted” seats for runoff.
-- Whether restart clears only the current round or the whole election.
+- Confirm each local church’s adopted statute vs the national model (quorum % may differ; Scelta uses a 34% preset representing > 1/3 in integer percentage).
+- **Resolved in code:** Blank ballots (`candidate_id = null`) count in the denominator for “> 50%” (`packages/domain/src/majority.ts:61-62`).
+- Tie-breaking when two candidates share “most voted” seats for runoff (resolved in round 3+ by oldest candidate if birth date present, or manual admin tiebreak).
+- Whether restart clears only the current round or the whole election (T0.3 preserves history and marks restarted rounds as annulled).
 - How communicant / society rolls are imported (CSV, manual, church system API).

@@ -68,6 +68,10 @@ export function AdminRooms() {
   const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
   const [pendingDeleteRoom, setPendingDeleteRoom] = useState<RoomSummary | null>(null);
   const [pendingCloseRoom, setPendingCloseRoom] = useState<RoomSummary | null>(null);
+  const [pendingClosePendingRound, setPendingClosePendingRound] = useState<{
+    roomId: string;
+    roundId: string;
+  } | null>(null);
   const [editingRoom, setEditingRoom] = useState<RoomSummary | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
@@ -234,15 +238,24 @@ export function AdminRooms() {
     }
   }
 
-  async function handleCloseRound(roomId: string, roundId: string) {
+  async function handleCloseRound(roomId: string, roundId: string, confirmPending?: boolean) {
     setRoundError(null);
     setBusyRoomId(roomId);
     try {
-      const round = await closeRound(apiBase, roomId, roundId);
+      const round = await closeRound(
+        apiBase,
+        roomId,
+        roundId,
+        confirmPending ? { confirmPending: true } : undefined,
+      );
       setRooms((current) => current.map((item) => (item.id === roomId ? { ...item, round } : item)));
       setListVersion((current) => current + 1);
       toast.success("Escrutínio encerrado.");
     } catch (error) {
+      if (error instanceof RoomRequestError && error.errorCode === "voting_incomplete") {
+        setPendingClosePendingRound({ roomId, roundId });
+        return;
+      }
       const msg = messageFromRoundError(error);
       setRoundError({ roomId, message: msg });
       toast.error(msg);
@@ -588,6 +601,23 @@ export function AdminRooms() {
       />
 
       <ConfirmDialog
+        open={pendingClosePendingRound !== null}
+        title="Encerrar com votantes pendentes"
+        description="Nem todos os membros presentes votaram. Deseja encerrar o escrutínio assim mesmo? Os membros pendentes serão registrados como 'não votaram'."
+        confirmLabel="Encerrar escrutínio"
+        tone="default"
+        busy={Boolean(pendingClosePendingRound && busyRoomId === pendingClosePendingRound.roomId)}
+        onCancel={() => setPendingClosePendingRound(null)}
+        onConfirm={() => {
+          const target = pendingClosePendingRound;
+          setPendingClosePendingRound(null);
+          if (target) {
+            void handleCloseRound(target.roomId, target.roundId, true);
+          }
+        }}
+      />
+
+      <ConfirmDialog
         open={pendingDeleteRoom !== null}
         title="Excluir sala"
         description={
@@ -739,10 +769,6 @@ function RoomRow({
             <div className="draft-room-summary">
               <p className="draft-room-description">Assembleia encerrada.</p>
             </div>
-          ) : room.status === "cancelled" ? (
-            <div className="draft-room-summary">
-              <p className="draft-room-description">Sala cancelada.</p>
-            </div>
           ) : (
             <div className="draft-room-summary">
               <p className="draft-room-description">
@@ -803,7 +829,7 @@ function RoomRow({
           >
             Editar
           </button>
-          {room.status !== "closed" && room.status !== "cancelled" ? (
+          {room.status !== "closed" ? (
             <button
               type="button"
               className="ghost round-action"

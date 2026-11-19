@@ -11,12 +11,11 @@ import {
 } from "./copy";
 
 describe("presence copy", () => {
-  it("only counts open or voting rooms", () => {
+  it("only counts open or test rooms", () => {
     expect(showsPresence("open")).toBe(true);
-    expect(showsPresence("voting")).toBe(true);
+    expect(showsPresence("test")).toBe(true);
     expect(showsPresence("draft")).toBe(false);
     expect(showsPresence("closed")).toBe(false);
-    expect(showsPresence("cancelled")).toBe(false);
   });
 
   it("compares presence with the required quorum", () => {

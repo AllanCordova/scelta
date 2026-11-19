@@ -128,9 +128,15 @@ export async function openRound(
   );
 }
 
-export async function closeRound(apiBase: string, roomId: string, roundId: string): Promise<RoomRound> {
+export async function closeRound(
+  apiBase: string,
+  roomId: string,
+  roundId: string,
+  options?: { confirmPending?: boolean },
+): Promise<RoomRound> {
   return postRound(
     `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds/${encodeURIComponent(roundId)}/close`,
+    options?.confirmPending ? { confirmPending: true } : undefined,
   );
 }
 

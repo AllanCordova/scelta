@@ -1,5 +1,4 @@
 import {
-  auditEvents,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -18,6 +17,7 @@ import { hashPassword } from "../auth/password.js";
 import { buildApp } from "../app.js";
 import { createDrizzleRoomRepository } from "../rooms/drizzle-room-repository.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import { clearAuditEvents } from "../testing/database.js";
 import { createDrizzleUserRepository } from "../users/drizzle-user-repository.js";
 import type { UserRepository } from "../users/user-repository.js";
 
@@ -64,7 +64,7 @@ describe("multi-round and runoff elections", () => {
     await db.delete(rounds);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
-    await db.delete(auditEvents);
+    await clearAuditEvents(db);
     await db.delete(rooms);
     await db.delete(members);
   });

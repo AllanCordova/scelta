@@ -1,5 +1,4 @@
 import {
-  auditEvents,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -18,6 +17,7 @@ import { hashPassword } from "../auth/password.js";
 import { buildApp } from "../app.js";
 import { createDrizzleRoomRepository } from "../rooms/drizzle-room-repository.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import { clearAuditEvents } from "../testing/database.js";
 import { createDrizzleUserRepository } from "../users/drizzle-user-repository.js";
 import type { UserRepository } from "../users/user-repository.js";
 
@@ -61,7 +61,7 @@ describe("multi-office IPB board elections", () => {
 
   beforeEach(async () => {
     resetAuthAttempts();
-    await db.delete(auditEvents);
+    await clearAuditEvents(db);
     await db.delete(ballots);
     await db.delete(voteReceipts);
     await db.delete(candidates);
@@ -163,7 +163,7 @@ describe("multi-office IPB board elections", () => {
     expect(viceCandidates).toHaveLength(3);
     expect(viceCandidates.some((c) => c.id === winnerCandidateId)).toBe(false);
 
-    // Close Vice-Presidente round 1 with no majority, open round 2, then restart -> resets to round 1 of Vice-Presidente without wiping Presidente
+    // Close Vice-Presidente round 1 with no majority, open round 2, then restart -> annuls round 2 and opens a new round 2 for Vice-Presidente without wiping round 1 or Presidente
     await castAll(app, room.inviteToken, [
       [keys[0]!, viceCandidates[0]!.id],
       [keys[1]!, viceCandidates[1]!.id],
@@ -185,7 +185,8 @@ describe("multi-office IPB board elections", () => {
     });
     expect(restart.statusCode).toBe(200);
     expect(restart.json().round.officeLabel).toBe("Vice-Presidente");
-    expect(restart.json().round.officeRoundNumber).toBe(1);
+    expect(restart.json().round.officeRoundNumber).toBe(2);
+    expect(restart.json().round.number).toBe(6);
 
     const detail = await app.inject({
       method: "GET",
@@ -195,6 +196,7 @@ describe("multi-office IPB board elections", () => {
     expect(detail.statusCode).toBe(200);
     expect(detail.json().room.offices[0].status).toBe("elected");
     expect(detail.json().room.offices[1].status).toBe("open");
+    expect(detail.json().room.offices[1].roundCount).toBe(2);
 
     await app.close();
   });

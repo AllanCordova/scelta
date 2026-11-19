@@ -1,12 +1,14 @@
-import { auditEvents, candidates, createPgliteDatabase, participants, roomMemberCodes, rooms, type Db } from "@scelta/db";
+import { candidates, createPgliteDatabase, participants, roomMemberCodes, rooms, type Db } from "@scelta/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
+import { JOIN_RATE_LIMIT } from "../security/rate-limiter.js";
 import { hashPassword } from "../auth/password.js";
 import { buildApp } from "../app.js";
 import { hashJoinKey } from "../rooms/join-key.js";
 import { createDrizzleRoomRepository } from "../rooms/drizzle-room-repository.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import { clearAuditEvents } from "../testing/database.js";
 import { createDrizzleUserRepository } from "../users/drizzle-user-repository.js";
 import type { UserRepository } from "../users/user-repository.js";
 
@@ -59,7 +61,7 @@ describe("join room", () => {
     await db.delete(candidates);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
-    await db.delete(auditEvents);
+    await clearAuditEvents(db);
     await db.delete(rooms);
   });
 
@@ -149,15 +151,14 @@ describe("join room", () => {
     await app.close();
   });
 
-  it("lets a voting room be joined and restores presence without a second row", async () => {
+  it("lets a test room be joined and restores presence without a second row", async () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoom(app, "Votação", "open");
     const [anaCode] = await createSimCodes(app, room.id, 1, adminCookie);
-    await db.update(rooms).set({ status: "voting" }).where(eq(rooms.id, room.id));
 
     const first = await join(app, room.inviteToken, anaCode!.code, anaKey);
     expect(first.statusCode).toBe(200);
-    expect(first.json()).toMatchObject({ status: "voting", presentCount: 1, alreadyJoined: false });
+    expect(first.json()).toMatchObject({ status: "open", presentCount: 1, alreadyJoined: false });
 
     await db.update(participants).set({ isPresent: false }).where(eq(participants.roomId, room.id));
     const absent = await app.inject({
@@ -187,7 +188,7 @@ describe("join room", () => {
     await app.close();
   });
 
-  it("rejects draft, closed, and cancelled rooms without counting presence", async () => {
+  it("rejects draft and closed rooms without counting presence", async () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const draft = await createRoom(app, "Rascunho", "draft");
     await expectRejected(app, draft.inviteToken, "draft");
@@ -195,10 +196,6 @@ describe("join room", () => {
     const closed = await createRoom(app, "Encerrada", "open");
     await db.update(rooms).set({ status: "closed" }).where(eq(rooms.id, closed.id));
     await expectRejected(app, closed.inviteToken, "closed");
-
-    const cancelled = await createRoom(app, "Cancelada", "open");
-    await db.update(rooms).set({ status: "cancelled" }).where(eq(rooms.id, cancelled.id));
-    await expectRejected(app, cancelled.inviteToken, "cancelled");
 
     expect(await db.select().from(participants)).toHaveLength(0);
     await app.close();
@@ -242,9 +239,13 @@ describe("join room", () => {
     const room = await createRoom(app, "Assembleia", "open");
     const [codeItem] = await createSimCodes(app, room.id, 1, adminCookie);
 
+    const unified = {
+      error: "invalid_access_code",
+      message: "Código de acesso inválido ou revogado.",
+    };
     const unknown = await join(app, room.inviteToken, "ZZZZZZ", anaKey);
     expect(unknown.statusCode).toBe(403);
-    expect(unknown.json()).toEqual({ error: "invalid_access_code" });
+    expect(unknown.json()).toEqual(unified);
 
     const revoke = await app.inject({
       method: "POST",
@@ -255,7 +256,23 @@ describe("join room", () => {
 
     const revokedJoin = await join(app, room.inviteToken, codeItem!.code, anaKey);
     expect(revokedJoin.statusCode).toBe(403);
-    expect(revokedJoin.json()).toEqual({ error: "revoked_access_code" });
+    expect(revokedJoin.json()).toEqual(unified);
+
+    await app.close();
+  });
+
+  it("rate limits join attempts per client and invite token", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+    const room = await createRoom(app, "Assembleia", "open");
+
+    for (let attempt = 0; attempt < JOIN_RATE_LIMIT.limit; attempt += 1) {
+      const response = await join(app, room.inviteToken, "ZZZZZZ", anaKey);
+      expect(response.statusCode).toBe(403);
+    }
+
+    const limited = await join(app, room.inviteToken, "ZZZZZZ", anaKey);
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json().error).toBe("rate_limited");
 
     await app.close();
   });

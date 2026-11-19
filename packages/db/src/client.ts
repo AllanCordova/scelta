@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { runMigrations } from "./migrate.js";
 import * as schema from "./schema.js";
-import { SCHEMA_SQL } from "./schema-sql.js";
 
 export function createDb(connectionString: string) {
   const client = postgres(connectionString);
@@ -16,8 +16,11 @@ export function createPostgresDatabase(connectionString: string) {
 
   return {
     db,
+    migrate() {
+      return runMigrations(db);
+    },
     ensureSchema() {
-      return client.unsafe(SCHEMA_SQL);
+      return runMigrations(db);
     },
     close() {
       return client.end({ timeout: 5 });

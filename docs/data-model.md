@@ -1,7 +1,7 @@
 # Data model
 
-> Draft domain model for Scelta. Technology (SQL/NoSQL, IDs) TBD.  
-> **Anonymity invariant:** a `Ballot` must not be joinable to a `Participant` in a way that reveals the chosen option.
+> PostgreSQL / Drizzle ORM data model for Scelta (`@scelta/db`).  
+> **Anonymity invariant:** a `Ballot` must never be joinable to a `Participant` or a `VoteReceipt` in any way that reveals a voter's choice.
 
 ## Domain overview
 
@@ -11,7 +11,7 @@ erDiagram
     USER ||--o{ SESSION : authenticates
     CHURCH ||--o{ MEMBER : enrolls
     CHURCH ||--o{ ROOM : hosts
-    MEMBER ||--o{ ROOM_ELIGIBILITY : may_join
+    ROOM ||--o{ ROOM_MEMBER_CODE : issues
     ROOM ||--o{ PARTICIPANT : has
     ROOM ||--o{ ROUND : runs
     ROOM ||--o{ CANDIDATE : offers
@@ -19,8 +19,8 @@ erDiagram
     ROUND ||--o{ BALLOT : collects
     ROUND ||--o{ VOTE_RECEIPT : records
     PARTICIPANT ||--o{ VOTE_RECEIPT : marked
-    PARTICIPANT ||--o{ REACTION : sends
     ROOM ||--o{ AUDIT_EVENT : logs
+    ROOM ||--o{ ROOM_CHAT_MESSAGE : exchanges
 
     CHURCH {
         uuid id PK
@@ -47,8 +47,8 @@ erDiagram
         boolean is_communicant
         boolean is_male
         date birth_date
-        string society_flags
-        datetime enrolled_at
+        json society_flags
+        datetime created_at
     }
     ROOM {
         uuid id PK
@@ -66,6 +66,7 @@ erDiagram
         uuid id PK
         uuid room_id FK
         uuid member_id FK
+        uuid access_code_id FK
         string display_name
         string join_key_hash
         datetime joined_at
@@ -92,7 +93,6 @@ erDiagram
         uuid id PK
         uuid round_id FK
         uuid candidate_id FK
-        string ballot_token
     }
     VOTE_RECEIPT {
         uuid id PK
@@ -100,19 +100,15 @@ erDiagram
         uuid participant_id FK
         datetime cast_at
     }
-    REACTION {
-        uuid id PK
-        uuid room_id FK
-        uuid participant_id FK
-        string emoji
-        datetime created_at
-    }
     AUDIT_EVENT {
         uuid id PK
-        uuid room_id FK
+        uuid church_id FK
+        uuid room_id
         string actor_role
         string action
         json payload
+        string prev_hash
+        string integrity_hash
         datetime created_at
     }
 ```
@@ -145,7 +141,7 @@ Person on a church (or society) roll. Used for eligibility and candidate suggest
 | --- | --- |
 | `is_communicant` | Required for local assembly voting (CI/IPB art. 112) |
 | `is_male` / age | Relevant for elder/deacon candidacy (art. 25 §2) |
-| `society_flags` | e.g. UPA active, membership start date for 6-month rule |
+| `society_flags` | e.g. UPA/UMP active, membership start date for seniority rules |
 
 ### Room
 
@@ -155,63 +151,72 @@ A single election session created by an admin (QR join target).
 | --- | --- |
 | `room_type` | `pastor`, `elder`, `deacon`, `session_board`, `upa_board`, `ump_board`, or `custom` |
 | `rules_preset` | `ipb_local_officers`, `ipb_society_board`, or `custom`. Majority and round behavior are derived from the preset, not stored as separate columns |
-| `quorum_value` + `quorum_unit` | Absolute count, or percent of `eligible_count` |
+| `quorum_value` + `quorum_unit` | Absolute count (`>= 1`), or percent (`1–100`) of `eligible_count` |
 | `eligible_count` | Denominator for a percent quorum. Stays 0 until the admin sets it. Absolute quorum ignores it. A percent quorum with 0 cannot be met |
 | `invite_token` | Unguessable, unique capability behind the QR / short link (`/join/{token}`) |
-| `status` | `draft` · `open` · `voting` · `closed` · `cancelled` |
+| `status` | `draft` · `open` · `test` · `closed`. A closed room cannot be reopened, and status or quorum cannot be changed while a round is `open` |
 
 ### Participant
 
 Person present in the room. Tracks **presence**, not ballot content.
 
-Until the member roll exists (B2.1), identity is a display name plus a random join key kept in the browser. The server stores only `join_key_hash` (SHA-256). The same key joins again without a second presence row. `member_id` stays empty until import.
-
 | Field | Notes |
 | --- | --- |
-| `display_name` | Name typed at the door. Not an eligibility check |
+| `display_name` | Member or simulated voter display name |
 | `join_key_hash` | SHA-256 of the client join key. Unique together with `room_id` |
-| `is_present` | Counts toward quorum while true. A repeat join sets this back to true without inserting another row |
-
-Invites do not expire by time yet. An unknown token is rejected. Draft, closed, and cancelled rooms cannot be joined; `open` and `voting` can.
+| `is_present` | Counts toward quorum while true. Removing a participant who already voted sets `is_present = false` without invalidating their cast ballot |
 
 ### Round
 
-One ballot open period (1st, 2nd, 3rd/runoff). Society board rooms (`upa_board`, `ump_board`) run **office-by-office** (`office_label`: `Presidente`, `Vice-Presidente`, `1º Secretário`, `2º Secretário`, `Tesoureiro`), with per-office round numbering for majority and runoff rules.
+One ballot open period (1st, 2nd, 3rd/runoff). Society and Session board rooms (`upa_board`, `ump_board`, `session_board`) run **office-by-office** (`office_label`), with per-office round numbering for majority and runoff rules.
 
-`outcome` is null while the round is open, and null after a close that met quorum but has not been tallied yet. Otherwise it is `failed_quorum`, `no_majority`, or `elected`. Closing below the required presence writes `failed_quorum`. At most one round per room is `open`.
+- `status`: `pending` · `open` · `closed` · `restarted`. At most one round per room can have `status = 'open'` (enforced by partial unique index `rounds_one_open_uidx`).
+- `outcome`: `null` while open, or one of `'failed_quorum'`, `'no_majority'`, `'elected'`, `'declined'`, `'annulled'` (enforced by `rounds_outcome_check`).
+- Restarting an open round marks it `status = 'restarted'` and `outcome = 'annulled'`, preserves its cast ballots and receipts, logs the annulled totals in `audit_events`, and opens a new round with `number = max(number) + 1`. Annulled rounds are ignored when counting the 3-round office limit.
 
 ### Candidate
 
 Someone selectable on the ballot for this room/round (from member roll + filters, or admin override).
 
-### Ballot
+### Ballot & Secrecy Guarantee (`T0.5`)
 
-Anonymous vote record: stores **choice** (+ round) without `participant_id`.
+`ballots` stores **only** `(id, round_id, candidate_id)`:
+
+- **No `participant_id` foreign key**: there is no relational link to `participants` or `vote_receipts`.
+- **No `created_at` timestamp and no `ballot_token`**: previously, `ballots.created_at` and `vote_receipts.cast_at` shared the transaction `now()`, allowing anyone with database read access to correlate a ballot row with a receipt row by timestamp. Removing `created_at` and `ballot_token` from `ballots` makes timestamp/token correlation mathematically impossible.
+- **No session or receipt fingerprints in `ballot_cast` audit events**: `audit_events` records that a verified voter cast a ballot in the round without `sessionFingerprint` or `receiptFingerprint`.
 
 ### VoteReceipt
 
-Proves the participant already voted in that round (prevents double voting) without revealing the choice.
+Proves a participant already voted in that round (`unique(round_id, participant_id)`) without revealing the choice.
 
-### Reaction
+### AuditEvent (`T0.8`)
 
-Moderated emoji / light interaction; must not encode ballot preference.
+Append-only, cryptographically chained log of room and voting events:
 
-### AuditEvent
+- Every insert computes `integrity_hash = SHA-256(prev_hash : id : room_id : actor_role : action : canonical_payload : created_at_iso)[0..16]` referencing the previous event's `integrity_hash` in that room (or `"GENESIS"` for the first event).
+- A PostgreSQL trigger (`audit_events_immutable_trg` calling `prevent_audit_events_mutation()`) blocks `UPDATE` and `DELETE` on `audit_events`.
+- `audit_events.room_id` intentionally has no foreign key to `rooms` so audit history survives room deletion.
+- `GET /v1/admin/rooms/:roomId/audit/verify` recalculates the SHA-256 chain from `"GENESIS"` and reports `chainValid`.
 
-Admin actions: create room, change quorum, start/restart round, force close, etc.
+## Versioned Database Migrations (`T0.1`)
 
-## Critical invariants
+Schema changes are managed via versioned Drizzle migrations in `packages/db/drizzle/` and applied automatically on API startup and in PGlite tests via `runMigrations(db)` (`packages/db/src/migrate.ts`).
 
-1. **Unlinkability:** no foreign key from `Ballot` → `Participant` (or equivalent cryptographic unlinkability).
-2. **Uniqueness:** at most one `VoteReceipt` per `(participant, round)`.
-3. **Quorum gate:** closing a round compares current presence with the required quorum. Below quorum, `rounds.outcome` is `failed_quorum` and no winner is stored. Publishing a winner requires the latest closed round outcome to be `elected`. A percent quorum with `eligible_count = 0` is never met.
-4. **Eligibility:** only eligible participants may receive a receipt; only eligible candidates appear on the ballot for that room type.
-5. **Restart:** clearing ballots/receipts for a round must write an `AuditEvent`.
-6. **Presence identity:** at most one participant per `(room, join_key_hash)`. The raw join key is never stored.
+### How to create and run a migration
 
-## Open questions
-
-- Soft delete vs hard delete for members and rooms
-- How blank / null ballots are stored and whether they enter the majority denominator
-- Multi-vacancy elections (N winners) vs single office-by-office
-- Reaction rate limits and moderation roles
+1. Edit the schema in `packages/db/src/schema.ts`.
+2. Generate a new SQL migration from the repository root:
+   ```bash
+   pnpm --filter @scelta/db generate
+   ```
+3. Inspect the generated `.sql` file under `packages/db/drizzle/` (and `packages/db/drizzle/meta/_journal.json`). If adding custom PostgreSQL triggers, functions, or backfill statements, include them in the migration file separated by `--> statement-breakpoint`.
+4. Build `@scelta/db` and run the test suite to verify the migration against PGlite:
+   ```bash
+   pnpm --filter @scelta/db build
+   pnpm --filter @scelta/api test:feature
+   ```
+5. Against a running PostgreSQL database (`DATABASE_URL`), migrations run automatically on API startup (`createPostgresDatabase(url).ensureSchema()` / `runMigrations(db)`), or can be applied manually via:
+   ```bash
+   pnpm --filter @scelta/db migrate
+   ```

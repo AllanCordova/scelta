@@ -1,4 +1,4 @@
-const JOINABLE_ROOM_STATUSES = ["open", "test", "voting"] as const;
+const JOINABLE_ROOM_STATUSES = ["open", "test"] as const;
 
 export const DISPLAY_NAME_MAX_LENGTH = 80;
 export const JOIN_KEY_MIN_LENGTH = 16;
@@ -30,7 +30,7 @@ export type AccessCodeJoinInput = {
   joinKey: string;
 };
 
-/** Draft, closed, and cancelled rooms stay shut. Voting stays open for late arrivals. */
+/** Draft and closed rooms stay shut. Open and test rooms accept participants. */
 export function canJoinRoom(status: string): boolean {
   return (JOINABLE_ROOM_STATUSES as readonly string[]).includes(status);
 }

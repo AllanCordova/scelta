@@ -1,5 +1,4 @@
 import {
-  auditEvents,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -16,6 +15,7 @@ import { resetAuthAttempts } from "../auth/auth-attempts.js";
 import { hashPassword } from "../auth/password.js";
 import { createDrizzleRoomRepository } from "../rooms/drizzle-room-repository.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import { clearAuditEvents } from "../testing/database.js";
 import { createDrizzleUserRepository } from "../users/drizzle-user-repository.js";
 import type { UserRepository } from "../users/user-repository.js";
 
@@ -63,7 +63,7 @@ describe("B4.2 security baseline for voting", () => {
 
   beforeEach(async () => {
     resetAuthAttempts();
-    await db.delete(auditEvents);
+    await clearAuditEvents(db);
     await db.delete(ballots);
     await db.delete(voteReceipts);
     await db.delete(rounds);

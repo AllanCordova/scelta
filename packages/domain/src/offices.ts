@@ -68,6 +68,10 @@ export function isValidOfficeForRoomType(roomType: RoomType, officeLabel: string
   return officesForRoomType(roomType).includes(officeLabel);
 }
 
+export function isRoundAnnulled(round: { status?: string; outcome?: RoundResult | null }): boolean {
+  return round.outcome === "annulled" || round.status === "restarted";
+}
+
 export function buildOfficeProgress(
   roomType: RoomType,
   rounds: readonly OfficeRoundSnapshot[],
@@ -79,7 +83,7 @@ export function buildOfficeProgress(
 
   return offices.map((officeLabel, index) => {
     const officeRounds = rounds
-      .filter((round) => round.officeLabel === officeLabel)
+      .filter((round) => round.officeLabel === officeLabel && !isRoundAnnulled(round))
       .sort((a, b) => a.number - b.number);
 
     const electedRound = officeRounds.find(
@@ -136,7 +140,10 @@ export function resolveTargetOffice(
 
   // Continue the latest closed office if it has not elected a winner yet.
   const latestClosed = [...rounds]
-    .filter((round) => round.status === "closed" && round.officeLabel !== null)
+    .filter(
+      (round) =>
+        round.status === "closed" && !isRoundAnnulled(round) && round.officeLabel !== null,
+    )
     .sort((a, b) => b.number - a.number)[0];
 
   if (latestClosed?.officeLabel) {
@@ -164,13 +171,20 @@ export function getElectedCandidateIds(
 }
 
 export function countOfficeRoundNumber(
-  rounds: readonly { number: number; officeLabel: string | null; outcome?: RoundResult | null }[],
-  targetRound: { number: number; officeLabel: string | null },
+  rounds: readonly {
+    number: number;
+    officeLabel: string | null;
+    status?: string;
+    outcome?: RoundResult | null;
+  }[],
+  targetRound: { number: number; officeLabel: string | null; status?: string; outcome?: RoundResult | null },
 ): number {
   const scoped = rounds
     .filter(
       (round) =>
-        round.officeLabel === targetRound.officeLabel && round.number <= targetRound.number,
+        round.officeLabel === targetRound.officeLabel &&
+        round.number <= targetRound.number &&
+        (!isRoundAnnulled(round) || round.number === targetRound.number),
     )
     .sort((a, b) => a.number - b.number);
 
@@ -186,9 +200,13 @@ export function countOfficeRoundNumber(
     return count > 0 ? count : 1;
   }
 
+  if (scoped.length > 0) {
+    return scoped.length;
+  }
+
   if (targetRound.officeLabel === null) {
     return targetRound.number;
   }
 
-  return scoped.length > 0 ? scoped.length : 1;
+  return 1;
 }

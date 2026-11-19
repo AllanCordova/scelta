@@ -46,8 +46,10 @@ export async function fetchVoterChat(
   token: string,
   joinKey?: string,
 ): Promise<VoterChatState> {
-  const qs = joinKey ? `?joinKey=${encodeURIComponent(joinKey)}` : "";
-  const response = await fetch(`${apiBase}/v1/join/${encodeURIComponent(token)}/chat${qs}`);
+  const response = await fetch(`${apiBase}/v1/join/${encodeURIComponent(token)}/chat`, {
+    credentials: "include",
+    headers: joinKey ? { "x-scelta-join-key": joinKey } : undefined,
+  });
   const body = (await response.json().catch(() => ({}))) as Partial<VoterChatState> & {
     error?: string;
   };

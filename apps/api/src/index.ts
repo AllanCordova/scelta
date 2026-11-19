@@ -56,7 +56,9 @@ async function main() {
   };
   const app = await buildApp({ roomRepository, userRepository, presencePublisher });
   await app.ready();
-  presenceSink.current = createSocketPresencePublisher(attachRealtime(app.server, env.corsOrigin));
+  presenceSink.current = createSocketPresencePublisher(
+    attachRealtime(app.server, env.corsOrigin, { roomRepository, userRepository }),
+  );
 
   await app.listen({
     host: env.host,

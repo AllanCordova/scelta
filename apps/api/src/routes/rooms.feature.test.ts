@@ -1,5 +1,4 @@
 import {
-  auditEvents,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -16,6 +15,7 @@ import { hashPassword } from "../auth/password.js";
 import { buildApp } from "../app.js";
 import { createDrizzleRoomRepository } from "../rooms/drizzle-room-repository.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import { clearAuditEvents } from "../testing/database.js";
 import { createDrizzleUserRepository } from "../users/drizzle-user-repository.js";
 import type { UserRepository } from "../users/user-repository.js";
 
@@ -69,7 +69,7 @@ describe("admin rooms", () => {
     await db.delete(candidates);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
-    await db.delete(auditEvents);
+    await clearAuditEvents(db);
     await db.delete(rooms);
   });
 
@@ -760,6 +760,97 @@ describe("admin rooms", () => {
       },
     });
     expect(invalidPercent.statusCode).toBe(400);
+
+    // Reopening a closed room or updating its quorum is rejected with 409
+    const reopenClosed = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/rooms/${createdRoom.id}`,
+      headers: { cookie: adminCookie },
+      payload: { status: "open" },
+    });
+    expect(reopenClosed.statusCode).toBe(409);
+    expect(reopenClosed.json()).toMatchObject({ error: "room_already_closed" });
+
+    const updateQuorumOfClosed = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/rooms/${createdRoom.id}`,
+      headers: { cookie: adminCookie },
+      payload: { quorumValue: 60 },
+    });
+    expect(updateQuorumOfClosed.statusCode).toBe(409);
+    expect(updateQuorumOfClosed.json()).toMatchObject({ error: "room_closed" });
+
+    await app.close();
+  });
+
+  it("blocks closing a room, changing status, or altering quorum while a round is open", async () => {
+    const app = await buildApp({ userRepository, roomRepository: repository });
+    const createdResponse = await app.inject({
+      method: "POST",
+      url: "/v1/admin/rooms",
+      headers: { cookie: adminCookie },
+      payload: {
+        title: "Sala com Escrutínio Aberto",
+        roomType: "deacon",
+        rulesPreset: "ipb_local_officers",
+        status: "test",
+        quorumValue: 1,
+        quorumUnit: "absolute",
+        eligibleCount: 10,
+        candidates: ["Paulo", "Silas"],
+      },
+    });
+    expect(createdResponse.statusCode).toBe(201);
+    const room = createdResponse.json().room as { id: string; inviteToken: string };
+
+    const simRes = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/access-codes/simulate`,
+      headers: { cookie: adminCookie },
+      payload: { count: 1 },
+    });
+    const simCode = (simRes.json() as { accessCodes: Array<{ code: string }> }).accessCodes[0]!;
+    await app.inject({
+      method: "POST",
+      url: `/v1/join/${room.inviteToken}`,
+      payload: { code: simCode.code, joinKey: "join-key-guard-0001" },
+    });
+
+    const opened = await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${room.id}/rounds`,
+      headers: { cookie: adminCookie },
+    });
+    expect(opened.statusCode).toBe(201);
+
+    const closeWhileRoundOpen = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/rooms/${room.id}`,
+      headers: { cookie: adminCookie },
+      payload: { status: "closed" },
+    });
+    expect(closeWhileRoundOpen.statusCode).toBe(409);
+    expect(closeWhileRoundOpen.json()).toMatchObject({ error: "round_currently_open" });
+
+    const changeQuorumWhileRoundOpen = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/rooms/${room.id}`,
+      headers: { cookie: adminCookie },
+      payload: { quorumValue: 2 },
+    });
+    expect(changeQuorumWhileRoundOpen.statusCode).toBe(409);
+    expect(changeQuorumWhileRoundOpen.json()).toMatchObject({ error: "round_currently_open" });
+
+    const changeEligibleWhileRoundOpen = await app.inject({
+      method: "PATCH",
+      url: `/v1/admin/rooms/${room.id}`,
+      headers: { cookie: adminCookie },
+      payload: { eligibleCount: 20 },
+    });
+    expect(changeEligibleWhileRoundOpen.statusCode).toBe(409);
+    expect(changeEligibleWhileRoundOpen.json()).toMatchObject({ error: "round_currently_open" });
+
+    await app.close();
   });
 
   async function createRoom(app: Awaited<ReturnType<typeof buildApp>>, title: string) {

@@ -217,9 +217,9 @@ describe("resolveNextRoundCandidateIds", () => {
 });
 
 describe("canRestartRound", () => {
-  it("allows restarting an open round in an open or voting room", () => {
+  it("allows restarting an open round in an open or test room", () => {
     expect(canRestartRound("open", "open", null)).toEqual({ ok: true });
-    expect(canRestartRound("voting", "open", null)).toEqual({ ok: true });
+    expect(canRestartRound("test", "open", null)).toEqual({ ok: true });
   });
 
   it("rejects restarting when room is not open, round is closed, or winner is elected", () => {
@@ -239,9 +239,9 @@ describe("canRestartRound", () => {
 });
 
 describe("canDeclineRound", () => {
-  it("allows declining only a closed round with an elected winner in an open room", () => {
+  it("allows declining only a closed round with an elected winner in an open or test room", () => {
     expect(canDeclineRound("open", "closed", "elected")).toEqual({ ok: true });
-    expect(canDeclineRound("voting", "closed", "elected")).toEqual({ ok: true });
+    expect(canDeclineRound("test", "closed", "elected")).toEqual({ ok: true });
   });
 
   it("rejects declining when room is not open, round is not closed, or no winner was elected", () => {

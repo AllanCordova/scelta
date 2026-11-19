@@ -1,9 +1,7 @@
 import {
-  auditEvents,
   candidates,
   createPgliteDatabase,
   participants,
-  reactions,
   roomChatMessages,
   roomMemberCodes,
   rooms,
@@ -12,10 +10,12 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../app.js";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
+import { CHAT_REQUEST_RATE_LIMIT } from "../security/rate-limiter.js";
 import { hashPassword } from "../auth/password.js";
 import type { PresencePublisher } from "../realtime.js";
 import { createDrizzleRoomRepository } from "../rooms/drizzle-room-repository.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
+import { clearAuditEvents } from "../testing/database.js";
 import { createDrizzleUserRepository } from "../users/drizzle-user-repository.js";
 import type { UserRepository } from "../users/user-repository.js";
 
@@ -115,9 +115,8 @@ describe("live room chat and moderation", () => {
 
   beforeEach(async () => {
     resetAuthAttempts();
-    await db.delete(auditEvents);
+    await clearAuditEvents(db);
     await db.delete(roomChatMessages);
-    await db.delete(reactions);
     await db.delete(candidates);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
@@ -180,11 +179,39 @@ describe("live room chat and moderation", () => {
 
     expect(publishChatMessage).toHaveBeenCalledTimes(4);
 
-    const history = await app.inject({
+    const anonymousHistory = await app.inject({
       method: "GET",
       url: `/v1/join/${inviteToken}/chat`,
     });
+    expect(anonymousHistory.statusCode).toBe(401);
+
+    const queryLeakAttempt = await app.inject({
+      method: "GET",
+      url: `/v1/join/${inviteToken}/chat?joinKey=join-key-chat-1111`,
+    });
+    expect(queryLeakAttempt.statusCode).toBe(401);
+
+    const strangerHistory = await app.inject({
+      method: "GET",
+      url: `/v1/join/${inviteToken}/chat`,
+      headers: { "x-scelta-join-key": "not-a-participant-key" },
+    });
+    expect(strangerHistory.statusCode).toBe(403);
+
+    const adminHistory = await app.inject({
+      method: "GET",
+      url: `/v1/join/${inviteToken}/chat`,
+      headers: { cookie: adminCookie },
+    });
+    expect(adminHistory.statusCode).toBe(200);
+
+    const history = await app.inject({
+      method: "GET",
+      url: `/v1/join/${inviteToken}/chat`,
+      headers: { "x-scelta-join-key": "join-key-chat-1111" },
+    });
     expect(history.statusCode).toBe(200);
+    expect(history.json().currentParticipantId).toEqual(expect.any(String));
     expect(history.json().messages).toHaveLength(4);
 
     await app.close();
@@ -309,6 +336,40 @@ describe("live room chat and moderation", () => {
     });
     const ids = (afterDelete.json().messages as Array<{ id: string }>).map((m) => m.id);
     expect(ids).not.toContain(msgId);
+
+    await app.close();
+  });
+
+  it("rate limits chat request spam per voter without blocking other voters on the same IP", async () => {
+    const app = await buildApp({ roomRepository: repository, userRepository });
+    const { inviteToken } = await createAndJoinRoom(app, adminCookie, [
+      "join-key-spam-1111",
+      "join-key-spam-2222",
+    ]);
+
+    for (let attempt = 0; attempt < CHAT_REQUEST_RATE_LIMIT.limit; attempt += 1) {
+      const response = await app.inject({
+        method: "POST",
+        url: `/v1/join/${inviteToken}/chat`,
+        payload: { joinKey: "join-key-spam-1111", content: `msg ${attempt}` },
+      });
+      expect([201, 429]).toContain(response.statusCode);
+    }
+
+    const limited = await app.inject({
+      method: "POST",
+      url: `/v1/join/${inviteToken}/chat`,
+      payload: { joinKey: "join-key-spam-1111", content: "spam" },
+    });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json().error).toBe("rate_limited");
+
+    const otherVoter = await app.inject({
+      method: "POST",
+      url: `/v1/join/${inviteToken}/chat`,
+      payload: { joinKey: "join-key-spam-2222", content: "Olá" },
+    });
+    expect(otherVoter.statusCode).toBe(201);
 
     await app.close();
   });

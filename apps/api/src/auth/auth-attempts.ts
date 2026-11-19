@@ -1,3 +1,5 @@
+import { resetRateLimits } from "../security/rate-limiter.js";
+
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_LOGIN_FAILURES = 8;
 /** Caps password hashing per client, so rotating the email cannot skip the limit. */
@@ -34,7 +36,7 @@ export function recordClientAttempt(kind: "login" | "register", clientKey: strin
 
 /**
  * Reserves one guess for this account before password verification.
- * The counter is per account, so a different account logging in cannot clear it.
+ * The key must combine client address and email, so a stranger cannot lock the real owner out.
  * The increment happens before any await, so overlapping guesses cannot all pass the check.
  */
 export function takeLoginAttempt(accountKey: string, now = Date.now()): boolean {
@@ -66,6 +68,7 @@ export function clearClientAttempts(kind: "login" | "register", clientKey: strin
 
 export function resetAuthAttempts(): void {
   attempts.clear();
+  resetRateLimits();
 }
 
 function takeAttempt(key: string, limit: number, now: number): boolean {

@@ -226,6 +226,44 @@ describe("account sessions", () => {
     await app.close();
   });
 
+  it("does not let one client lock the account out for other clients", async () => {
+    const app = await buildApp({ userRepository });
+    await userRepository.insertUser({
+      name: "Ada",
+      email: "ada@church.test",
+      passwordHash: await hashPassword("senha-segura"),
+      role: "admin",
+    });
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const response = await app.inject({
+        method: "POST",
+        url: "/v1/auth/login",
+        remoteAddress: "10.0.0.66",
+        payload: { email: "ada@church.test", password: "errada" },
+      });
+      expect(response.statusCode).toBe(401);
+    }
+
+    const attackerBlocked = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      remoteAddress: "10.0.0.66",
+      payload: { email: "ada@church.test", password: "senha-segura" },
+    });
+    expect(attackerBlocked.statusCode).toBe(429);
+
+    const owner = await app.inject({
+      method: "POST",
+      url: "/v1/auth/login",
+      remoteAddress: "10.0.0.7",
+      payload: { email: "ada@church.test", password: "senha-segura" },
+    });
+    expect(owner.statusCode).toBe(200);
+
+    await app.close();
+  });
+
   it("stops password checks when one client rotates emails", async () => {
     const app = await buildApp({ userRepository });
 

@@ -15,8 +15,15 @@ export type RoomType = (typeof ROOM_TYPES)[number];
 export const CREATE_ROOM_STATUSES = ["draft", "open", "test"] as const;
 export type CreateRoomStatus = (typeof CREATE_ROOM_STATUSES)[number];
 
-export const ROOM_STATUSES = ["draft", "open", "test", "voting", "closed", "cancelled"] as const;
+export const ROOM_STATUSES = ["draft", "open", "test", "closed"] as const;
 export type RoomStatus = (typeof ROOM_STATUSES)[number];
+
+export type RoomStatusTransitionRejectionReason =
+  | "room_already_closed"
+  | "round_currently_open"
+  | "invalid_status_transition";
+
+export type RoomQuorumUpdateRejectionReason = "room_closed" | "round_currently_open";
 
 export type MajorityRule = "absolute_majority";
 
@@ -176,11 +183,50 @@ export function validateCreateRoom(
 }
 
 export function canOpenRound(status: RoomStatus): boolean {
-  return status === "open" || status === "test" || status === "voting";
+  return status === "open" || status === "test";
 }
 
 export function canSimulateInRoom(status: RoomStatus): boolean {
   return status === "test";
+}
+
+export function canTransitionRoomStatus(
+  from: RoomStatus,
+  to: RoomStatus,
+  options?: { hasOpenRound?: boolean },
+): { ok: true } | { ok: false; reason: RoomStatusTransitionRejectionReason } {
+  if (!(ROOM_STATUSES as readonly string[]).includes(from) || !(ROOM_STATUSES as readonly string[]).includes(to)) {
+    return { ok: false, reason: "invalid_status_transition" };
+  }
+
+  if (from === to) {
+    return { ok: true };
+  }
+
+  if (from === "closed") {
+    return { ok: false, reason: "room_already_closed" };
+  }
+
+  if (options?.hasOpenRound) {
+    return { ok: false, reason: "round_currently_open" };
+  }
+
+  return { ok: true };
+}
+
+export function canUpdateRoomQuorum(options: {
+  roomStatus: RoomStatus;
+  hasOpenRound: boolean;
+}): { ok: true } | { ok: false; reason: RoomQuorumUpdateRejectionReason } {
+  if (options.roomStatus === "closed") {
+    return { ok: false, reason: "room_closed" };
+  }
+
+  if (options.hasOpenRound) {
+    return { ok: false, reason: "round_currently_open" };
+  }
+
+  return { ok: true };
 }
 
 function resolveEligibleCount(draft: CreateRoomDraft): {

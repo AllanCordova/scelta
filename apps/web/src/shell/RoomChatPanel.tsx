@@ -214,7 +214,7 @@ export function RoomChatPanel(props: RoomChatPanelProps) {
     }
     const socket = connectPresenceSocket();
     const joinChannel = () => {
-      socket.emit("room:join", roomId);
+      socket.emit("room:join", voterJoinKey ? { roomId, joinKey: voterJoinKey } : roomId);
     };
     socket.on("connect", joinChannel);
     if (socket.connected) {

@@ -241,4 +241,46 @@ describe("IPB offices per room type", () => {
     expect(resolveTargetOffice("elder", [])).toEqual({ ok: true, officeLabel: null });
     expect(resolveTargetOffice("elder", [], "")).toEqual({ ok: true, officeLabel: null });
   });
+
+  it("ignores annulled / restarted rounds when counting office rounds and building progress", () => {
+    const roundsWithAnnulled = [
+      {
+        id: "r1",
+        number: 1,
+        officeLabel: "Presidente",
+        status: "closed",
+        outcome: "no_majority" as const,
+      },
+      {
+        id: "r2",
+        number: 2,
+        officeLabel: "Presidente",
+        status: "restarted",
+        outcome: "annulled" as const,
+      },
+      {
+        id: "r3",
+        number: 3,
+        officeLabel: "Presidente",
+        status: "open",
+        outcome: null,
+      },
+    ];
+
+    expect(
+      countOfficeRoundNumber(roundsWithAnnulled, { number: 3, officeLabel: "Presidente" }),
+    ).toBe(2);
+
+    const progress = buildOfficeProgress("upa_board", roundsWithAnnulled);
+    expect(progress[0]?.status).toBe("open");
+    expect(progress[0]?.roundCount).toBe(2);
+
+    // Also works for single-office rooms (officeLabel: null)
+    const singleOfficeRounds = [
+      { id: "s1", number: 1, officeLabel: null, status: "closed", outcome: "no_majority" as const },
+      { id: "s2", number: 2, officeLabel: null, status: "restarted", outcome: "annulled" as const },
+      { id: "s3", number: 3, officeLabel: null, status: "open", outcome: null },
+    ];
+    expect(countOfficeRoundNumber(singleOfficeRounds, { number: 3, officeLabel: null })).toBe(2);
+  });
 });

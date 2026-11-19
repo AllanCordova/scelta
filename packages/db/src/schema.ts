@@ -1,5 +1,7 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -12,14 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const quorumUnitEnum = pgEnum("quorum_unit", ["absolute", "percent"]);
-export const roomStatusEnum = pgEnum("room_status", [
-  "draft",
-  "open",
-  "test",
-  "voting",
-  "closed",
-  "cancelled",
-]);
+export const roomStatusEnum = pgEnum("room_status", ["draft", "open", "test", "closed"]);
 export const rulesPresetEnum = pgEnum("rules_preset", [
   "ipb_local_officers",
   "ipb_society_board",
@@ -126,7 +121,12 @@ export const roomMemberCodes = pgTable(
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [uniqueIndex("room_member_codes_room_code_uidx").on(table.roomId, table.code)],
+  (table) => [
+    uniqueIndex("room_member_codes_room_code_uidx").on(table.roomId, table.code),
+    uniqueIndex("room_member_codes_active_member_uidx")
+      .on(table.roomId, table.memberId)
+      .where(sql`revoked_at IS NULL AND member_id IS NOT NULL`),
+  ],
 );
 
 export const participants = pgTable(
@@ -147,6 +147,9 @@ export const participants = pgTable(
   },
   (table) => [
     uniqueIndex("participants_room_member_uidx").on(table.roomId, table.memberId),
+    uniqueIndex("participants_room_access_code_uidx")
+      .on(table.roomId, table.accessCodeId)
+      .where(sql`access_code_id IS NOT NULL`),
     uniqueIndex("participants_room_join_key_uidx").on(table.roomId, table.joinKeyHash),
   ],
 );
@@ -166,10 +169,20 @@ export const rounds = pgTable(
     declinedCandidateId: uuid("declined_candidate_id"),
     winnerCandidateId: uuid("winner_candidate_id"),
     tieBreakReason: text("tie_break_reason"),
+    didNotVoteCount: integer("did_not_vote_count"),
     openedAt: timestamp("opened_at", { withTimezone: true }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
   },
-  (table) => [uniqueIndex("rounds_room_number_uidx").on(table.roomId, table.number)],
+  (table) => [
+    uniqueIndex("rounds_room_number_uidx").on(table.roomId, table.number),
+    uniqueIndex("rounds_one_open_uidx")
+      .on(table.roomId)
+      .where(sql`status = 'open'`),
+    check(
+      "rounds_outcome_check",
+      sql`outcome IS NULL OR outcome IN ('failed_quorum', 'no_majority', 'elected', 'declined', 'annulled')`,
+    ),
+  ],
 );
 
 export const candidates = pgTable("candidates", {
@@ -184,8 +197,8 @@ export const candidates = pgTable("candidates", {
 });
 
 /**
- * Anonymous ballot: stores the choice for a round without participant_id.
- * Anonymity invariant: never add a participant foreign key here.
+ * Anonymous ballot: stores the choice for a round without participant_id or timestamp.
+ * Anonymity invariant: never add a participant foreign key, token, or cast timestamp here.
  */
 export const ballots = pgTable("ballots", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -194,8 +207,6 @@ export const ballots = pgTable("ballots", {
     .references(() => rounds.id),
   /** Null represents a blank/null vote. */
   candidateId: uuid("candidate_id").references(() => candidates.id),
-  ballotToken: text("ballot_token").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 /** Proves a participant voted in a round without revealing the choice. */
@@ -219,28 +230,6 @@ export const voteReceipts = pgTable(
   ],
 );
 
-export const reactions = pgTable(
-  "reactions",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    roomId: uuid("room_id")
-      .notNull()
-      .references(() => rooms.id),
-    participantId: uuid("participant_id")
-      .notNull()
-      .references(() => participants.id),
-    emoji: text("emoji").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-  },
-  (table) => [
-    index("reactions_room_participant_created_idx").on(
-      table.roomId,
-      table.participantId,
-      table.createdAt,
-    ),
-  ],
-);
-
 export const auditEvents = pgTable("audit_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   churchId: uuid("church_id").references(() => churches.id),
@@ -249,6 +238,8 @@ export const auditEvents = pgTable("audit_events", {
   actorRole: text("actor_role").notNull(),
   action: text("action").notNull(),
   payload: jsonb("payload").$type<Record<string, unknown>>().default({}),
+  prevHash: text("prev_hash"),
+  integrityHash: text("integrity_hash").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

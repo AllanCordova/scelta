@@ -43,7 +43,6 @@ describe("canCastBallot", () => {
   it("allows an eligible present participant to cast one vote in an open round", () => {
     expect(canCastBallot(validInput)).toEqual({ ok: true });
     expect(canCastBallot({ ...validInput, roomStatus: "test" })).toEqual({ ok: true });
-    expect(canCastBallot({ ...validInput, roomStatus: "voting" })).toEqual({ ok: true });
   });
 
   it("rejects a second vote attempt", () => {

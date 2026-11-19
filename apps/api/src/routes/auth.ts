@@ -59,10 +59,12 @@ export const authRoutes: FastifyPluginAsync<AuthRouteOptions> = async (app, opti
       const body = request.body as CredentialsBody;
       const email = normalizeEmail(body.email);
       const clientKey = clientAddress(request);
+      // Per client+email, so a stranger's failures cannot lock the real owner out.
+      const accountKey = `${clientKey}:${email}`;
       if (!takeLoginClientAttempt(clientKey)) {
         return reply.code(429).send({ error: "rate_limited" });
       }
-      if (!takeLoginAttempt(email)) {
+      if (!takeLoginAttempt(accountKey)) {
         releaseLoginClientAttempt(clientKey);
         return reply.code(429).send({ error: "rate_limited" });
       }
@@ -75,7 +77,7 @@ export const authRoutes: FastifyPluginAsync<AuthRouteOptions> = async (app, opti
           return reply.code(401).send({ error: "invalid_credentials" });
         }
 
-        clearLoginAccountAttempts(email);
+        clearLoginAccountAttempts(accountKey);
         releaseLoginClientAttempt(clientKey);
         await startSession(reply, userRepository, {
           id: account.id,
@@ -92,7 +94,7 @@ export const authRoutes: FastifyPluginAsync<AuthRouteOptions> = async (app, opti
           },
         };
       } catch (error) {
-        releaseLoginAttempt(email);
+        releaseLoginAttempt(accountKey);
         releaseLoginClientAttempt(clientKey);
         request.log.error({ err: error }, "Failed to login");
         return reply.code(500).send({ error: "persistence_failed" });
