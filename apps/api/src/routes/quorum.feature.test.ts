@@ -2,8 +2,10 @@ import {
   ballots,
   candidates,
   createPgliteDatabase,
+  members,
   participants,
   roomMemberCodes,
+  roomRoster,
   rooms,
   rounds,
   voteReceipts,
@@ -71,8 +73,10 @@ describe("quorum gate", () => {
     await db.delete(candidates);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
+    await db.delete(roomRoster);
     await clearAuditEvents(db);
     await db.delete(rooms);
+    await db.delete(members);
   });
 
   it("reports presence against absolute and percent quorum", async () => {
@@ -145,7 +149,7 @@ describe("quorum gate", () => {
     expect(closed.statusCode).toBe(200);
     expect(closed.json()).toEqual({
       round: { id: roundId, number: 1, status: "closed", outcome: "failed_quorum" },
-      quorum: { presentCount: 0, eligibleCount: 100, requiredCount: 4, quorumMet: false },
+      quorum: { presentCount: 0, eligibleCount: 4, requiredCount: 4, quorumMet: false },
     });
 
     const again = await closeRound(app, room.id, roundId);
@@ -203,7 +207,7 @@ describe("quorum gate", () => {
     expect(closedSecond.statusCode).toBe(200);
     expect(closedSecond.json()).toMatchObject({
       round: { id: nextRoundId, number: 2, status: "closed", outcome: "no_majority" },
-      quorum: { presentCount: 4, eligibleCount: 100, requiredCount: 4, quorumMet: true },
+      quorum: { presentCount: 4, eligibleCount: 4, requiredCount: 4, quorumMet: true },
     });
 
     await db.update(rounds).set({ outcome: "elected" }).where(eq(rounds.id, nextRoundId));
@@ -219,11 +223,21 @@ describe("quorum gate", () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoom(app, {
       title: "Percentual sem aptos",
+      status: "test",
       quorumValue: 34,
       quorumUnit: "percent",
     });
-    await join(app, room.inviteToken, "Ana", "join-key-ana-0001");
-    await join(app, room.inviteToken, "Bia", "join-key-bia-0002");
+    const simCodes = await repository.createSimulatedAccessCodes(room.id, 2);
+    await app.inject({
+      method: "POST",
+      url: `/v1/join/${room.inviteToken}`,
+      payload: { code: simCodes[0]!.code, joinKey: "join-key-ana-0001" },
+    });
+    await app.inject({
+      method: "POST",
+      url: `/v1/join/${room.inviteToken}`,
+      payload: { code: simCodes[1]!.code, joinKey: "join-key-bia-0002" },
+    });
 
     const opened = await openRound(app, room.id);
     expect(opened.statusCode).toBe(409);
@@ -243,11 +257,18 @@ describe("quorum gate", () => {
         },
       },
     });
+    for (const name of ["Ana (a-0001)", "Bia (a-0002)", "Caio (o-0003)"]) {
+      await repository.createMember({
+        fullName: name,
+        isCommunicant: true,
+        isMale: true,
+        birthDate: "1990-01-01",
+      });
+    }
     const room = await createRoom(app, {
       title: "Quórum atingido",
       quorumValue: 50,
       quorumUnit: "percent",
-      eligibleCount: 3,
     });
 
     await join(app, room.inviteToken, "Ana", "join-key-ana-0001");
@@ -351,7 +372,7 @@ describe("quorum gate", () => {
       quorumValue: number;
       quorumUnit: "absolute" | "percent";
       eligibleCount?: number;
-      status?: "draft" | "open";
+      status?: "draft" | "open" | "test";
     },
   ) {
     const response = await app.inject({
@@ -426,18 +447,16 @@ describe("quorum gate", () => {
       });
     }
     const memberName = `${displayName} (${joinKey.slice(-6)})`;
-    let generated = await repository.generateMemberAccessCodes(room.id);
+    const generated = await repository.generateMemberAccessCodes(room.id);
     let memberCode = generated.find((item) => item.displayName === memberName && !item.revokedAt);
     if (!memberCode) {
-      await repository.createMember({
+      const added = await repository.addRosterEntry!(room.id, {
         fullName: memberName,
-        isCommunicant: true,
-        isMale: true,
         birthDate: "1990-01-01",
-        societyFlags: { upaActive: true, umpActive: true },
       });
-      generated = await repository.generateMemberAccessCodes(room.id);
-      memberCode = generated.find((item) => item.displayName === memberName && !item.revokedAt);
+      if (added.ok) {
+        memberCode = added.accessCode;
+      }
     }
     return app.inject({
       method: "POST",

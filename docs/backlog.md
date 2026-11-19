@@ -222,13 +222,38 @@
 | **T0.10** | Typecheck no CI (`pnpm typecheck` adicionado em `.github/workflows/ci.yml` e `agents/git.md`) | XS | P1 | `flash` | — | `done` |
 | **T0.11** | Limpeza de código morto (removida tabela `reactions` e `sendReaction` do repositório) e alinhamento de `docs/voting-rules.md` (quórum de 34% e votos em branco na base da maioria) | XS | P2 | `flash` | T0.1 | `done` |
 
-### Etapas 1 a 7 — Próximas Etapas
+### Etapa 1 — Acesso confiável (QR, cartão e sessão) (`done`)
+
+| ID | Task | Size | Prioridade | Modelo | Depende de | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| **T1.1** | Endereço público configurável (`PUBLIC_URL` no `.env.example`, validação `normalizePublicUrl` na API, endpoint público `GET /v1/config`, helpers `resolvePublicOrigin`/`hasOriginMismatch`, aviso `public-url-mismatch-warning` no painel admin, links e QRs apontando para `publicOrigin`) | S | P0 | `hydrogen` | — | `done` |
+| **T1.2** | Código curto da sala e página "Entrar com código" (`ROOM_SHORT_CODE_ALPHABET` com 6 chars não ambíguos em `@scelta/domain`, migração `0001` com `rooms.short_code` e backfill determinístico, rotas públicas `GET`/`POST /v1/join/s/:shortCode`, rota web `/s/:shortCode`, `EnterCodePage` na home `/`, rotação de convite preservando `shortCode`) | M | P0 | `hydrogen` | T0.1, T1.1 | `done` |
+| **T1.3** | QR legível no cartão (`QRCode.toString` em SVG, `errorCorrectionLevel: "Q"`, margem 4 módulos, tamanho 34mm x 34mm no CSS `@media print`, conteúdo curto `/s/:shortCode?c=:code`) | S | P0 | `hydrogen` | T1.2 | `done` |
+| **T1.4** | Impressão de cartões sem aviso por cima e sem QR cortado (`[data-sonner-toaster]` oculto em `@media print`, paginação `paginateCardsForPrint` com 8 cartões por `.print-sheet` A4 com `break-after: page`, layout do cartão com QR SVG, URL curta legível e código 20pt, ajuste de quebra e padding de 12mm em `ShareBoardPaper`) | S | P0 | `hydrogen` | T1.2 | `done` |
+| **T1.5** | Uma sessão por código, com liberação pela mesa (`participants.join_key_hash` nullable via migração `0001`, `joinParticipantInTransaction` rejeitando mismatch com `409 access_code_in_use`, reentrada permitida no mesmo navegador, liberação de sessão via `POST /v1/admin/rooms/:id/participants/:id/release-session` com evento encadeado `session_released`, preservação de identidade em falhas transitórias com backoff `[1000, 2000, 4000]ms`, remoção de `?c=` via `history.replaceState`, e bloqueio persistente de voto duplo via `vote_receipts`) | M | P0 | `hydrogen` | T0.6 | `done` |
+| **T1.6** | Aviso para abrir no navegador (`detectInAppBrowser` detectando WhatsApp, Instagram, Facebook, TikTok, Line, WeChat e WebViews Android/iOS, componente `InAppBrowserBanner` com cópia de URL e botão continuar, bloqueio de preview/join e consumo de `?c=` até confirmação) | S | P1 | `hydrogen` | T1.5 | `done` |
+
+### Etapa 2 — Rol da sala (`done`)
+
+| ID | Task | Size | Prioridade | Modelo | Depende de | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| **T2.1** | Rol próprio da sala (tabela `room_roster`, migração Drizzle `0002` com backfill, `eligibleCount` derivado do rol, fim do campo manual `Aptos` em `AdminRooms` e `EditRoomModal`) | L | P0 | `hydrogen` | T0.1 | `done` |
+| **T2.2** | Adicionar e remover pessoas do rol com a sala criada (`GET/POST/DELETE /v1/admin/rooms/:roomId/roster`, adicionar do cadastro ou avulso com geração de código e impressão de cartão avulso, remover revoga código e presença mantendo votos já computados, auditoria encadeada) | M | P0 | `hydrogen` | T2.1 | `done` |
+| **T2.3** | Cadastro geral não altera salas encerradas (soft delete `members.deleted_at`, revogação em salas abertas sem afetar encerradas, snapshots em `room_roster` e `candidates.birth_date`/`photo_url`, propagação de edição apenas para salas sem escrutínio aberto) | M | P1 | `hydrogen` | T2.1 | `done` |
+| **T2.4** | Gerenciar candidatos antes do 1º escrutínio do cargo (`canManageRoomCandidates`, `POST/DELETE /v1/admin/rooms/:roomId/candidates`, `RoomCandidatesPanel` com bloqueio `409 candidates_locked_after_round` após abertura do 1º escrutínio) | S | P1 | `hydrogen` | T2.1 | `done` |
+
+### Etapa 3 — Voto em papel (`done`)
+
+| ID | Task | Size | Prioridade | Modelo | Depende de | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| **T3.1** | Marcar votante como "vota no papel" (`room_roster.votes_on_paper`, `PATCH /v1/admin/rooms/:roomId/roster/:entryId/paper-mode`, revoga código e sessão online, conta no quórum sem aparecer como pendente online, contador `"Papel: N"`, bloqueio `409 already_voted_online` / `409 paper_tally_already_recorded`, auditoria encadeada) | M | P0 | `hydrogen` / `sonnet` | T2.1, T0.4 | `done` |
+| **T3.2** | Lançar os totais da urna de papel (`validatePaperTally` e soma `online + papel` em `@scelta/domain`, tabela `round_paper_tallies` na migração `0003`, `PUT /v1/admin/rooms/:roomId/rounds/:roundId/paper-tally`, trava `409 paper_tally_required` ou `confirmNoPaperBallots: true` no fechamento, `PaperTallyPanel`) | L | P0 | `hydrogen` / `sonnet` | T3.1 | `done` |
+| **T3.3** | Resultado com origem dos votos (`voteOrigin` e `onlineVotes`/`paperVotes` por candidato em `AdminRoomDetail`, `ShareBoardPaper` e `/ballot`, autoria/horário em `round.paperTally` e `paper_tally_recorded` no log) | S | P1 | `sonnet` | T3.2 | `done` |
+
+### Etapas 4 a 7 — Próximas Etapas
 
 | Etapa | Tasks | Foco | Status |
 | --- | --- | --- | --- |
-| **Etapa 1** | `T1.1`–`T1.6` | Acesso confiável (QR, cartão, código curto e sessão única) | `todo` |
-| **Etapa 2** | `T2.1`–`T2.4` | Rol próprio da sala e gestão de candidatos | `todo` |
-| **Etapa 3** | `T3.1`–`T3.3` | Voto em papel e soma na apuração | `todo` |
 | **Etapa 4** | `T4.1`–`T4.3` | Entrada por aprovação da mesa | `todo` |
 | **Etapa 5** | `T5.1`–`T5.4` | Eleição de Oficiais (votar em até N nomes) | `todo` |
 | **Etapa 6** | `T6.1`–`T6.3` | Tela da sala em abas (Preparar / Conduzir / Resultado) e Modo Telão | `todo` |

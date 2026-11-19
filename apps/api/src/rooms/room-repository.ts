@@ -2,6 +2,7 @@ import type {
   BallotRejectionReason,
   CreateRoomStatus,
   MemberSocietyFlags,
+  PaperTallyInput,
   QuorumStatus,
   QuorumUnit,
   RoomStatus,
@@ -22,6 +23,7 @@ export type StoredRoom = {
   eligibleCount: number;
   officeBanners?: Record<string, string>;
   inviteToken: string;
+  shortCode: string;
   status: RoomStatus;
   reactionsEnabled: boolean;
   chatMuted?: boolean;
@@ -42,6 +44,7 @@ export type NewRoom = {
 export type StoredCandidate = {
   id: string;
   roomId: string;
+  memberId?: string | null;
   displayName: string;
   photoUrl?: string | null;
   birthDate?: string | null;
@@ -104,9 +107,15 @@ export type AtomicCloseRoundResult =
     }
   | {
       ok: false;
-      reason: "room_not_found" | "round_not_found" | "round_not_open" | "voting_incomplete";
+      reason:
+        | "room_not_found"
+        | "round_not_found"
+        | "round_not_open"
+        | "voting_incomplete"
+        | "paper_tally_required";
       votedCount?: number;
       presentCount?: number;
+      paperVotersCount?: number;
     };
 
 export type StoredMember = {
@@ -134,6 +143,7 @@ export type JoinedParticipant = {
 export type StoredAccessCode = {
   id: string;
   roomId: string;
+  rosterEntryId?: string | null;
   memberId: string | null;
   displayName: string;
   code: string;
@@ -142,6 +152,140 @@ export type StoredAccessCode = {
   createdAt: Date;
 };
 
+export type StoredRosterEntry = {
+  id: string;
+  roomId: string;
+  memberId: string | null;
+  fullName: string;
+  birthDate: string | null;
+  isCommunicant: boolean;
+  isMale: boolean | null;
+  isEligibleVoter: boolean;
+  votesOnPaper: boolean;
+  createdAt: Date;
+  accessCode: {
+    id: string;
+    code: string;
+    revokedAt: Date | null;
+  } | null;
+  isPresent: boolean;
+};
+
+export type StoredPaperTally = {
+  id: string;
+  roundId: string;
+  ballotCount: number;
+  blankVotes: number;
+  nullVotes: number;
+  candidateVotes: Record<string, number>;
+  recordedByAdminId: string | null;
+  recordedByName: string | null;
+  recordedAt: Date;
+  updatedAt: Date;
+};
+
+export type SetRosterEntryPaperModeResult =
+  | {
+      ok: true;
+      entry: StoredRosterEntry;
+      accessCode: StoredAccessCode | null;
+      onlinePresentCount: number;
+      paperVotersCount: number;
+    }
+  | {
+      ok: false;
+      reason:
+        | "room_not_found"
+        | "room_closed"
+        | "roster_entry_not_found"
+        | "already_voted_online"
+        | "paper_tally_already_recorded";
+    };
+
+export type UpsertRoundPaperTallyResult =
+  | { ok: true; paperTally: StoredPaperTally }
+  | {
+      ok: false;
+      reason: "room_not_found" | "round_not_found" | "round_not_open";
+    }
+  | {
+      ok: false;
+      reason: "validation_failed";
+      code: string;
+      message: string;
+    };
+
+export type AddRosterEntryInput =
+  | { memberId: string }
+  | {
+      fullName: string;
+      birthDate?: string | null;
+      isCommunicant?: boolean;
+      isMale?: boolean | null;
+    };
+
+export type AddRosterEntryResult =
+  | {
+      ok: true;
+      entry: StoredRosterEntry;
+      accessCode: StoredAccessCode;
+      eligibleCount: number;
+    }
+  | {
+      ok: false;
+      reason: "room_not_found" | "room_closed" | "member_not_found" | "roster_member_exists";
+    };
+
+export type RemoveRosterEntryResult =
+  | {
+      ok: true;
+      eligibleCount: number;
+    }
+  | {
+      ok: false;
+      reason: "room_not_found" | "room_closed" | "roster_entry_not_found";
+    };
+
+export type AddRoomCandidateInput = {
+  memberId?: string;
+  rosterEntryId?: string;
+  displayName?: string;
+  birthDate?: string | null;
+  officeLabel?: string;
+};
+
+export type AddRoomCandidateResult =
+  | {
+      ok: true;
+      candidate: StoredCandidate;
+      candidates: StoredCandidate[];
+    }
+  | {
+      ok: false;
+      reason:
+        | "room_not_found"
+        | "candidates_locked_after_round"
+        | "invalid_office"
+        | "member_not_found"
+        | "roster_entry_not_found"
+        | "invalid_candidate"
+        | "candidate_exists";
+    };
+
+export type RemoveRoomCandidateResult =
+  | {
+      ok: true;
+      candidates: StoredCandidate[];
+    }
+  | {
+      ok: false;
+      reason:
+        | "room_not_found"
+        | "candidate_not_found"
+        | "invalid_office"
+        | "candidates_locked_after_round";
+    };
+
 export type JoinWithCodeResult =
   | { ok: true; participant: JoinedParticipant }
   | {
@@ -149,8 +293,33 @@ export type JoinWithCodeResult =
       reason:
         | "invalid_access_code"
         | "revoked_access_code"
-        | "simulation_requires_test_room";
+        | "simulation_requires_test_room"
+        | "access_code_in_use";
     };
+
+export type JoinByShortCodeResult =
+  | { ok: true; room: StoredRoom; participant: JoinedParticipant }
+  | { ok: false; reason: "room_not_found" }
+  | { ok: false; reason: "room_not_joinable"; status: RoomStatus }
+  | {
+      ok: false;
+      reason:
+        | "invalid_access_code"
+        | "revoked_access_code"
+        | "simulation_requires_test_room"
+        | "access_code_in_use";
+    };
+
+export type ReleaseSessionResult =
+  | {
+      ok: true;
+      participant: {
+        id: string;
+        displayName: string;
+        isPresent: boolean;
+      };
+    }
+  | { ok: false; reason: "room_not_found" | "participant_not_found" };
 
 export type UpdateRoomInput = {
   title?: string;
@@ -218,9 +387,15 @@ export type RoomRepository = {
   rotateInviteToken(roomId: string): Promise<StoredRoom | null>;
   listRooms(): Promise<StoredRoom[]>;
   findRoomByInviteToken(inviteToken: string): Promise<StoredRoom | null>;
+  getJoinRoomByShortCode?(shortCode: string): Promise<StoredRoom | null>;
   findRoomById(roomId: string): Promise<StoredRoom | null>;
   deleteRoom(roomId: string): Promise<boolean>;
   joinRoomWithCode(roomId: string, code: string, joinKeyHash: string): Promise<JoinWithCodeResult>;
+  joinRoomByShortCode?(
+    shortCode: string,
+    code: string,
+    joinKeyHash: string,
+  ): Promise<JoinByShortCodeResult>;
   generateMemberAccessCodes(roomId: string): Promise<StoredAccessCode[]>;
   issueMemberAccessCode?(
     roomId: string,
@@ -237,14 +412,36 @@ export type RoomRepository = {
   deleteAccessCode(roomId: string, codeId: string): Promise<boolean>;
   removePresentParticipants(roomId: string, limit: number): Promise<number>;
   expelParticipants?(roomId: string, participantId?: string): Promise<number>;
+  releaseParticipantSession?(
+    roomId: string,
+    participantId: string,
+    actorAdminId: string,
+  ): Promise<ReleaseSessionResult>;
   describeVoterSession?(
     roomId: string,
     joinKeyHash: string,
   ): Promise<"present" | "absent" | "revoked" | "missing">;
   countPresent(roomId: string): Promise<number>;
+  countPaperVoters?(roomId: string): Promise<number>;
   listCandidates(roomId: string): Promise<StoredCandidate[]>;
   listAllCandidates(roomId: string): Promise<StoredCandidate[]>;
   listCandidatesByRooms(roomIds: string[]): Promise<StoredCandidate[]>;
+  listRoomRoster?(
+    roomId: string,
+  ): Promise<{ entries: StoredRosterEntry[]; eligibleCount: number } | null>;
+  addRosterEntry?(roomId: string, input: AddRosterEntryInput): Promise<AddRosterEntryResult>;
+  removeRosterEntry?(roomId: string, entryId: string): Promise<RemoveRosterEntryResult>;
+  setRosterEntryPaperMode?(
+    roomId: string,
+    entryId: string,
+    votesOnPaper: boolean,
+  ): Promise<SetRosterEntryPaperModeResult>;
+  addRoomCandidate?(roomId: string, input: AddRoomCandidateInput): Promise<AddRoomCandidateResult>;
+  removeRoomCandidate?(
+    roomId: string,
+    candidateId: string,
+    officeLabel?: string,
+  ): Promise<RemoveRoomCandidateResult>;
   openRound(
     roomId: string,
     eligibleCandidateIds?: readonly string[],
@@ -264,8 +461,17 @@ export type RoomRepository = {
   closeAndTallyRound?(
     roomId: string,
     roundId: string,
-    options?: { confirmPending?: boolean },
+    options?: { confirmPending?: boolean; confirmNoPaperBallots?: boolean },
   ): Promise<AtomicCloseRoundResult>;
+  upsertRoundPaperTally?(input: {
+    roomId: string;
+    roundId: string;
+    paperTally: PaperTallyInput;
+    adminId: string;
+    adminName: string;
+  }): Promise<UpsertRoundPaperTallyResult>;
+  findRoundPaperTally?(roundId: string): Promise<StoredPaperTally | null>;
+  listRoundPaperTallies?(roundIds: readonly string[]): Promise<StoredPaperTally[]>;
   resolveRoundTie?(
     roomId: string,
     roundId: string,

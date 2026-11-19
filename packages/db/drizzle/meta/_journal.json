@@ -8,6 +8,27 @@
       "when": 1794946378974,
       "tag": "0000_initial",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795109744229,
+      "tag": "0001_room_short_code_and_session_release",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795115807137,
+      "tag": "0002_room_roster_and_member_soft_delete",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795118438739,
+      "tag": "0003_paper_voting",
+      "breakpoints": true
     }
   ]
 }

@@ -229,6 +229,25 @@ export function canUpdateRoomQuorum(options: {
   return { ok: true };
 }
 
+/**
+ * Checks whether candidates can be added or removed for a room or office scope.
+ * Locked once the room is closed or once the 1st scrutiny for that scope has been opened.
+ */
+export function canManageRoomCandidates(
+  roomStatus: RoomStatus,
+  hasRoundsForScope: boolean,
+): { allowed: boolean; reason?: string } {
+  if (roomStatus === "closed") {
+    return { allowed: false, reason: "room_closed" };
+  }
+
+  if (hasRoundsForScope) {
+    return { allowed: false, reason: "candidates_locked_after_round" };
+  }
+
+  return { allowed: true };
+}
+
 function resolveEligibleCount(draft: CreateRoomDraft): {
   value?: number;
   errors: RoomFieldError[];

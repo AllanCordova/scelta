@@ -19,9 +19,9 @@ import type { FastifyPluginAsync } from "fastify";
 import { requireAdmin } from "../auth/require-admin.js";
 import type { PresencePublisher } from "../realtime.js";
 import { loadRoomOfficeState } from "../rooms/office-state.js";
-import { quorumStatus } from "../rooms/quorum-status.js";
+import { loadRoomPresence, quorumStatus } from "../rooms/quorum-status.js";
 import type { RoomRepository } from "../rooms/room-repository.js";
-import { toRoundSummary } from "../rooms/round-summary.js";
+import { toPaperTallySummary, toRoundSummary } from "../rooms/round-summary.js";
 import type { UserRepository } from "../users/user-repository.js";
 
 const UUID_PATTERN = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -31,6 +31,16 @@ const Uuid = Type.String({
   maxLength: 36,
   pattern: UUID_PATTERN.source,
 });
+
+const PaperTallyBody = Type.Object(
+  {
+    ballotCount: Type.Integer({ minimum: 0 }),
+    blankVotes: Type.Integer({ minimum: 0 }),
+    nullVotes: Type.Integer({ minimum: 0 }),
+    candidateVotes: Type.Record(Type.String(), Type.Integer({ minimum: 0 })),
+  },
+  { additionalProperties: false },
+);
 
 export type RoundRouteOptions = {
   roomRepository?: RoomRepository;
@@ -76,8 +86,7 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "round_already_open" });
         }
 
-        const presentCount = await repository.countPresent(room.id);
-        const quorum = quorumStatus(room, presentCount);
+        const quorum = await loadRoomPresence(repository, room);
         if (!quorum.quorumMet) {
           return reply.code(409).send({ error: "quorum_not_met" });
         }
@@ -145,10 +154,26 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           latestClosedForOffice.outcome === "no_majority" &&
           candidatePool.length > 0
         ) {
-          const ballotCandidateIds = await repository.listRoundBallotCandidateIds(
-            latestClosedForOffice.id,
+          const [ballotCandidateIds, paperTally] = await Promise.all([
+            repository.listRoundBallotCandidateIds(latestClosedForOffice.id),
+            repository.findRoundPaperTally
+              ? repository.findRoundPaperTally(latestClosedForOffice.id)
+              : Promise.resolve(null),
+          ]);
+          const tally = tallyRoundVotes(
+            candidatePool,
+            ballotCandidateIds,
+            paperTally
+              ? {
+                  paperTally: {
+                    ballotCount: paperTally.ballotCount,
+                    blankVotes: paperTally.blankVotes,
+                    nullVotes: paperTally.nullVotes,
+                    candidateVotes: paperTally.candidateVotes,
+                  },
+                }
+              : undefined,
           );
-          const tally = tallyRoundVotes(candidatePool, ballotCandidateIds);
           previousTallies = tally.standings.map((standing) => ({
             candidateId: standing.candidateId,
             votes: standing.votes,
@@ -221,6 +246,61 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
     },
   );
 
+  app.put(
+    "/v1/admin/rooms/:roomId/rounds/:roundId/paper-tally",
+    {
+      schema: {
+        params: Type.Object({ roomId: Uuid, roundId: Uuid }),
+        body: PaperTallyBody,
+      },
+    },
+    async (request, reply) => {
+      const admin = await requireAdmin(request, reply, options.userRepository);
+      if (!admin) {
+        return;
+      }
+      const repository = options.roomRepository;
+      if (!repository?.upsertRoundPaperTally) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId, roundId } = request.params as { roomId: string; roundId: string };
+      const body = request.body as {
+        ballotCount: number;
+        blankVotes: number;
+        nullVotes: number;
+        candidateVotes: Record<string, number>;
+      };
+
+      try {
+        const result = await repository.upsertRoundPaperTally({
+          roomId,
+          roundId,
+          paperTally: body,
+          adminId: admin.id,
+          adminName: admin.name,
+        });
+        if (!result.ok) {
+          if (result.reason === "validation_failed") {
+            return reply.code(400).send({
+              error: result.code,
+              message: result.message,
+            });
+          }
+          if (result.reason === "room_not_found" || result.reason === "round_not_found") {
+            return reply.code(404).send({ error: result.reason });
+          }
+          return reply.code(409).send({ error: result.reason });
+        }
+
+        return { paperTally: toPaperTallySummary(result.paperTally) };
+      } catch (error) {
+        request.log.error({ err: error, roomId, roundId }, "Failed to record paper tally");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
   app.post(
     "/v1/admin/rooms/:roomId/rounds/:roundId/close",
     { schema: { params: Type.Object({ roomId: Uuid, roundId: Uuid }) } },
@@ -240,6 +320,7 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         if (repository.closeAndTallyRound) {
           const result = await repository.closeAndTallyRound(roomId, roundId, {
             confirmPending: parsedClose.confirmPending,
+            confirmNoPaperBallots: parsedClose.confirmNoPaperBallots,
           });
           if (!result.ok) {
             if (result.reason === "room_not_found" || result.reason === "round_not_found") {
@@ -250,6 +331,14 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
                 error: "voting_incomplete",
                 votedCount: result.votedCount,
                 presentCount: result.presentCount,
+              });
+            }
+            if (result.reason === "paper_tally_required") {
+              return reply.code(409).send({
+                error: "paper_tally_required",
+                paperVotersCount: result.paperVotersCount ?? 0,
+                message:
+                  "Há eleitores marcados para voto em papel. Lance os totais da urna de papel ou confirme que nenhuma cédula foi depositada.",
               });
             }
             return reply.code(409).send({ error: result.reason });
@@ -283,8 +372,11 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "round_not_open" });
         }
 
-        const presentCount = await repository.countPresent(roomId);
-        const quorum = quorumStatus(room, presentCount);
+        const [onlinePresentCount, paperVotersCount] = await Promise.all([
+          repository.countPresent(roomId),
+          repository.countPaperVoters ? repository.countPaperVoters(roomId) : Promise.resolve(0),
+        ]);
+        const quorum = quorumStatus(room, onlinePresentCount, paperVotersCount);
         let tally: RoundTally | null = null;
         let outcome: RoundResult | null = closeRoundOutcome(quorum.quorumMet);
         let didNotVoteCount = 0;
@@ -293,23 +385,49 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         const officeRoundNumber = countOfficeRoundNumber(allRoundsBeforeClose, round);
 
         if (quorum.quorumMet) {
-          const ballotCandidateIds = await repository.listRoundBallotCandidateIds(roundId);
-          const votedCount = ballotCandidateIds.length;
-          if (votedCount < presentCount && !parsedClose.confirmPending) {
+          const [ballotCandidateIds, paperTally] = await Promise.all([
+            repository.listRoundBallotCandidateIds(roundId),
+            repository.findRoundPaperTally
+              ? repository.findRoundPaperTally(roundId)
+              : Promise.resolve(null),
+          ]);
+          const onlineVotedCount = ballotCandidateIds.length;
+          if (onlineVotedCount < onlinePresentCount && !parsedClose.confirmPending) {
             return reply.code(409).send({
               error: "voting_incomplete",
-              votedCount,
-              presentCount,
+              votedCount: onlineVotedCount,
+              presentCount: onlinePresentCount,
             });
           }
 
-          didNotVoteCount = Math.max(0, presentCount - votedCount);
+          if (paperVotersCount > 0 && !paperTally && !parsedClose.confirmNoPaperBallots) {
+            return reply.code(409).send({
+              error: "paper_tally_required",
+              paperVotersCount,
+              message:
+                "Há eleitores marcados para voto em papel. Lance os totais da urna de papel ou confirme que nenhuma cédula foi depositada.",
+            });
+          }
+
+          didNotVoteCount =
+            Math.max(0, onlinePresentCount - onlineVotedCount) +
+            Math.max(0, paperVotersCount - (paperTally?.ballotCount ?? 0));
 
           const candidates = await repository.listCandidates(roomId);
           if (candidates.length > 0) {
             tally = tallyRoundVotes(candidates, ballotCandidateIds, {
               roundNumber: officeRoundNumber,
               ...(didNotVoteCount > 0 ? { didNotVoteCount } : {}),
+              ...(paperTally
+                ? {
+                    paperTally: {
+                      ballotCount: paperTally.ballotCount,
+                      blankVotes: paperTally.blankVotes,
+                      nullVotes: paperTally.nullVotes,
+                      candidateVotes: paperTally.candidateVotes,
+                    },
+                  }
+                : {}),
             });
             outcome = tally.outcome;
           }
@@ -418,15 +536,29 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: check.reason });
         }
 
-        const [allCandidates, ballotCandidateIds, allRoundsBeforeDecline] = await Promise.all([
-          repository.listAllCandidates(roomId),
-          repository.listRoundBallotCandidateIds(roundId),
-          repository.listRounds(room.id),
-        ]);
+        const [allCandidates, ballotCandidateIds, allRoundsBeforeDecline, paperTally] =
+          await Promise.all([
+            repository.listAllCandidates(roomId),
+            repository.listRoundBallotCandidateIds(roundId),
+            repository.listRounds(room.id),
+            repository.findRoundPaperTally
+              ? repository.findRoundPaperTally(roundId)
+              : Promise.resolve(null),
+          ]);
         const tally = tallyRoundVotes(allCandidates, ballotCandidateIds, {
           roundNumber: countOfficeRoundNumber(allRoundsBeforeDecline, round),
           winnerOverrideId: round.winnerCandidateId,
           tieBreakReason: round.tieBreakReason,
+          ...(paperTally
+            ? {
+                paperTally: {
+                  ballotCount: paperTally.ballotCount,
+                  blankVotes: paperTally.blankVotes,
+                  nullVotes: paperTally.nullVotes,
+                  candidateVotes: paperTally.candidateVotes,
+                },
+              }
+            : {}),
         });
         if (!tally.winnerId) {
           return reply.code(409).send({ error: "winner_not_elected" });
@@ -498,20 +630,35 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "tie_break_not_required" });
         }
 
-        const [candidates, allCandidates, ballotCandidateIds, allRounds] = await Promise.all([
-          repository.listCandidates(roomId),
-          repository.listAllCandidates(roomId),
-          repository.listRoundBallotCandidateIds(roundId),
-          repository.listRounds(room.id),
-        ]);
+        const [candidates, allCandidates, ballotCandidateIds, allRounds, paperTally] =
+          await Promise.all([
+            repository.listCandidates(roomId),
+            repository.listAllCandidates(roomId),
+            repository.listRoundBallotCandidateIds(roundId),
+            repository.listRounds(room.id),
+            repository.findRoundPaperTally
+              ? repository.findRoundPaperTally(roundId)
+              : Promise.resolve(null),
+          ]);
         const officeRoundNumber = countOfficeRoundNumber(allRounds, round);
         if (officeRoundNumber < 3) {
           return reply.code(409).send({ error: "tie_break_not_required" });
         }
 
+        const paperTallyOption = paperTally
+          ? {
+              paperTally: {
+                ballotCount: paperTally.ballotCount,
+                blankVotes: paperTally.blankVotes,
+                nullVotes: paperTally.nullVotes,
+                candidateVotes: paperTally.candidateVotes,
+              },
+            }
+          : {};
         const activePool = candidates.length > 0 ? candidates : allCandidates;
         const initialTally = tallyRoundVotes(activePool, ballotCandidateIds, {
           roundNumber: officeRoundNumber,
+          ...paperTallyOption,
         });
         if (!initialTally.tieBreakRequired || !initialTally.tiedCandidates) {
           return reply.code(409).send({ error: "tie_break_not_required" });
@@ -535,6 +682,7 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           ...(resolved.didNotVoteCount !== undefined && resolved.didNotVoteCount > 0
             ? { didNotVoteCount: resolved.didNotVoteCount }
             : {}),
+          ...paperTallyOption,
         });
 
         options.presencePublisher?.publishRoundState?.(room.id, {
@@ -666,18 +814,25 @@ function parseOpenRoundBody(
 function parseCloseRoundInput(
   body: unknown,
   query: unknown,
-): { ok: true; confirmPending: boolean } | { ok: false } {
+): { ok: true; confirmPending: boolean; confirmNoPaperBallots: boolean } | { ok: false } {
   let confirmPending = false;
+  let confirmNoPaperBallots = false;
 
   if (query && typeof query === "object" && !Array.isArray(query)) {
-    const rawQuery = (query as Record<string, unknown>).confirmPending;
-    if (rawQuery === "true" || rawQuery === true) {
+    const queryRecord = query as Record<string, unknown>;
+    if (queryRecord.confirmPending === "true" || queryRecord.confirmPending === true) {
       confirmPending = true;
+    }
+    if (
+      queryRecord.confirmNoPaperBallots === "true" ||
+      queryRecord.confirmNoPaperBallots === true
+    ) {
+      confirmNoPaperBallots = true;
     }
   }
 
   if (body === undefined || body === null) {
-    return { ok: true, confirmPending };
+    return { ok: true, confirmPending, confirmNoPaperBallots };
   }
   if (typeof body !== "object" || Array.isArray(body)) {
     return { ok: false };
@@ -685,7 +840,7 @@ function parseCloseRoundInput(
 
   const record = body as Record<string, unknown>;
   for (const key of Object.keys(record)) {
-    if (key !== "confirmPending") {
+    if (key !== "confirmPending" && key !== "confirmNoPaperBallots") {
       return { ok: false };
     }
   }
@@ -697,5 +852,12 @@ function parseCloseRoundInput(
     confirmPending = record.confirmPending;
   }
 
-  return { ok: true, confirmPending };
+  if (record.confirmNoPaperBallots !== undefined) {
+    if (typeof record.confirmNoPaperBallots !== "boolean") {
+      return { ok: false };
+    }
+    confirmNoPaperBallots = record.confirmNoPaperBallots;
+  }
+
+  return { ok: true, confirmPending, confirmNoPaperBallots };
 }

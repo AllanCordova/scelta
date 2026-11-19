@@ -7,6 +7,7 @@ import type { UserRepository } from "./users/user-repository.js";
 import { authRoutes } from "./routes/auth.js";
 import { ballotRoutes } from "./routes/ballots.js";
 import { chatRoutes } from "./routes/chat.js";
+import { configRoutes } from "./routes/config.js";
 import { healthRoutes } from "./routes/health.js";
 import { joinRoutes } from "./routes/join.js";
 import { mediaRoutes } from "./routes/media.js";
@@ -19,6 +20,7 @@ export type AppDependencies = {
   roomRepository?: RoomRouteOptions["roomRepository"];
   userRepository?: UserRepository;
   presencePublisher?: PresencePublisher;
+  publicUrl?: string | null;
 };
 
 export async function buildApp(dependencies: AppDependencies = {}) {
@@ -47,6 +49,9 @@ export async function buildApp(dependencies: AppDependencies = {}) {
   });
   await app.register(sensible);
   await app.register(healthRoutes);
+  await app.register(configRoutes, {
+    publicUrl: dependencies.publicUrl,
+  });
   await app.register(rulesRoutes);
   await app.register(authRoutes, {
     userRepository: dependencies.userRepository,

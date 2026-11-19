@@ -13,12 +13,13 @@ import {
   ballotErrorMessage,
   isJoinableRoomStatus,
   joinBlockedMessage,
-  joinErrorMessage,
   voterRoundStateNotice,
   voterSessionMessage,
   voterStandingLabel,
   voterTallyOutcome,
 } from "./copy";
+import { detectInAppBrowser } from "./in-app-browser";
+import { InAppBrowserBanner } from "./InAppBrowserBanner";
 import {
   fetchBallotState,
   fetchJoinPreview,
@@ -26,8 +27,27 @@ import {
   submitBallot,
   submitJoin,
   type BallotState,
+  type JoinPreview,
+  type JoinResult,
 } from "./join-api";
-import { createJoinKey, isJoinKey, readJoinIdentity, writeJoinIdentity } from "./join-identity";
+import {
+  AUTO_JOIN_BACKOFF_DELAYS_MS,
+  formatJoinErrorMessage,
+  isTransientJoinError,
+  shouldClearStoredAccessCode,
+} from "./join-error";
+import {
+  clearStoredAccessCode,
+  createJoinKey,
+  isJoinKey,
+  readAccessCodeFromSearch,
+  readJoinIdentity,
+  shortCodeStorageKey,
+  stripAccessCodeFromUrl,
+  writeJoinIdentity,
+  type StoredJoinIdentity,
+} from "./join-identity";
+import { normalizeRoomShortCode, type JoinRouteTarget } from "./path";
 
 const BALLOT_POLL_MS = 1000;
 const DOOR_POLL_MS = 2000;
@@ -36,8 +56,7 @@ const NULL_VOTE_CHOICE = "__NULL__";
 const joinCodeSchema = z.object({
   code: z
     .string()
-    .trim()
-    .transform((value) => value.toUpperCase())
+    .transform((value) => normalizeRoomShortCode(value))
     .pipe(
       z
         .string()
@@ -48,18 +67,39 @@ const joinCodeSchema = z.object({
 
 type Phase =
   | { kind: "loading" }
+  | { kind: "retrying"; message: string }
+  | { kind: "transient-error"; message: string }
   | { kind: "invalid"; message: string }
   | { kind: "blocked"; title: string; message: string }
   | { kind: "ready"; title: string; joinKey: string }
-  | { kind: "joined"; title: string; joinKey: string; displayName: string };
+  | { kind: "joined"; title: string; joinKey: string; displayName: string; inviteToken: string };
 
-type StoredIdentity = {
-  joinKey: string;
-  displayName: string;
-  accessCode?: string;
+export type JoinRoomProps = (
+  | { token: string; shortCode?: undefined }
+  | { shortCode: string; token?: undefined }
+) & {
+  retryDelaysMs?: readonly number[];
 };
 
-export function JoinRoom({ token }: { token: string }) {
+export function JoinRoom({
+  token,
+  shortCode,
+  retryDelaysMs = AUTO_JOIN_BACKOFF_DELAYS_MS,
+}: JoinRoomProps) {
+  const target: JoinRouteTarget =
+    shortCode !== undefined
+      ? { mode: "shortCode", shortCode: normalizeRoomShortCode(shortCode) }
+      : { mode: "token", token };
+  const storageKey =
+    target.mode === "shortCode" ? shortCodeStorageKey(target.shortCode) : target.token;
+  const targetKey = target.mode === "shortCode" ? `s:${target.shortCode}` : `t:${target.token}`;
+
+  const inAppInfo = detectInAppBrowser(
+    typeof navigator !== "undefined" ? navigator.userAgent : "",
+  );
+  const [inAppDismissed, setInAppDismissed] = useState(false);
+  const isInAppBlocked = inAppInfo.isInApp && !inAppDismissed;
+
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [code, setCode] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors<"code">>({});
@@ -68,20 +108,81 @@ export function JoinRoom({ token }: { token: string }) {
   const [doorRetry, setDoorRetry] = useState(0);
 
   useEffect(() => {
+    if (isInAppBlocked) {
+      return;
+    }
+
     let cancelled = false;
+    let activeTimer: number | null = null;
+    const resolvedTarget: JoinRouteTarget =
+      shortCode !== undefined
+        ? { mode: "shortCode", shortCode: normalizeRoomShortCode(shortCode) }
+        : { mode: "token", token: token ?? "" };
+    const resolvedStorageKey =
+      resolvedTarget.mode === "shortCode"
+        ? shortCodeStorageKey(resolvedTarget.shortCode)
+        : resolvedTarget.token;
+
+    function waitBackoff(ms: number): Promise<void> {
+      return new Promise((resolve) => {
+        activeTimer = window.setTimeout(() => {
+          activeTimer = null;
+          resolve();
+        }, ms);
+      });
+    }
+
+    async function runWithBackoff<T>(
+      operation: () => Promise<T>,
+      onRetryWait: (attemptNumber: number, totalRetries: number, delayMs: number) => void,
+    ): Promise<T> {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return await operation();
+        } catch (error) {
+          if (cancelled || !isTransientJoinError(error) || attempt >= retryDelaysMs.length) {
+            throw error;
+          }
+          const delayMs = retryDelaysMs[attempt] ?? 1000;
+          onRetryWait(attempt + 1, retryDelaysMs.length, delayMs);
+          await waitBackoff(delayMs);
+          if (cancelled) {
+            throw error;
+          }
+        }
+      }
+    }
 
     async function load() {
       setPhase({ kind: "loading" });
       setErrorMessage(null);
       setIsSubmitting(false);
 
-      let preview;
+      let preview: JoinPreview;
       try {
-        preview = await fetchJoinPreview(apiUrl(""), token);
+        preview = await runWithBackoff(
+          () => fetchJoinPreview(apiUrl(""), resolvedTarget),
+          (attemptNumber, totalRetries, delayMs) => {
+            if (!cancelled) {
+              setPhase({
+                kind: "retrying",
+                message: `Conexão instável. Tentando novamente em ${Math.max(1, Math.ceil(delayMs / 1000))}s… (tentativa ${attemptNumber} de ${totalRetries})`,
+              });
+            }
+          },
+        );
       } catch (error) {
-        if (!cancelled) {
-          setPhase({ kind: "invalid", message: joinErrorMessage(error) });
+        if (cancelled) {
+          return;
         }
+        if (isTransientJoinError(error)) {
+          setPhase({
+            kind: "transient-error",
+            message: formatJoinErrorMessage(error),
+          });
+          return;
+        }
+        setPhase({ kind: "invalid", message: formatJoinErrorMessage(error) });
         return;
       }
 
@@ -98,13 +199,13 @@ export function JoinRoom({ token }: { token: string }) {
         return;
       }
 
-      const stored = readStored(token);
+      const stored = readStored(resolvedStorageKey);
       const joinKey = stored && isJoinKey(stored.joinKey) ? stored.joinKey : createJoinKey();
       const queryCode = readAccessCodeFromSearch(window.location.search);
       const candidateCode = queryCode || stored?.accessCode?.trim() || "";
 
       if (candidateCode.length === 0) {
-        writeStored(token, { joinKey, displayName: "" });
+        writeStored(resolvedStorageKey, { joinKey, displayName: "" });
         setPhase({ kind: "ready", title: preview.title, joinKey });
         return;
       }
@@ -112,30 +213,66 @@ export function JoinRoom({ token }: { token: string }) {
       setCode(candidateCode);
       setIsSubmitting(true);
       try {
-        const result = await submitJoin(apiUrl(""), token, {
-          code: candidateCode,
-          joinKey,
-        });
+        const result: JoinResult = await runWithBackoff(
+          () =>
+            submitJoin(apiUrl(""), resolvedTarget, {
+              code: candidateCode,
+              joinKey,
+            }),
+          (attemptNumber, totalRetries, delayMs) => {
+            if (!cancelled) {
+              setPhase({
+                kind: "retrying",
+                message: `Conexão instável ao entrar. Tentando novamente em ${Math.max(1, Math.ceil(delayMs / 1000))}s… (tentativa ${attemptNumber} de ${totalRetries})`,
+              });
+            }
+          },
+        );
         if (cancelled) {
           return;
         }
-        writeStored(token, {
+
+        const inviteToken =
+          result.inviteToken ?? (resolvedTarget.mode === "token" ? resolvedTarget.token : "");
+        if (!inviteToken) {
+          throw new Error("missing_invite_token");
+        }
+
+        const identity: StoredJoinIdentity = {
           joinKey,
           displayName: result.displayName,
           accessCode: candidateCode.toUpperCase(),
-        });
+        };
+        writeStored(resolvedStorageKey, identity);
+        if (resolvedTarget.mode === "shortCode") {
+          writeStored(inviteToken, identity);
+        }
+        stripAccessCodeFromUrl();
+
         setPhase({
           kind: "joined",
           title: result.title,
           joinKey,
           displayName: result.displayName,
+          inviteToken,
         });
       } catch (error) {
         if (cancelled) {
           return;
         }
-        writeStored(token, { joinKey, displayName: "" });
-        setErrorMessage(joinErrorMessage(error));
+        if (isTransientJoinError(error)) {
+          // Preserve stored identity (joinKey, accessCode, displayName) across transient failures.
+          setErrorMessage(formatJoinErrorMessage(error));
+          setPhase({
+            kind: "transient-error",
+            message: formatJoinErrorMessage(error),
+          });
+          return;
+        }
+        if (shouldClearStoredAccessCode(error)) {
+          clearStored(resolvedStorageKey, joinKey);
+        }
+        setErrorMessage(formatJoinErrorMessage(error));
         setPhase({ kind: "ready", title: preview.title, joinKey });
       } finally {
         if (!cancelled) {
@@ -147,16 +284,23 @@ export function JoinRoom({ token }: { token: string }) {
     void load();
     return () => {
       cancelled = true;
+      if (activeTimer !== null) {
+        window.clearTimeout(activeTimer);
+      }
     };
-  }, [token, doorRetry]);
+  }, [targetKey, shortCode, token, doorRetry, isInAppBlocked, retryDelaysMs]);
 
   useEffect(() => {
-    if (phase.kind !== "blocked") {
+    if (phase.kind !== "blocked" || isInAppBlocked) {
       return;
     }
     let cancelled = false;
+    const resolvedTarget: JoinRouteTarget =
+      shortCode !== undefined
+        ? { mode: "shortCode", shortCode: normalizeRoomShortCode(shortCode) }
+        : { mode: "token", token: token ?? "" };
     const timer = window.setInterval(() => {
-      void fetchJoinPreview(apiUrl(""), token)
+      void fetchJoinPreview(apiUrl(""), resolvedTarget)
         .then((preview) => {
           if (!cancelled && preview.canJoin) {
             setDoorRetry((current) => current + 1);
@@ -168,7 +312,7 @@ export function JoinRoom({ token }: { token: string }) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [phase.kind, token]);
+  }, [phase.kind, shortCode, token, isInAppBlocked]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -189,30 +333,94 @@ export function JoinRoom({ token }: { token: string }) {
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      const result = await submitJoin(apiUrl(""), token, {
+      const result = await submitJoin(apiUrl(""), target, {
         code: normalizedCode,
         joinKey: phase.joinKey,
       });
-      writeStored(token, {
+      const inviteToken = result.inviteToken ?? (target.mode === "token" ? target.token : "");
+      if (!inviteToken) {
+        throw new Error("missing_invite_token");
+      }
+
+      const identity: StoredJoinIdentity = {
         joinKey: phase.joinKey,
         displayName: result.displayName,
         accessCode: normalizedCode,
-      });
+      };
+      writeStored(storageKey, identity);
+      if (target.mode === "shortCode") {
+        writeStored(inviteToken, identity);
+      }
+      stripAccessCodeFromUrl();
+
       setPhase({
         kind: "joined",
         title: result.title,
         joinKey: phase.joinKey,
         displayName: result.displayName,
+        inviteToken,
       });
     } catch (error) {
-      setErrorMessage(joinErrorMessage(error));
+      if (shouldClearStoredAccessCode(error)) {
+        clearStored(storageKey, phase.joinKey);
+      }
+      setErrorMessage(formatJoinErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
   }
 
+  if (isInAppBlocked) {
+    return (
+      <div className="join-page">
+        <InAppBrowserBanner
+          appName={inAppInfo.appName}
+          urlToCopy={window.location.href}
+          onContinueAnyway={() => setInAppDismissed(true)}
+        />
+      </div>
+    );
+  }
+
   if (phase.kind === "loading") {
     return <p className="panel">Carregando…</p>;
+  }
+
+  if (phase.kind === "retrying") {
+    return (
+      <div className="join-page">
+        <section className="panel" aria-live="polite">
+          <p role="status">{phase.message}</p>
+          <button
+            type="button"
+            onClick={() => setDoorRetry((current) => current + 1)}
+          >
+            Tentar novamente
+          </button>
+        </section>
+      </div>
+    );
+  }
+
+  if (phase.kind === "transient-error") {
+    return (
+      <div className="join-page">
+        <header className="page-intro">
+          <h1>Entrar na sala</h1>
+        </header>
+        <section className="panel" aria-live="polite">
+          <p className="form-error" role="alert">
+            {phase.message}
+          </p>
+          <button
+            type="button"
+            onClick={() => setDoorRetry((current) => current + 1)}
+          >
+            Tentar novamente
+          </button>
+        </section>
+      </div>
+    );
   }
 
   if (phase.kind === "invalid") {
@@ -248,7 +456,9 @@ export function JoinRoom({ token }: { token: string }) {
   if (phase.kind === "joined") {
     return (
       <JoinedRoomView
-        token={token}
+        token={phase.inviteToken}
+        target={target}
+        storageKey={storageKey}
         title={phase.title}
         joinKey={phase.joinKey}
         displayName={phase.displayName}
@@ -301,11 +511,15 @@ export function JoinRoom({ token }: { token: string }) {
 
 function JoinedRoomView({
   token,
+  target,
+  storageKey,
   title,
   joinKey,
   displayName,
 }: {
   token: string;
+  target: JoinRouteTarget;
+  storageKey: string;
   title: string;
   joinKey: string;
   displayName: string;
@@ -499,7 +713,7 @@ function JoinedRoomView({
     !allBoardOfficesElected;
 
   async function handleReenter() {
-    const stored = readStored(token);
+    const stored = readStored(storageKey) ?? readStored(token);
     const accessCode = stored?.accessCode?.trim();
     if (!accessCode) {
       setBallotNotice("Abra de novo o link do seu cartão e informe o código.");
@@ -507,14 +721,17 @@ function JoinedRoomView({
     }
     setIsReentering(true);
     try {
-      await submitJoin(apiUrl(""), token, { code: accessCode, joinKey });
+      await submitJoin(apiUrl(""), target, { code: accessCode, joinKey });
       setBallotNotice(null);
       const loaded = await fetchBallotState(apiUrl(""), token, joinKey);
       if (loaded.status === "ok") {
         setBallotState(loaded.state);
       }
     } catch (error) {
-      setBallotNotice(joinErrorMessage(error));
+      if (shouldClearStoredAccessCode(error)) {
+        clearStored(storageKey, joinKey);
+      }
+      setBallotNotice(formatJoinErrorMessage(error));
     } finally {
       setIsReentering(false);
     }
@@ -1047,31 +1264,30 @@ function initialsFromName(name: string): string {
   return `${parts[0]![0] ?? ""}${parts[parts.length - 1]![0] ?? ""}`.toUpperCase();
 }
 
-function readAccessCodeFromSearch(search: string): string {
-  try {
-    const params = new URLSearchParams(search);
-    return (params.get("code") ?? "").trim().toUpperCase();
-  } catch {
-    return "";
-  }
-}
-
 function roundInstanceKey(roundId: string, restartCount?: number): string {
   return `${roundId}:${restartCount ?? 0}`;
 }
 
-function readStored(token: string): StoredIdentity | null {
+function readStored(key: string): StoredJoinIdentity | null {
   try {
-    return readJoinIdentity(window.localStorage, token);
+    return readJoinIdentity(window.localStorage, key);
   } catch {
     return null;
   }
 }
 
-function writeStored(token: string, identity: StoredIdentity) {
+function writeStored(key: string, identity: StoredJoinIdentity) {
   try {
-    writeJoinIdentity(window.localStorage, token, identity);
+    writeJoinIdentity(window.localStorage, key, identity);
   } catch {
     // Private mode can block storage. The key kept in memory still covers this visit.
+  }
+}
+
+function clearStored(key: string, fallbackJoinKey?: string) {
+  try {
+    clearStoredAccessCode(window.localStorage, key, fallbackJoinKey);
+  } catch {
+    // Ignore storage errors in private mode.
   }
 }

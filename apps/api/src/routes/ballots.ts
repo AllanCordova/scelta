@@ -96,9 +96,12 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           (round.outcome === "elected" || round.outcome === "no_majority") &&
           allCandidates.length > 0;
 
-        const [ballotCandidateIds, officeState] = await Promise.all([
+        const [ballotCandidateIds, paperTally, officeState] = await Promise.all([
           shouldLoadCurrentTally
             ? repository.listRoundBallotCandidateIds(round.id)
+            : Promise.resolve(null),
+          shouldLoadCurrentTally && repository.findRoundPaperTally
+            ? repository.findRoundPaperTally(round.id)
             : Promise.resolve(null),
           loadRoomOfficeState(repository, room, allCandidates, allRounds),
         ]);
@@ -106,9 +109,15 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
         let tally: RoundTally | null = null;
         if (shouldLoadCurrentTally && ballotCandidateIds) {
           const eligibleIds = new Set(candidates.map((candidate) => candidate.id));
+          const paperVoteIds = paperTally
+            ? Object.entries(paperTally.candidateVotes)
+                .filter(([, count]) => count > 0)
+                .map(([id]) => id)
+            : [];
           const useEligibleOnly =
             candidates.length > 0 &&
-            ballotCandidateIds.every((id) => id === null || eligibleIds.has(id));
+            ballotCandidateIds.every((id) => id === null || eligibleIds.has(id)) &&
+            paperVoteIds.every((id) => eligibleIds.has(id));
           tally = tallyRoundVotes(
             useEligibleOnly ? candidates : allCandidates,
             ballotCandidateIds,
@@ -118,6 +127,16 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
               tieBreakReason: round.tieBreakReason,
               ...(round.didNotVoteCount !== undefined && round.didNotVoteCount > 0
                 ? { didNotVoteCount: round.didNotVoteCount }
+                : {}),
+              ...(paperTally
+                ? {
+                    paperTally: {
+                      ballotCount: paperTally.ballotCount,
+                      blankVotes: paperTally.blankVotes,
+                      nullVotes: paperTally.nullVotes,
+                      candidateVotes: paperTally.candidateVotes,
+                    },
+                  }
                 : {}),
             },
           );

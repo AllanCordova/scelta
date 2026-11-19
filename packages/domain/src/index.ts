@@ -22,7 +22,14 @@ export {
   type TiedCandidateOption,
   type MajorityResult,
   type RoundTally,
+  type VoteOriginBreakdown,
 } from "./majority.js";
+export {
+  validatePaperTally,
+  type PaperTallyInput,
+  type ValidatePaperTallyOptions,
+  type ValidatePaperTallyResult,
+} from "./paper-votes.js";
 export {
   canCastBallot,
   validateCandidateNames,
@@ -45,6 +52,7 @@ export {
   type RestartRoundRejectionReason,
 } from "./rounds.js";
 export {
+  canManageRoomCandidates,
   canOpenRound,
   canSimulateInRoom,
   canTransitionRoomStatus,
@@ -132,3 +140,10 @@ export {
   validateChatMessage,
   type ValidateChatMessageResult,
 } from "./chat.js";
+export {
+  ROOM_SHORT_CODE_ALPHABET,
+  ROOM_SHORT_CODE_LENGTH,
+  generateRoomShortCode,
+  isValidRoomShortCode,
+  normalizeRoomShortCode,
+} from "./short-code.js";

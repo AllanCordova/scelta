@@ -14,7 +14,7 @@ vi.mock("socket.io-client", () => ({
 
 vi.mock("qrcode", () => ({
   default: {
-    toDataURL: vi.fn(async () => "data:image/png;base64,invite"),
+    toString: vi.fn(async () => "<svg data-testid='mock-qr'><path /></svg>"),
   },
 }));
 
@@ -74,18 +74,17 @@ describe("AdminRooms", () => {
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
 
     const link = await screen.findByRole("link");
-    expect(link).toHaveAttribute("href", "http://localhost:3000/join/invite-token");
+    expect(link).toHaveAttribute("href", "http://localhost:3000/s/RM1234");
     const fetchMock = vi.mocked(fetch);
     const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
     const body = JSON.parse(String(post?.[1]?.body)) as { eligibleCount?: number };
     expect(body.eligibleCount).toBeUndefined();
-    expect(await screen.findByTestId("invite-qr")).toHaveAttribute(
-      "src",
-      "data:image/png;base64,invite",
-    );
-    expect(QRCode.toDataURL).toHaveBeenCalledWith("http://localhost:3000/join/invite-token", {
-      margin: 1,
-      width: 180,
+    const qrContainer = await screen.findByTestId("invite-qr");
+    expect(qrContainer.querySelector("svg")).not.toBeNull();
+    expect(QRCode.toString).toHaveBeenCalledWith("http://localhost:3000/s/RM1234", {
+      type: "svg",
+      errorCorrectionLevel: "Q",
+      margin: 4,
     });
     expect(await screen.findByRole("list", { name: "Salas" })).toHaveTextContent("Rascunho");
   });
@@ -390,25 +389,23 @@ describe("AdminRooms", () => {
     ).toBeInTheDocument();
   });
 
-  it("sends the eligible count when the admin sets it and rejects a bad one", async () => {
+  it("hides manual eligibleCount input and shows auto-snapshot hint", async () => {
     render(<AdminRooms />);
     await screen.findByDisplayValue("34");
+
+    expect(screen.queryByLabelText("Aptos")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/Eleitores aptos: calculados automaticamente a partir do rol de membros/i),
+    ).toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Assembleia" } });
-    fireEvent.change(screen.getByLabelText("Aptos"), { target: { value: "40" } });
     fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
     await screen.findByRole("link");
 
     const fetchMock = vi.mocked(fetch);
     const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
     const body = JSON.parse(String(post?.[1]?.body)) as { eligibleCount?: number };
-    expect(body.eligibleCount).toBe(40);
-
-    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Outra" } });
-    fireEvent.change(screen.getByLabelText("Aptos"), { target: { value: "nope" } });
-    fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Número de aptos inválido.");
-    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
-    expect(posts).toHaveLength(1);
+    expect(body.eligibleCount).toBeUndefined();
   });
 
   it("shows a list failure instead of an empty room list", async () => {
@@ -466,6 +463,8 @@ describe("AdminRooms", () => {
         status: "open",
         inviteToken: "token-existente",
         invitePath: "/join/token-existente",
+        shortCode: "EX9988",
+        shortPath: "/s/EX9988",
         round: null,
       },
     ];
@@ -502,7 +501,7 @@ describe("AdminRooms", () => {
 
     // Open QR Code for the existing room
     fireEvent.click(within(item).getByRole("button", { name: "QR Code" }));
-    expect(await screen.findByRole("link", { name: /\/join\/token-existente/ })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /\/s\/EX9988/ })).toBeInTheDocument();
     expect(await screen.findByTestId("invite-qr")).toBeInTheDocument();
 
     // Copy link for the existing room
@@ -521,7 +520,7 @@ function rulesGroup() {
   return screen.getByRole("group", { name: "Regras" });
 }
 
-let listedRoom: { id: string; title: string; status: string } | null = null;
+let listedRoom: { id: string; title: string; status: string; shortCode: string } | null = null;
 
 function handleFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = String(input);
@@ -547,6 +546,7 @@ function handleFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
       id: "room-1",
       title: payload.title ?? "Eleição de presbíteros",
       status: "draft",
+      shortCode: "RM1234",
     };
     return json({
       room: {
@@ -559,6 +559,8 @@ function handleFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
         status: "draft",
         inviteToken: "invite-token",
         invitePath: "/join/invite-token",
+        shortCode: "RM1234",
+        shortPath: "/s/RM1234",
         majorityRule: "absolute_majority",
         roundBehavior: "most voted",
         createdAt: "2026-11-12T00:00:00.000Z",

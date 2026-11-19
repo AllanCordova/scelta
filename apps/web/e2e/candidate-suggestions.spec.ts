@@ -31,8 +31,9 @@ test("admin navigates via /admin hub, manages members manually and via CSV, and 
   await expect(page.getByText("Membro Temporário")).toBeVisible();
 
   await page.getByLabel("Buscar membro").fill("Temporário");
-  await expect(page.getByText("Membro Temporário")).toBeVisible();
-  await page.getByRole("button", { name: "Remover" }).first().click();
+  const tempMemberRow = page.getByRole("listitem").filter({ hasText: "Membro Temporário" });
+  await expect(tempMemberRow).toBeVisible();
+  await tempMemberRow.getByRole("button", { name: "Remover" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Remover" }).click();
   await expect(page.getByText("Membro Temporário")).toHaveCount(0);
   await page.getByLabel("Buscar membro").fill("");
@@ -54,7 +55,8 @@ test("admin navigates via /admin hub, manages members manually and via CSV, and 
   await expect(page.getByRole("group", { name: "Sugestões de candidatos" })).toHaveCount(0);
 
   await page.getByLabel("Título").fill(title);
-  await page.getByLabel("Aptos").fill("1");
+  await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("1");
+  await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
   await page.getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
@@ -77,8 +79,9 @@ test("admin navigates via /admin hub, manages members manually and via CSV, and 
   await item.getByRole("button", { name: "Abrir escrutínio" }).click();
   await expect(item.getByText("1º escrutínio", { exact: true })).toBeVisible();
   await item.getByRole("link", { name: title }).click();
-  await expect(page.locator(".candidate-name", { hasText: "Paulo Apóstolo" })).toBeVisible();
-  await expect(page.locator(".candidate-name", { hasText: "Silas Companheiro" })).toBeVisible();
+  const candidatesList = page.getByRole("list", { name: "Candidatos da sala" });
+  await expect(candidatesList.getByText("Paulo Apóstolo")).toBeVisible();
+  await expect(candidatesList.getByText("Silas Companheiro")).toBeVisible();
 });
 
 async function loginAsAdmin(page: Page) {

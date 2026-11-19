@@ -465,9 +465,9 @@ Resolve "não consegui adicionar ou remover pessoas depois de criar a sala".
 | Etapa | Tasks | Foco | Status |
 |---|---|---|---|
 | 0 | T0.1–T0.11 | Correções críticas e fundação | `done` |
-| 1 | T1.1–T1.6 | QR, cartão, sessão | `in-progress` |
-| 2 | T2.1–T2.4 | Rol da sala | `todo` |
-| 3 | T3.1–T3.3 | Voto em papel | `todo` |
+| 1 | T1.1–T1.6 | QR, cartão, sessão | `done` |
+| 2 | T2.1–T2.4 | Rol da sala | `done` |
+| 3 | T3.1–T3.3 | Voto em papel | `done` |
 | 4 | T4.1–T4.3 | Entrada por aprovação | `todo` |
 | 5 | T5.1–T5.4 | Oficiais com N vagas | `todo` |
 | 6 | T6.1–T6.3 | Tela da sala e telão | `todo` |

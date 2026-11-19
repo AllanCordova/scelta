@@ -17,9 +17,9 @@ test("admin creates a room and sees the invite link and QR", async ({ page }) =>
 
   await page.getByRole("button", { name: "Criar sala" }).click();
 
-  const invite = page.getByRole("link", { name: /\/join\// });
+  const invite = page.getByRole("link", { name: /\/s\// });
   await expect(invite).toBeVisible();
-  await expect(invite).toHaveAttribute("href", /\/join\//);
+  await expect(invite).toHaveAttribute("href", /\/s\//);
   await expect(page.getByTestId("invite-qr")).toBeVisible();
   await expect(page.getByRole("list", { name: "Salas" })).toContainText("Eleição de presbíteros");
   await expect(page.getByRole("list", { name: "Salas" })).toContainText("Rascunho");
