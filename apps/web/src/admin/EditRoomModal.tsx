@@ -18,7 +18,6 @@ const editRoomSchema = z
     title: z.string().trim().min(1, "Informe o título da sala.").max(200),
     quorumUnit: z.enum(["absolute", "percent"]),
     quorumValue: z.number().int().min(1, "Informe um quórum mínimo válido."),
-    eligibleCount: z.number().int().min(0, "Informe um número válido de aptos."),
     status: z.enum(["draft", "open", "test", "closed"]),
   })
   .superRefine((data, ctx) => {
@@ -73,7 +72,6 @@ function EditRoomForm({
   );
   const [quorumUnit, setQuorumUnit] = useState<QuorumUnit>(room.quorumUnit);
   const [quorumValue, setQuorumValue] = useState(String(room.quorumValue));
-  const [eligibleCount, setEligibleCount] = useState(String(room.eligibleCount));
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -84,7 +82,6 @@ function EditRoomForm({
       title,
       quorumUnit,
       quorumValue: Number(quorumValue),
-      eligibleCount: Number(eligibleCount),
       status,
     });
     if (!parsed.success) {
@@ -177,15 +174,9 @@ function EditRoomForm({
               />
             </div>
             <div>
-              <label htmlFor="edit-room-eligible">Aptos a votar</label>
-              <input
-                id="edit-room-eligible"
-                type="number"
-                min={0}
-                max={100000}
-                value={eligibleCount}
-                onChange={(event) => setEligibleCount(event.target.value)}
-              />
+              <p className="field-hint">
+                Eleitores aptos (calculado pelo rol): {room.eligibleCount}
+              </p>
             </div>
           </div>
 

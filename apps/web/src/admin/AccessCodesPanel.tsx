@@ -390,6 +390,15 @@ export function AccessCodesPanel({
                           Copiar link
                         </button>
                       ) : null}
+                      {!isRevoked && onPrintCards ? (
+                        <button
+                          type="button"
+                          className="ghost access-code-print-btn"
+                          onClick={() => onPrintCards([item])}
+                        >
+                          Imprimir cartão
+                        </button>
+                      ) : null}
                       {!isRevoked && item.memberId ? (
                         <button
                           type="button"

@@ -16,11 +16,15 @@
      - Modelos: `gemini-3.8-flash-medium` / `gemini-3.8-flash-low` (e `Model: "flash"` em subagentes).
      - Escopo: Consultas rápidas no código, ajustes de CI (`T0.10`), limpeza de código morto e docs (`T0.11`), navegação web e atualização do quadro Kanban.
 
-3. **Rodada Obrigatória de Revisão pós-implementação**:
+3. **Rodada Obrigatória de Revisão e Testes Playwright pós-implementação**:
+   - **Novos testes E2E (Playwright)**: Toda nova funcionalidade visível ao usuário deve vir acompanhada de novos testes E2E em `apps/web/e2e/*.spec.ts` cobrindo o fluxo completo.
    - Ao concluir a implementação das tasks de uma etapa:
      - Rodar verificação independente com `gemini-4-hydrogen-high` / `gemini-4-hydrogen-medium` cobrindo **Código/Padrões** (`agents/code-standards.md`), **Segurança/Sigilo do Voto** (`agents/security.md`) e **Testes** (`agents/testing.md`).
-     - Executar a bateria de validação (`build`, `typecheck`, `lint`, `test`, `test:feature`, `test:e2e`).
-     - Corrigir qualquer apontamento antes de dar a etapa como concluída.
+     - Executar **obrigatoriamente** toda a bateria de validação local, incluindo a suíte completa do **Playwright** (`pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm test:feature` e `pnpm test:e2e`), validando tanto os novos cenários quanto a ausência de regressões.
+     - Corrigir qualquer apontamento ou falha de teste antes de dar a etapa como concluída.
 
-4. **Atualização do Quadro Kanban (GitHub Projects + Docs)**:
-   - Atualizar o quadro Kanban do GitHub Projects (`https://github.com/users/AllanCordova/projects/8/views/1`) e manter [`docs/backlog.md`](docs/backlog.md) e [`docs/plano-v2.md`](docs/plano-v2.md) sincronizados com o que foi implementado na etapa.
+4. **Atualização Obrigatória do Quadro Kanban após cada Etapa (GitHub Projects + Docs)**:
+   - **Regra obrigatória pós-etapa**: Assim que a implementação, a rodada de revisão e os testes da etapa passarem, **atualizar imediatamente**:
+     1. O quadro Kanban local em [`docs/backlog.md`](docs/backlog.md) e [`docs/plano-v2.md`](docs/plano-v2.md).
+     2. O quadro Kanban do GitHub Projects (`https://github.com/users/AllanCordova/projects/8/views/1`), movendo as tasks da etapa para `Done`.
+   - **Sem navegador para GitHub**: **NÃO** abrir o GitHub pelo navegador para consultar ou atualizar o quadro. Usar sempre o **MCP do GitHub** ou o **`gh` CLI**; caso nenhum dos dois esteja disponível/autenticado no ambiente, avisar o usuário.

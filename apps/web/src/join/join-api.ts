@@ -1,9 +1,11 @@
 import { JoinRequestError } from "./join-error";
+import type { JoinRouteTarget } from "./path";
 
 export type JoinPreview = {
   title: string;
   status: string;
   canJoin: boolean;
+  shortCode?: string;
 };
 
 export type JoinResult = {
@@ -12,6 +14,8 @@ export type JoinResult = {
   displayName: string;
   presentCount: number;
   alreadyJoined: boolean;
+  inviteToken?: string;
+  shortCode?: string;
 };
 
 export type BallotCandidate = {
@@ -76,26 +80,50 @@ export type BallotReceipt = {
   voted: true;
 };
 
-export async function fetchJoinPreview(apiBase: string, token: string): Promise<JoinPreview> {
-  const response = await fetch(`${apiBase}/v1/join/${encodeURIComponent(token)}`);
+function normalizeJoinTarget(target: string | JoinRouteTarget): JoinRouteTarget {
+  return typeof target === "string" ? { mode: "token", token: target } : target;
+}
+
+function joinEndpointPath(target: JoinRouteTarget): string {
+  return target.mode === "shortCode"
+    ? `/v1/join/s/${encodeURIComponent(target.shortCode)}`
+    : `/v1/join/${encodeURIComponent(target.token)}`;
+}
+
+export async function fetchJoinPreview(
+  apiBase: string,
+  target: string | JoinRouteTarget,
+): Promise<JoinPreview> {
+  const resolved = normalizeJoinTarget(target);
+  const response = await fetch(`${apiBase}${joinEndpointPath(resolved)}`);
   if (!response.ok) {
     throw await readError(response);
   }
 
   const body = (await response.json()) as Partial<JoinPreview>;
-  if (typeof body.title !== "string" || typeof body.status !== "string" || typeof body.canJoin !== "boolean") {
+  if (
+    typeof body.title !== "string" ||
+    typeof body.status !== "string" ||
+    typeof body.canJoin !== "boolean"
+  ) {
     throw new JoinRequestError(response.status, "invalid_preview");
   }
 
-  return { title: body.title, status: body.status, canJoin: body.canJoin };
+  return {
+    title: body.title,
+    status: body.status,
+    canJoin: body.canJoin,
+    ...(typeof body.shortCode === "string" ? { shortCode: body.shortCode } : {}),
+  };
 }
 
 export async function submitJoin(
   apiBase: string,
-  token: string,
+  target: string | JoinRouteTarget,
   identity: { code: string; joinKey: string },
 ): Promise<JoinResult> {
-  const response = await fetch(`${apiBase}/v1/join/${encodeURIComponent(token)}`, {
+  const resolved = normalizeJoinTarget(target);
+  const response = await fetch(`${apiBase}${joinEndpointPath(resolved)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(identity),
@@ -115,6 +143,8 @@ export async function submitJoin(
     displayName: body.displayName,
     presentCount: typeof body.presentCount === "number" ? body.presentCount : 0,
     alreadyJoined: body.alreadyJoined === true,
+    ...(typeof body.inviteToken === "string" ? { inviteToken: body.inviteToken } : {}),
+    ...(typeof body.shortCode === "string" ? { shortCode: body.shortCode } : {}),
   };
 }
 
@@ -159,21 +189,21 @@ export async function fetchBallotState(
   return {
     status: "ok",
     state: {
-    roomId: typeof body.roomId === "string" ? body.roomId : undefined,
-    roomStatus: typeof body.roomStatus === "string" ? body.roomStatus : "open",
-    roomType: typeof body.roomType === "string" ? body.roomType : undefined,
-    officeBanners:
-      body.officeBanners && typeof body.officeBanners === "object"
-        ? body.officeBanners
-        : undefined,
-    activeBannerUrl: typeof body.activeBannerUrl === "string" ? body.activeBannerUrl : null,
-    reactionsEnabled: typeof body.reactionsEnabled === "boolean" ? body.reactionsEnabled : true,
-    chatMuted: body.chatMuted === true,
-    viewerAccess,
-    allowedReactions: Array.isArray(body.allowedReactions) ? body.allowedReactions : undefined,
-    candidates: body.candidates,
-    offices: Array.isArray(body.offices) ? body.offices : undefined,
-    round: body.round ?? null,
+      roomId: typeof body.roomId === "string" ? body.roomId : undefined,
+      roomStatus: typeof body.roomStatus === "string" ? body.roomStatus : "open",
+      roomType: typeof body.roomType === "string" ? body.roomType : undefined,
+      officeBanners:
+        body.officeBanners && typeof body.officeBanners === "object"
+          ? body.officeBanners
+          : undefined,
+      activeBannerUrl: typeof body.activeBannerUrl === "string" ? body.activeBannerUrl : null,
+      reactionsEnabled: typeof body.reactionsEnabled === "boolean" ? body.reactionsEnabled : true,
+      chatMuted: body.chatMuted === true,
+      viewerAccess,
+      allowedReactions: Array.isArray(body.allowedReactions) ? body.allowedReactions : undefined,
+      candidates: body.candidates,
+      offices: Array.isArray(body.offices) ? body.offices : undefined,
+      round: body.round ?? null,
     },
   };
 }
@@ -253,6 +283,10 @@ export async function submitBallot(
 }
 
 async function readError(response: Response): Promise<JoinRequestError> {
-  const body = (await response.json().catch(() => ({}))) as { error?: string; status?: string };
-  return new JoinRequestError(response.status, body.error ?? "unknown", body.status);
+  const body = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    status?: string;
+    message?: string;
+  };
+  return new JoinRequestError(response.status, body.error ?? "unknown", body.status, body.message);
 }

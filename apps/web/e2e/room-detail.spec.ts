@@ -18,7 +18,6 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await page.getByLabel("Título").fill(title);
   await page.getByRole("textbox", { name: "Quórum", exact: true }).fill("1");
   await page.getByRole("combobox", { name: /Unidade do quórum/ }).selectOption("absolute");
-  await page.getByLabel("Aptos").fill("2");
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Teste" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
@@ -35,11 +34,11 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await expect(page.getByText("Quórum Mínimo")).toBeVisible();
   await expect(page.getByText("Regimento da Eleição")).toBeVisible();
   await expect(page.getByText("Fluxo de Presença")).toBeVisible();
-  await expect(page.getByText("Paulo Apóstolo")).toBeVisible();
-  await expect(page.getByText("Silas", { exact: true })).toBeVisible();
+  await expect(page.locator(".candidate-name", { hasText: "Paulo Apóstolo" })).toBeVisible();
+  await expect(page.locator(".candidate-name").getByText("Silas", { exact: true })).toBeVisible();
 
   const initialInviteUrl = await page.getByLabel("Token Direto para Votantes").inputValue();
-  expect(initialInviteUrl).toMatch(/\/join\//);
+  expect(initialInviteUrl).toMatch(/\/s\//);
 
   // Invite rotation and access codes are managed under /admin/codigos, not on room detail
   await expect(page.getByRole("button", { name: "Rotacionar convite" })).toHaveCount(0);
@@ -79,15 +78,17 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await page.getByRole("button", { name: "Fechar" }).click();
 
   // Delete one access code permanently (delete last so firstPin remains active)
-  const initialCodeCount = await page.locator(".access-code-row").count();
+  const lastPin = (await page.locator(".access-code-pin").last().textContent())?.trim() ?? "";
+  expect(lastPin.length).toBeGreaterThan(0);
   await page.getByRole("button", { name: "Remover" }).last().click();
   await page.getByRole("dialog", { name: "Remover código de acesso" }).getByRole("button", { name: "Remover" }).click();
-  await expect(page.locator(".access-code-row")).toHaveCount(initialCodeCount - 1);
+  await expect(page.locator(".access-code-pin", { hasText: lastPin })).toHaveCount(0);
 
   await page.goto(roomDetailUrl);
   const inviteUrlValue = await page.getByLabel("Token Direto para Votantes").inputValue();
-  expect(inviteUrlValue).toMatch(/\/join\//);
-  expect(inviteUrlValue).not.toBe(initialInviteUrl);
+  expect(inviteUrlValue).toMatch(/\/s\//);
+  // T1.2: rotating the long invite token preserves the room's short code URL
+  expect(inviteUrlValue).toBe(initialInviteUrl);
 
   // Simulator: clicking Simular votos before opening a round shows clear feedback
   await page.getByRole("button", { name: "Simular votos" }).click();

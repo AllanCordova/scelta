@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   auditEvents,
   ballots,
@@ -7,22 +7,31 @@ import {
   participants,
   roomChatMessages,
   roomMemberCodes,
+  roomRoster,
   rooms,
+  roundPaperTallies,
   rounds,
   voteReceipts,
   type Db,
 } from "@scelta/db";
 import {
   canCastBallot,
+  canJoinRoom,
+  canManageRoomCandidates,
   canOpenRound,
   closeRoundOutcome,
   countOfficeRoundNumber,
-  evaluateQuorum,
+  generateRoomShortCode,
   isChatRateLimited,
   isMemberEligibleVoter,
+  isMultiOfficeRoomType,
+  isValidOfficeForRoomType,
+  isValidRoomShortCode,
   normalizeAccessCode,
+  normalizeRoomShortCode,
   ROUND_RESULTS,
   tallyRoundVotes,
+  validatePaperTally,
   type MemberSocietyFlags,
   type QuorumUnit,
   type RoomStatus,
@@ -31,23 +40,27 @@ import {
   type RoundTally,
   type RulesPreset,
 } from "@scelta/domain";
-import { and, asc, count, desc, eq, gte, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or } from "drizzle-orm";
 import { findChurchByName, getOrCreateChurch, isUniqueViolation } from "../churches/church-store.js";
 import { generateAccessCode } from "./access-code.js";
 import { createInviteToken } from "./invite-token.js";
+import { quorumStatus } from "./quorum-status.js";
 import type {
   AuditChainVerificationResult,
+  JoinWithCodeResult,
   RoomRepository,
   StoredAccessCode,
   StoredAuditEvent,
   StoredCandidate,
   StoredMember,
+  StoredPaperTally,
+  StoredRosterEntry,
   StoredRound,
   StoredRoundStatus,
   StoredRoom,
 } from "./room-repository.js";
 
-const INVITE_TOKEN_ATTEMPTS = 3;
+const INVITE_TOKEN_ATTEMPTS = 8;
 
 export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRepository {
   return {
@@ -56,8 +69,29 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
 
       for (let attempt = 0; attempt < INVITE_TOKEN_ATTEMPTS; attempt += 1) {
         const inviteToken = createInviteToken();
+        const shortCode = generateRoomShortCode((size) => randomBytes(size));
         try {
           return await db.transaction(async (tx) => {
+            const churchMembers = await tx
+              .select()
+              .from(members)
+              .where(and(eq(members.churchId, churchId), isNull(members.deletedAt)))
+              .orderBy(asc(members.fullName));
+
+            const eligibleRosterMembers = churchMembers.filter((member) =>
+              isMemberEligibleVoter(
+                {
+                  isCommunicant: member.isCommunicant,
+                  societyFlags: (member.societyFlags ?? {}) as MemberSocietyFlags,
+                },
+                room.roomType as RoomType,
+              ),
+            );
+            const derivedEligibleCount =
+              eligibleRosterMembers.length > 0
+                ? eligibleRosterMembers.length
+                : (room.eligibleCount ?? 0);
+
             const inserted = await tx
               .insert(rooms)
               .values({
@@ -67,8 +101,9 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
                 rulesPreset: room.rulesPreset,
                 quorumValue: room.quorumValue,
                 quorumUnit: room.quorumUnit,
-                eligibleCount: room.eligibleCount,
+                eligibleCount: derivedEligibleCount,
                 inviteToken,
+                shortCode,
                 status: room.status,
               })
               .returning();
@@ -78,15 +113,23 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
               throw new Error("Room insert returned no row");
             }
 
+            if (eligibleRosterMembers.length > 0) {
+              await tx.insert(roomRoster).values(
+                eligibleRosterMembers.map((member) => ({
+                  roomId: row.id,
+                  memberId: member.id,
+                  fullName: member.fullName,
+                  photoUrl: member.photoUrl,
+                  birthDate: member.birthDate,
+                  isCommunicant: member.isCommunicant,
+                  isMale: member.isMale,
+                  societyFlags: member.societyFlags ?? {},
+                  isEligibleVoter: true,
+                })),
+              );
+            }
+
             if (room.candidates && room.candidates.length > 0) {
-              const churchMembers = await tx
-                .select({
-                  id: members.id,
-                  fullName: members.fullName,
-                  photoUrl: members.photoUrl,
-                })
-                .from(members)
-                .where(eq(members.churchId, churchId));
               const memberByName = new Map(
                 churchMembers.map((member) => [member.fullName.toLocaleLowerCase(), member]),
               );
@@ -98,6 +141,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
                     memberId: matched?.id ?? null,
                     displayName,
                     photoUrl: matched?.photoUrl ?? null,
+                    birthDate: matched?.birthDate ?? null,
                     isEligible: true,
                   };
                 }),
@@ -153,6 +197,20 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .select()
         .from(rooms)
         .where(eq(rooms.inviteToken, inviteToken))
+        .limit(1);
+      const row = rows[0];
+      return row ? toStoredRoom(row) : null;
+    },
+
+    async getJoinRoomByShortCode(shortCode) {
+      const normalized = normalizeRoomShortCode(shortCode);
+      if (!isValidRoomShortCode(normalized)) {
+        return null;
+      }
+      const rows = await db
+        .select()
+        .from(rooms)
+        .where(eq(rooms.shortCode, normalized))
         .limit(1);
       const row = rows[0];
       return row ? toStoredRoom(row) : null;
@@ -365,6 +423,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .where(eq(rounds.roomId, roomId));
         const roundIds = roomRoundRows.map((round) => round.id);
         if (roundIds.length > 0) {
+          await tx.delete(roundPaperTallies).where(inArray(roundPaperTallies.roundId, roundIds));
           await tx.delete(ballots).where(inArray(ballots.roundId, roundIds));
           await tx.delete(voteReceipts).where(inArray(voteReceipts.roundId, roundIds));
         }
@@ -374,6 +433,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         await tx.delete(candidates).where(eq(candidates.roomId, roomId));
         await tx.delete(participants).where(eq(participants.roomId, roomId));
         await tx.delete(roomMemberCodes).where(eq(roomMemberCodes.roomId, roomId));
+        await tx.delete(roomRoster).where(eq(roomRoster.roomId, roomId));
         const deleted = await tx
           .delete(rooms)
           .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
@@ -383,139 +443,68 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
     },
 
     async joinRoomWithCode(roomId, rawCode, joinKeyHash) {
-      const code = normalizeAccessCode(rawCode);
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
           return await db.transaction(async (tx) => {
-        const roomRows = await tx
-          .select({
-            id: rooms.id,
-            title: rooms.title,
-            status: rooms.status,
-            churchId: rooms.churchId,
-          })
-          .from(rooms)
-          .where(eq(rooms.id, roomId))
-          .limit(1);
-        const room = roomRows[0];
-
-        const codeRows = await tx
-          .select()
-          .from(roomMemberCodes)
-          .where(and(eq(roomMemberCodes.roomId, roomId), eq(roomMemberCodes.code, code)))
-          .limit(1)
-          .for("update");
-        const codeRow = codeRows[0];
-        if (!codeRow) {
-          return { ok: false as const, reason: "invalid_access_code" as const };
+            const roomRows = await tx
+              .select({
+                id: rooms.id,
+                title: rooms.title,
+                status: rooms.status,
+                churchId: rooms.churchId,
+              })
+              .from(rooms)
+              .where(eq(rooms.id, roomId))
+              .limit(1);
+            const room = roomRows[0];
+            return joinParticipantInTransaction(tx, roomId, room, rawCode, joinKeyHash);
+          });
+        } catch (error) {
+          if (!isUniqueViolation(error) || attempt === 1) {
+            throw error;
+          }
         }
-        if (codeRow.revokedAt !== null) {
-          return { ok: false as const, reason: "revoked_access_code" as const };
-        }
-        if (codeRow.isSimulated && room && room.status !== "test") {
-          return { ok: false as const, reason: "simulation_requires_test_room" as const };
-        }
+      }
+      return { ok: false as const, reason: "invalid_access_code" as const };
+    },
 
-        const existingByCode = await tx
-          .select()
-          .from(participants)
-          .where(and(eq(participants.roomId, roomId), eq(participants.accessCodeId, codeRow.id)))
-          .limit(1);
-        const existingByMember =
-          !existingByCode[0] && codeRow.memberId
-            ? await tx
-                .select()
-                .from(participants)
-                .where(and(eq(participants.roomId, roomId), eq(participants.memberId, codeRow.memberId)))
-                .limit(1)
-            : [];
-        const existing = existingByCode[0] ?? existingByMember[0];
+    async joinRoomByShortCode(shortCode, rawCode, joinKeyHash) {
+      const normalized = normalizeRoomShortCode(shortCode);
+      if (!isValidRoomShortCode(normalized)) {
+        return { ok: false as const, reason: "room_not_found" as const };
+      }
 
-        if (existing) {
-          const updated = await tx
-            .update(participants)
-            .set({
-              accessCodeId: codeRow.id,
-              displayName: codeRow.displayName,
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          return await db.transaction(async (tx) => {
+            const roomRows = await tx
+              .select()
+              .from(rooms)
+              .where(eq(rooms.shortCode, normalized))
+              .limit(1);
+            const room = roomRows[0];
+            if (!room) {
+              return { ok: false as const, reason: "room_not_found" as const };
+            }
+            if (!canJoinRoom(room.status)) {
+              return { ok: false as const, reason: "room_not_joinable" as const, status: room.status };
+            }
+
+            const result = await joinParticipantInTransaction(
+              tx,
+              room.id,
+              { id: room.id, title: room.title, status: room.status, churchId: room.churchId },
+              rawCode,
               joinKeyHash,
-              isPresent: true,
-            })
-            .where(eq(participants.id, existing.id))
-            .returning();
-          const row = updated[0] ?? existing;
-          await insertAuditEvent(
-            tx,
-            roomId,
-            "participant_joined",
-            {
-              roomStatus: room?.status ?? "open",
-              voterOrigin: codeRow.isSimulated ? "test_simulator" : "authenticated_member",
-              isSimulated: codeRow.isSimulated,
-              memberVerified: !codeRow.isSimulated && codeRow.memberId !== null,
-              sessionFingerprint: joinKeyHash.slice(0, 12),
-              alreadyJoined: true,
-              adminIntervention: false,
-            },
-            {
-              churchId: room?.churchId ?? null,
-              roomTitle: room?.title ?? null,
-              actorRole: codeRow.isSimulated ? "simulated_voter" : "voter",
-            },
-          );
-          return {
-            ok: true as const,
-            participant: {
-              id: row.id,
-              roomId: row.roomId,
-              displayName: row.displayName,
-              alreadyJoined: true,
-            },
-          };
-        }
-
-        const inserted = await tx
-          .insert(participants)
-          .values({
-            roomId,
-            memberId: codeRow.memberId,
-            accessCodeId: codeRow.id,
-            displayName: codeRow.displayName,
-            joinKeyHash,
-            isPresent: true,
-          })
-          .returning();
-        const row = inserted[0];
-        if (!row) {
-          throw new Error("Participant insert returned no row");
-        }
-        await insertAuditEvent(
-          tx,
-          roomId,
-          "participant_joined",
-          {
-            roomStatus: room?.status ?? "open",
-            voterOrigin: codeRow.isSimulated ? "test_simulator" : "authenticated_member",
-            isSimulated: codeRow.isSimulated,
-            memberVerified: !codeRow.isSimulated && codeRow.memberId !== null,
-            sessionFingerprint: joinKeyHash.slice(0, 12),
-            alreadyJoined: false,
-            adminIntervention: false,
-          },
-          {
-            churchId: room?.churchId ?? null,
-            roomTitle: room?.title ?? null,
-            actorRole: codeRow.isSimulated ? "simulated_voter" : "voter",
-          },
-        );
-        return {
-          ok: true as const,
-          participant: {
-            id: row.id,
-            roomId: row.roomId,
-            displayName: row.displayName,
-            alreadyJoined: false,
-          },
-        };
+            );
+            if (!result.ok) {
+              return result;
+            }
+            return {
+              ok: true as const,
+              room: toStoredRoom(room),
+              participant: result.participant,
+            };
           });
         } catch (error) {
           if (!isUniqueViolation(error) || attempt === 1) {
@@ -540,21 +529,18 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           return [];
         }
 
-        const churchMembers = await tx
+        const rosterEntries = await tx
           .select()
-          .from(members)
-          .where(eq(members.churchId, room.churchId))
-          .orderBy(asc(members.fullName));
-
-        const eligibleMembers = churchMembers.filter((member) =>
-          isMemberEligibleVoter(
-            {
-              isCommunicant: member.isCommunicant,
-              societyFlags: (member.societyFlags ?? {}) as MemberSocietyFlags,
-            },
-            room.roomType as RoomType,
-          ),
-        );
+          .from(roomRoster)
+          .where(
+            and(
+              eq(roomRoster.roomId, roomId),
+              isNull(roomRoster.removedAt),
+              eq(roomRoster.isEligibleVoter, true),
+              eq(roomRoster.votesOnPaper, false),
+            ),
+          )
+          .orderBy(asc(roomRoster.fullName), asc(roomRoster.createdAt));
 
         const existingCodes = await tx
           .select()
@@ -562,6 +548,11 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .where(eq(roomMemberCodes.roomId, roomId));
 
         const usedCodeStrings = new Set(existingCodes.map((row) => row.code));
+        const activeRosterEntryIds = new Set(
+          existingCodes
+            .filter((row) => row.revokedAt === null && row.rosterEntryId !== null)
+            .map((row) => row.rosterEntryId as string),
+        );
         const activeMemberIds = new Set(
           existingCodes
             .filter((row) => row.revokedAt === null && row.memberId !== null)
@@ -570,21 +561,26 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
 
         const toInsert: Array<{
           roomId: string;
-          memberId: string;
+          rosterEntryId: string;
+          memberId: string | null;
           displayName: string;
           code: string;
           isSimulated: boolean;
         }> = [];
 
-        for (const member of eligibleMembers) {
-          if (activeMemberIds.has(member.id)) {
+        for (const entry of rosterEntries) {
+          if (
+            activeRosterEntryIds.has(entry.id) ||
+            (entry.memberId !== null && activeMemberIds.has(entry.memberId))
+          ) {
             continue;
           }
           const code = allocateUniqueCode(usedCodeStrings);
           toInsert.push({
             roomId,
-            memberId: member.id,
-            displayName: member.fullName,
+            rosterEntryId: entry.id,
+            memberId: entry.memberId,
+            displayName: entry.fullName,
             code,
             isSimulated: false,
           });
@@ -727,25 +723,71 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           return { ok: false as const, reason: "room_not_found" as const };
         }
 
-        const memberRows = await tx
+        const rosterRows = await tx
           .select()
-          .from(members)
-          .where(and(eq(members.id, memberId), eq(members.churchId, room.churchId)))
-          .limit(1);
-        const member = memberRows[0];
-        if (!member) {
-          return { ok: false as const, reason: "member_not_found" as const };
-        }
-        if (
-          !isMemberEligibleVoter(
-            {
-              isCommunicant: member.isCommunicant,
-              societyFlags: (member.societyFlags ?? {}) as MemberSocietyFlags,
-            },
-            room.roomType as RoomType,
+          .from(roomRoster)
+          .where(
+            and(
+              eq(roomRoster.roomId, roomId),
+              eq(roomRoster.memberId, memberId),
+              isNull(roomRoster.removedAt),
+            ),
           )
-        ) {
-          return { ok: false as const, reason: "member_ineligible" as const };
+          .limit(1);
+        const rosterEntry = rosterRows[0];
+
+        let rosterEntryId: string;
+        let displayName: string;
+        if (rosterEntry) {
+          if (!rosterEntry.isEligibleVoter || rosterEntry.votesOnPaper) {
+            return { ok: false as const, reason: "member_ineligible" as const };
+          }
+          rosterEntryId = rosterEntry.id;
+          displayName = rosterEntry.fullName;
+        } else {
+          const memberRows = await tx
+            .select()
+            .from(members)
+            .where(
+              and(
+                eq(members.id, memberId),
+                eq(members.churchId, room.churchId),
+                isNull(members.deletedAt),
+              ),
+            )
+            .limit(1);
+          const member = memberRows[0];
+          if (!member) {
+            return { ok: false as const, reason: "member_not_found" as const };
+          }
+          if (
+            !isMemberEligibleVoter(
+              {
+                isCommunicant: member.isCommunicant,
+                societyFlags: (member.societyFlags ?? {}) as MemberSocietyFlags,
+              },
+              room.roomType as RoomType,
+            )
+          ) {
+            return { ok: false as const, reason: "member_ineligible" as const };
+          }
+          const insertedRoster = await tx
+            .insert(roomRoster)
+            .values({
+              roomId,
+              memberId: member.id,
+              fullName: member.fullName,
+              photoUrl: member.photoUrl,
+              birthDate: member.birthDate,
+              isCommunicant: member.isCommunicant,
+              isMale: member.isMale,
+              societyFlags: member.societyFlags ?? {},
+              isEligibleVoter: true,
+            })
+            .returning({ id: roomRoster.id });
+          rosterEntryId = insertedRoster[0]!.id;
+          displayName = member.fullName;
+          await recalculateRoomEligibleCount(tx, roomId);
         }
 
         const activeRows = await tx
@@ -785,8 +827,9 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .insert(roomMemberCodes)
           .values({
             roomId,
-            memberId: member.id,
-            displayName: member.fullName,
+            rosterEntryId,
+            memberId,
+            displayName,
             code,
             isSimulated: false,
           })
@@ -853,6 +896,71 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       return updated.length;
     },
 
+    async releaseParticipantSession(roomId, participantId, actorAdminId) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return { ok: false as const, reason: "room_not_found" as const };
+      }
+
+      return db.transaction(async (tx) => {
+        const roomRows = await tx
+          .select({ id: rooms.id, title: rooms.title, churchId: rooms.churchId })
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .limit(1);
+        const roomRow = roomRows[0];
+        if (!roomRow) {
+          return { ok: false as const, reason: "room_not_found" as const };
+        }
+
+        const participantRows = await tx
+          .select({
+            id: participants.id,
+            displayName: participants.displayName,
+          })
+          .from(participants)
+          .where(and(eq(participants.id, participantId), eq(participants.roomId, roomId)))
+          .for("update")
+          .limit(1);
+        const participant = participantRows[0];
+        if (!participant) {
+          return { ok: false as const, reason: "participant_not_found" as const };
+        }
+
+        const updatedRows = await tx
+          .update(participants)
+          .set({ joinKeyHash: null, isPresent: false })
+          .where(and(eq(participants.id, participantId), eq(participants.roomId, roomId)))
+          .returning({
+            id: participants.id,
+            displayName: participants.displayName,
+            isPresent: participants.isPresent,
+          });
+        const updated = updatedRows[0];
+        if (!updated) {
+          return { ok: false as const, reason: "participant_not_found" as const };
+        }
+
+        await insertAuditEvent(
+          tx,
+          roomId,
+          "session_released",
+          {
+            participantId: updated.id,
+            displayName: updated.displayName,
+            actorAdminId,
+          },
+          {
+            churchId: roomRow.churchId,
+            roomTitle: roomRow.title,
+            actorRole: "admin",
+          },
+        );
+
+        return { ok: true as const, participant: updated };
+      });
+    },
+
     async describeVoterSession(roomId, joinKeyHash) {
       const participant = await findParticipantByJoinKey(db, roomId, joinKeyHash);
       if (!participant) {
@@ -883,19 +991,36 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       return presentCount;
     },
 
+    async countPaperVoters(roomId) {
+      const rows = await db
+        .select({ value: count() })
+        .from(roomRoster)
+        .where(
+          and(
+            eq(roomRoster.roomId, roomId),
+            isNull(roomRoster.removedAt),
+            eq(roomRoster.votesOnPaper, true),
+          ),
+        );
+      const paperVotersCount = Number(rows[0]?.value ?? 0);
+      if (!Number.isInteger(paperVotersCount)) {
+        throw new Error("Paper voters count was not an integer");
+      }
+      return paperVotersCount;
+    },
+
     async listCandidates(roomId) {
       const rows = await db
         .select({
           id: candidates.id,
           roomId: candidates.roomId,
+          memberId: candidates.memberId,
           displayName: candidates.displayName,
           photoUrl: candidates.photoUrl,
-          memberPhotoUrl: members.photoUrl,
-          memberBirthDate: members.birthDate,
+          birthDate: candidates.birthDate,
           isEligible: candidates.isEligible,
         })
         .from(candidates)
-        .leftJoin(members, eq(candidates.memberId, members.id))
         .where(and(eq(candidates.roomId, roomId), eq(candidates.isEligible, true)))
         .orderBy(asc(candidates.displayName));
       return rows.map(toStoredCandidate);
@@ -906,14 +1031,13 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .select({
           id: candidates.id,
           roomId: candidates.roomId,
+          memberId: candidates.memberId,
           displayName: candidates.displayName,
           photoUrl: candidates.photoUrl,
-          memberPhotoUrl: members.photoUrl,
-          memberBirthDate: members.birthDate,
+          birthDate: candidates.birthDate,
           isEligible: candidates.isEligible,
         })
         .from(candidates)
-        .leftJoin(members, eq(candidates.memberId, members.id))
         .where(eq(candidates.roomId, roomId))
         .orderBy(asc(candidates.displayName));
       return rows.map(toStoredCandidate);
@@ -928,17 +1052,839 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .select({
           id: candidates.id,
           roomId: candidates.roomId,
+          memberId: candidates.memberId,
           displayName: candidates.displayName,
           photoUrl: candidates.photoUrl,
-          memberPhotoUrl: members.photoUrl,
-          memberBirthDate: members.birthDate,
+          birthDate: candidates.birthDate,
           isEligible: candidates.isEligible,
         })
         .from(candidates)
-        .leftJoin(members, eq(candidates.memberId, members.id))
         .where(and(inArray(candidates.roomId, roomIds), eq(candidates.isEligible, true)))
         .orderBy(asc(candidates.displayName));
       return rows.map(toStoredCandidate);
+    },
+
+    async listRoomRoster(roomId) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return null;
+      }
+      const [roomRow] = await db
+        .select({ id: rooms.id, eligibleCount: rooms.eligibleCount })
+        .from(rooms)
+        .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+        .limit(1);
+      if (!roomRow) {
+        return null;
+      }
+
+      const [rosterRows, codeRows, presentRows] = await Promise.all([
+        db
+          .select()
+          .from(roomRoster)
+          .where(and(eq(roomRoster.roomId, roomId), isNull(roomRoster.removedAt)))
+          .orderBy(asc(roomRoster.fullName), asc(roomRoster.createdAt)),
+        db
+          .select()
+          .from(roomMemberCodes)
+          .where(and(eq(roomMemberCodes.roomId, roomId), eq(roomMemberCodes.isSimulated, false)))
+          .orderBy(desc(roomMemberCodes.createdAt)),
+        db
+          .select({
+            id: participants.id,
+            rosterEntryId: participants.rosterEntryId,
+            accessCodeId: participants.accessCodeId,
+            memberId: participants.memberId,
+          })
+          .from(participants)
+          .where(and(eq(participants.roomId, roomId), eq(participants.isPresent, true))),
+      ]);
+
+      const entries: StoredRosterEntry[] = rosterRows.map((entry) => {
+        const matchingCodes = codeRows.filter(
+          (code) =>
+            code.rosterEntryId === entry.id ||
+            (code.rosterEntryId === null && entry.memberId !== null && code.memberId === entry.memberId),
+        );
+        const preferredCode =
+          matchingCodes.find((code) => code.revokedAt === null) ?? matchingCodes[0] ?? null;
+
+        const isPresent = presentRows.some(
+          (participant) =>
+            participant.rosterEntryId === entry.id ||
+            (preferredCode !== null && participant.accessCodeId === preferredCode.id) ||
+            (entry.memberId !== null && participant.memberId === entry.memberId),
+        );
+
+        return toStoredRosterEntry(entry, preferredCode, isPresent);
+      });
+
+      return {
+        entries,
+        eligibleCount: roomRow.eligibleCount,
+      };
+    },
+
+    async addRosterEntry(roomId, input) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return { ok: false as const, reason: "room_not_found" as const };
+      }
+
+      return db.transaction(async (tx) => {
+        const [roomRow] = await tx
+          .select()
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .for("update")
+          .limit(1);
+        if (!roomRow) {
+          return { ok: false as const, reason: "room_not_found" as const };
+        }
+        if (roomRow.status === "closed") {
+          return { ok: false as const, reason: "room_closed" as const };
+        }
+
+        let memberId: string | null = null;
+        let fullName: string;
+        let photoUrl: string | null = null;
+        let birthDate: Date | null = null;
+        let isCommunicant = true;
+        let isMale: boolean | null = null;
+        let societyFlags: Record<string, unknown> = {};
+        let isEligibleVoter = true;
+
+        if ("memberId" in input) {
+          const [member] = await tx
+            .select()
+            .from(members)
+            .where(
+              and(
+                eq(members.id, input.memberId),
+                eq(members.churchId, church.id),
+                isNull(members.deletedAt),
+              ),
+            )
+            .limit(1);
+          if (!member) {
+            return { ok: false as const, reason: "member_not_found" as const };
+          }
+
+          const [existingActive] = await tx
+            .select({ id: roomRoster.id })
+            .from(roomRoster)
+            .where(
+              and(
+                eq(roomRoster.roomId, roomId),
+                eq(roomRoster.memberId, member.id),
+                isNull(roomRoster.removedAt),
+              ),
+            )
+            .limit(1);
+          if (existingActive) {
+            return { ok: false as const, reason: "roster_member_exists" as const };
+          }
+
+          memberId = member.id;
+          fullName = member.fullName;
+          photoUrl = member.photoUrl;
+          birthDate = member.birthDate;
+          isCommunicant = member.isCommunicant;
+          isMale = member.isMale;
+          societyFlags = member.societyFlags ?? {};
+          isEligibleVoter = member.isCommunicant;
+        } else {
+          fullName = input.fullName.trim();
+          birthDate = input.birthDate ? new Date(`${input.birthDate}T00:00:00.000Z`) : null;
+          isCommunicant = input.isCommunicant ?? true;
+          isMale = input.isMale ?? null;
+          isEligibleVoter = isCommunicant;
+        }
+
+        const [insertedEntry] = await tx
+          .insert(roomRoster)
+          .values({
+            roomId,
+            memberId,
+            fullName,
+            photoUrl,
+            birthDate,
+            isCommunicant,
+            isMale,
+            societyFlags,
+            isEligibleVoter,
+          })
+          .returning();
+        if (!insertedEntry) {
+          throw new Error("Roster entry insert returned no row");
+        }
+
+        if (memberId !== null) {
+          await tx
+            .update(roomMemberCodes)
+            .set({ revokedAt: new Date() })
+            .where(
+              and(
+                eq(roomMemberCodes.roomId, roomId),
+                eq(roomMemberCodes.memberId, memberId),
+                isNull(roomMemberCodes.revokedAt),
+              ),
+            );
+        }
+
+        const existingCodes = await tx
+          .select({ code: roomMemberCodes.code })
+          .from(roomMemberCodes)
+          .where(eq(roomMemberCodes.roomId, roomId));
+        const code = allocateUniqueCode(new Set(existingCodes.map((row) => row.code)));
+
+        const [insertedCode] = await tx
+          .insert(roomMemberCodes)
+          .values({
+            roomId,
+            rosterEntryId: insertedEntry.id,
+            memberId,
+            displayName: fullName,
+            code,
+            isSimulated: false,
+          })
+          .returning();
+        if (!insertedCode) {
+          throw new Error("Access code insert returned no row");
+        }
+
+        const eligibleCount = await recalculateRoomEligibleCount(tx, roomId);
+
+        await insertAuditEvent(
+          tx,
+          roomId,
+          "roster_member_added",
+          {
+            rosterEntryId: insertedEntry.id,
+            memberId: insertedEntry.memberId,
+            fullName: insertedEntry.fullName,
+            isAdHoc: insertedEntry.memberId === null,
+          },
+          {
+            churchId: church.id,
+            roomTitle: roomRow.title,
+            actorRole: "admin",
+          },
+        );
+
+        return {
+          ok: true as const,
+          entry: toStoredRosterEntry(insertedEntry, insertedCode, false),
+          accessCode: toStoredAccessCode(insertedCode),
+          eligibleCount,
+        };
+      });
+    },
+
+    async removeRosterEntry(roomId, entryId) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return { ok: false as const, reason: "room_not_found" as const };
+      }
+
+      return db.transaction(async (tx) => {
+        const [roomRow] = await tx
+          .select()
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .for("update")
+          .limit(1);
+        if (!roomRow) {
+          return { ok: false as const, reason: "room_not_found" as const };
+        }
+        if (roomRow.status === "closed") {
+          return { ok: false as const, reason: "room_closed" as const };
+        }
+
+        const [entry] = await tx
+          .select()
+          .from(roomRoster)
+          .where(
+            and(
+              eq(roomRoster.id, entryId),
+              eq(roomRoster.roomId, roomId),
+              isNull(roomRoster.removedAt),
+            ),
+          )
+          .for("update")
+          .limit(1);
+        if (!entry) {
+          return { ok: false as const, reason: "roster_entry_not_found" as const };
+        }
+
+        const now = new Date();
+        await tx
+          .update(roomRoster)
+          .set({ removedAt: now })
+          .where(eq(roomRoster.id, entry.id));
+
+        const codeFilter =
+          entry.memberId !== null
+            ? or(
+                eq(roomMemberCodes.rosterEntryId, entry.id),
+                eq(roomMemberCodes.memberId, entry.memberId),
+              )
+            : eq(roomMemberCodes.rosterEntryId, entry.id);
+
+        const revokedCodes = await tx
+          .update(roomMemberCodes)
+          .set({ revokedAt: now })
+          .where(
+            and(
+              eq(roomMemberCodes.roomId, roomId),
+              isNull(roomMemberCodes.revokedAt),
+              codeFilter,
+            ),
+          )
+          .returning({ id: roomMemberCodes.id });
+
+        const revokedCodeIds = revokedCodes.map((row) => row.id);
+        const participantMatchers = [eq(participants.rosterEntryId, entry.id)];
+        if (entry.memberId !== null) {
+          participantMatchers.push(eq(participants.memberId, entry.memberId));
+        }
+        if (revokedCodeIds.length > 0) {
+          participantMatchers.push(inArray(participants.accessCodeId, revokedCodeIds));
+        }
+
+        await tx
+          .update(participants)
+          .set({ isPresent: false, joinKeyHash: null })
+          .where(and(eq(participants.roomId, roomId), or(...participantMatchers)));
+
+        const eligibleCount = await recalculateRoomEligibleCount(tx, roomId);
+
+        await insertAuditEvent(
+          tx,
+          roomId,
+          "roster_member_removed",
+          {
+            rosterEntryId: entry.id,
+            memberId: entry.memberId,
+            fullName: entry.fullName,
+          },
+          {
+            churchId: church.id,
+            roomTitle: roomRow.title,
+            actorRole: "admin",
+          },
+        );
+
+        return { ok: true as const, eligibleCount };
+      });
+    },
+
+    async setRosterEntryPaperMode(roomId, entryId, votesOnPaper) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return { ok: false as const, reason: "room_not_found" as const };
+      }
+
+      return db.transaction(async (tx) => {
+        const [roomRow] = await tx
+          .select()
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .for("update")
+          .limit(1);
+        if (!roomRow) {
+          return { ok: false as const, reason: "room_not_found" as const };
+        }
+        if (roomRow.status === "closed") {
+          return { ok: false as const, reason: "room_closed" as const };
+        }
+
+        const [entry] = await tx
+          .select()
+          .from(roomRoster)
+          .where(
+            and(
+              eq(roomRoster.id, entryId),
+              eq(roomRoster.roomId, roomId),
+              isNull(roomRoster.removedAt),
+            ),
+          )
+          .for("update")
+          .limit(1);
+        if (!entry) {
+          return { ok: false as const, reason: "roster_entry_not_found" as const };
+        }
+
+        const [openRound] = await tx
+          .select({ id: rounds.id })
+          .from(rounds)
+          .where(and(eq(rounds.roomId, roomId), eq(rounds.status, "open")))
+          .orderBy(desc(rounds.number))
+          .limit(1);
+
+        if (openRound) {
+          if (votesOnPaper) {
+            const voterParticipantMatchers = [eq(participants.rosterEntryId, entry.id)];
+            if (entry.memberId !== null) {
+              voterParticipantMatchers.push(eq(participants.memberId, entry.memberId));
+            }
+            const matchingParticipants = await tx
+              .select({ id: participants.id })
+              .from(participants)
+              .where(and(eq(participants.roomId, roomId), or(...voterParticipantMatchers)));
+            if (matchingParticipants.length > 0) {
+              const existingReceipt = await tx
+                .select({ id: voteReceipts.id })
+                .from(voteReceipts)
+                .where(
+                  and(
+                    eq(voteReceipts.roundId, openRound.id),
+                    inArray(
+                      voteReceipts.participantId,
+                      matchingParticipants.map((p) => p.id),
+                    ),
+                  ),
+                )
+                .limit(1);
+              if (existingReceipt.length > 0) {
+                return { ok: false as const, reason: "already_voted_online" as const };
+              }
+            }
+          } else if (entry.votesOnPaper) {
+            const [existingPaperTally] = await tx
+              .select({ ballotCount: roundPaperTallies.ballotCount })
+              .from(roundPaperTallies)
+              .where(eq(roundPaperTallies.roundId, openRound.id))
+              .limit(1);
+            if (existingPaperTally && existingPaperTally.ballotCount > 0) {
+              return { ok: false as const, reason: "paper_tally_already_recorded" as const };
+            }
+          }
+        }
+
+        const [updatedEntry] = await tx
+          .update(roomRoster)
+          .set({ votesOnPaper })
+          .where(eq(roomRoster.id, entry.id))
+          .returning();
+        const savedEntry = updatedEntry ?? { ...entry, votesOnPaper };
+
+        const now = new Date();
+        const codeFilter =
+          entry.memberId !== null
+            ? or(
+                eq(roomMemberCodes.rosterEntryId, entry.id),
+                eq(roomMemberCodes.memberId, entry.memberId),
+              )
+            : eq(roomMemberCodes.rosterEntryId, entry.id);
+
+        let returnedCode: typeof roomMemberCodes.$inferSelect | null = null;
+        let entryAccessCode: { id: string; code: string; revokedAt: Date | null } | null = null;
+        let entryIsPresent = false;
+
+        if (votesOnPaper) {
+          const revokedCodes = await tx
+            .update(roomMemberCodes)
+            .set({ revokedAt: now })
+            .where(
+              and(
+                eq(roomMemberCodes.roomId, roomId),
+                isNull(roomMemberCodes.revokedAt),
+                codeFilter,
+              ),
+            )
+            .returning();
+
+          const revokedCodeIds = revokedCodes.map((row) => row.id);
+          const participantMatchers = [eq(participants.rosterEntryId, entry.id)];
+          if (entry.memberId !== null) {
+            participantMatchers.push(eq(participants.memberId, entry.memberId));
+          }
+          if (revokedCodeIds.length > 0) {
+            participantMatchers.push(inArray(participants.accessCodeId, revokedCodeIds));
+          }
+
+          await tx
+            .update(participants)
+            .set({ isPresent: false, joinKeyHash: null })
+            .where(and(eq(participants.roomId, roomId), or(...participantMatchers)));
+
+          const latestCodes = await tx
+            .select({
+              id: roomMemberCodes.id,
+              code: roomMemberCodes.code,
+              revokedAt: roomMemberCodes.revokedAt,
+            })
+            .from(roomMemberCodes)
+            .where(and(eq(roomMemberCodes.roomId, roomId), codeFilter))
+            .orderBy(desc(roomMemberCodes.createdAt))
+            .limit(1);
+          entryAccessCode = latestCodes[0] ?? null;
+
+          await insertAuditEvent(
+            tx,
+            roomId,
+            "roster_paper_mode_enabled",
+            {
+              rosterEntryId: entry.id,
+              memberId: entry.memberId,
+              fullName: entry.fullName,
+            },
+            {
+              churchId: church.id,
+              roomTitle: roomRow.title,
+              actorRole: "admin",
+            },
+          );
+        } else {
+          await tx
+            .update(roomMemberCodes)
+            .set({ revokedAt: now })
+            .where(
+              and(
+                eq(roomMemberCodes.roomId, roomId),
+                isNull(roomMemberCodes.revokedAt),
+                codeFilter,
+              ),
+            );
+
+          const existingCodes = await tx
+            .select({ code: roomMemberCodes.code })
+            .from(roomMemberCodes)
+            .where(eq(roomMemberCodes.roomId, roomId));
+          const code = allocateUniqueCode(new Set(existingCodes.map((row) => row.code)));
+
+          const [insertedCode] = await tx
+            .insert(roomMemberCodes)
+            .values({
+              roomId,
+              rosterEntryId: entry.id,
+              memberId: entry.memberId,
+              displayName: entry.fullName,
+              code,
+              isSimulated: false,
+            })
+            .returning();
+          if (!insertedCode) {
+            throw new Error("Access code insert returned no row");
+          }
+          returnedCode = insertedCode;
+          entryAccessCode = insertedCode;
+
+          const presentMatchers = [eq(participants.rosterEntryId, entry.id)];
+          if (entry.memberId !== null) {
+            presentMatchers.push(eq(participants.memberId, entry.memberId));
+          }
+          const presentParticipant = await tx
+            .select({ id: participants.id })
+            .from(participants)
+            .where(
+              and(
+                eq(participants.roomId, roomId),
+                eq(participants.isPresent, true),
+                or(...presentMatchers),
+              ),
+            )
+            .limit(1);
+          entryIsPresent = Boolean(presentParticipant[0]);
+
+          await insertAuditEvent(
+            tx,
+            roomId,
+            "roster_paper_mode_disabled",
+            {
+              rosterEntryId: entry.id,
+              memberId: entry.memberId,
+              fullName: entry.fullName,
+            },
+            {
+              churchId: church.id,
+              roomTitle: roomRow.title,
+              actorRole: "admin",
+            },
+          );
+        }
+
+        const [onlinePresentRows, paperVoterRows] = await Promise.all([
+          tx
+            .select({ value: count() })
+            .from(participants)
+            .where(and(eq(participants.roomId, roomId), eq(participants.isPresent, true))),
+          tx
+            .select({ value: count() })
+            .from(roomRoster)
+            .where(
+              and(
+                eq(roomRoster.roomId, roomId),
+                isNull(roomRoster.removedAt),
+                eq(roomRoster.votesOnPaper, true),
+              ),
+            ),
+        ]);
+
+        return {
+          ok: true as const,
+          entry: toStoredRosterEntry(savedEntry, entryAccessCode, entryIsPresent),
+          accessCode: returnedCode ? toStoredAccessCode(returnedCode) : null,
+          onlinePresentCount: Number(onlinePresentRows[0]?.value ?? 0),
+          paperVotersCount: Number(paperVoterRows[0]?.value ?? 0),
+        };
+      });
+    },
+
+    async addRoomCandidate(roomId, input) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return { ok: false as const, reason: "room_not_found" as const };
+      }
+
+      return db.transaction(async (tx) => {
+        const [roomRow] = await tx
+          .select()
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .for("update")
+          .limit(1);
+        if (!roomRow) {
+          return { ok: false as const, reason: "room_not_found" as const };
+        }
+
+        const roomType = roomRow.roomType as RoomType;
+        const normalizedOffice = input.officeLabel?.trim();
+        if (normalizedOffice && isMultiOfficeRoomType(roomType)) {
+          if (!isValidOfficeForRoomType(roomType, normalizedOffice)) {
+            return { ok: false as const, reason: "invalid_office" as const };
+          }
+        }
+
+        const roomRounds = await tx
+          .select({ officeLabel: rounds.officeLabel })
+          .from(rounds)
+          .where(eq(rounds.roomId, roomId));
+        const hasRoundsForScope =
+          normalizedOffice && isMultiOfficeRoomType(roomType)
+            ? roomRounds.some((row) => row.officeLabel === normalizedOffice)
+            : roomRounds.length > 0;
+
+        const guard = canManageRoomCandidates(roomRow.status as RoomStatus, hasRoundsForScope);
+        if (!guard.allowed) {
+          return { ok: false as const, reason: "candidates_locked_after_round" as const };
+        }
+
+        let memberId: string | null = null;
+        let displayName: string;
+        let photoUrl: string | null = null;
+        let birthDate: Date | null = null;
+
+        if (input.rosterEntryId) {
+          const [rosterEntry] = await tx
+            .select()
+            .from(roomRoster)
+            .where(
+              and(
+                eq(roomRoster.id, input.rosterEntryId),
+                eq(roomRoster.roomId, roomId),
+                isNull(roomRoster.removedAt),
+              ),
+            )
+            .limit(1);
+          if (!rosterEntry) {
+            return { ok: false as const, reason: "roster_entry_not_found" as const };
+          }
+          memberId = rosterEntry.memberId;
+          displayName = rosterEntry.fullName;
+          photoUrl = rosterEntry.photoUrl;
+          birthDate = rosterEntry.birthDate;
+        } else if (input.memberId) {
+          const [rosterEntry] = await tx
+            .select()
+            .from(roomRoster)
+            .where(
+              and(
+                eq(roomRoster.roomId, roomId),
+                eq(roomRoster.memberId, input.memberId),
+                isNull(roomRoster.removedAt),
+              ),
+            )
+            .limit(1);
+          if (rosterEntry) {
+            memberId = rosterEntry.memberId;
+            displayName = rosterEntry.fullName;
+            photoUrl = rosterEntry.photoUrl;
+            birthDate = rosterEntry.birthDate;
+          } else {
+            const [member] = await tx
+              .select()
+              .from(members)
+              .where(
+                and(
+                  eq(members.id, input.memberId),
+                  eq(members.churchId, church.id),
+                  isNull(members.deletedAt),
+                ),
+              )
+              .limit(1);
+            if (!member) {
+              return { ok: false as const, reason: "member_not_found" as const };
+            }
+            memberId = member.id;
+            displayName = member.fullName;
+            photoUrl = member.photoUrl;
+            birthDate = member.birthDate;
+          }
+        } else {
+          const trimmed = input.displayName?.trim() ?? "";
+          if (trimmed.length === 0 || trimmed.length > 120) {
+            return { ok: false as const, reason: "invalid_candidate" as const };
+          }
+          displayName = trimmed;
+          birthDate = input.birthDate ? new Date(`${input.birthDate}T00:00:00.000Z`) : null;
+        }
+
+        const existingCandidates = await tx
+          .select()
+          .from(candidates)
+          .where(eq(candidates.roomId, roomId))
+          .orderBy(asc(candidates.displayName));
+        if (
+          existingCandidates.some(
+            (item) => item.displayName.toLocaleLowerCase() === displayName.toLocaleLowerCase(),
+          )
+        ) {
+          return { ok: false as const, reason: "candidate_exists" as const };
+        }
+
+        const [inserted] = await tx
+          .insert(candidates)
+          .values({
+            roomId,
+            memberId,
+            displayName,
+            photoUrl,
+            birthDate,
+            isEligible: true,
+          })
+          .returning();
+        if (!inserted) {
+          throw new Error("Candidate insert returned no row");
+        }
+
+        await insertAuditEvent(
+          tx,
+          roomId,
+          "candidate_added",
+          {
+            candidateId: inserted.id,
+            displayName: inserted.displayName,
+            memberId: inserted.memberId,
+            ...(normalizedOffice ? { officeLabel: normalizedOffice } : {}),
+          },
+          {
+            churchId: church.id,
+            roomTitle: roomRow.title,
+            actorRole: "admin",
+          },
+        );
+
+        const updatedCandidates = [...existingCandidates, inserted].sort((a, b) =>
+          a.displayName.localeCompare(b.displayName),
+        );
+        return {
+          ok: true as const,
+          candidate: toStoredCandidate(inserted),
+          candidates: updatedCandidates.map(toStoredCandidate),
+        };
+      });
+    },
+
+    async removeRoomCandidate(roomId, candidateId, officeLabel) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return { ok: false as const, reason: "room_not_found" as const };
+      }
+
+      return db.transaction(async (tx) => {
+        const [roomRow] = await tx
+          .select()
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .for("update")
+          .limit(1);
+        if (!roomRow) {
+          return { ok: false as const, reason: "room_not_found" as const };
+        }
+
+        const [candidate] = await tx
+          .select()
+          .from(candidates)
+          .where(and(eq(candidates.id, candidateId), eq(candidates.roomId, roomId)))
+          .limit(1);
+        if (!candidate) {
+          return { ok: false as const, reason: "candidate_not_found" as const };
+        }
+
+        const roomType = roomRow.roomType as RoomType;
+        const normalizedOffice = officeLabel?.trim();
+        if (normalizedOffice && isMultiOfficeRoomType(roomType)) {
+          if (!isValidOfficeForRoomType(roomType, normalizedOffice)) {
+            return { ok: false as const, reason: "invalid_office" as const };
+          }
+        }
+
+        const roomRounds = await tx
+          .select({ officeLabel: rounds.officeLabel })
+          .from(rounds)
+          .where(eq(rounds.roomId, roomId));
+        const hasRoundsForScope =
+          normalizedOffice && isMultiOfficeRoomType(roomType)
+            ? roomRounds.some((row) => row.officeLabel === normalizedOffice)
+            : roomRounds.length > 0;
+
+        const guard = canManageRoomCandidates(roomRow.status as RoomStatus, hasRoundsForScope);
+        if (!guard.allowed) {
+          return { ok: false as const, reason: "candidates_locked_after_round" as const };
+        }
+
+        const ballotRefs = await tx
+          .select({ id: ballots.id })
+          .from(ballots)
+          .where(eq(ballots.candidateId, candidateId))
+          .limit(1);
+        if (ballotRefs.length > 0) {
+          return { ok: false as const, reason: "candidates_locked_after_round" as const };
+        }
+
+        await tx
+          .delete(candidates)
+          .where(and(eq(candidates.id, candidateId), eq(candidates.roomId, roomId)));
+
+        await insertAuditEvent(
+          tx,
+          roomId,
+          "candidate_removed",
+          {
+            candidateId: candidate.id,
+            displayName: candidate.displayName,
+            memberId: candidate.memberId,
+            ...(normalizedOffice ? { officeLabel: normalizedOffice } : {}),
+          },
+          {
+            churchId: church.id,
+            roomTitle: roomRow.title,
+            actorRole: "admin",
+          },
+        );
+
+        const remaining = await tx
+          .select()
+          .from(candidates)
+          .where(eq(candidates.roomId, roomId))
+          .orderBy(asc(candidates.displayName));
+        return {
+          ok: true as const,
+          candidates: remaining.map(toStoredCandidate),
+        };
+      });
     },
 
     async openRound(roomId, eligibleCandidateIds, officeLabel) {
@@ -1123,18 +2069,26 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           return { ok: false as const, reason: "round_not_open" as const };
         }
 
-        const presentRows = await tx
-          .select({ value: count() })
-          .from(participants)
-          .where(and(eq(participants.roomId, roomId), eq(participants.isPresent, true)));
-        const presentCount = Number(presentRows[0]?.value ?? 0);
+        const [onlinePresentRows, paperVoterRows] = await Promise.all([
+          tx
+            .select({ value: count() })
+            .from(participants)
+            .where(and(eq(participants.roomId, roomId), eq(participants.isPresent, true))),
+          tx
+            .select({ value: count() })
+            .from(roomRoster)
+            .where(
+              and(
+                eq(roomRoster.roomId, roomId),
+                isNull(roomRoster.removedAt),
+                eq(roomRoster.votesOnPaper, true),
+              ),
+            ),
+        ]);
+        const onlinePresentCount = Number(onlinePresentRows[0]?.value ?? 0);
+        const paperVotersCount = Number(paperVoterRows[0]?.value ?? 0);
 
-        const quorum = evaluateQuorum({
-          presentCount,
-          eligibleCount: roomRow.eligibleCount,
-          quorumValue: roomRow.quorumValue,
-          quorumUnit: roomRow.quorumUnit,
-        });
+        const quorum = quorumStatus(toStoredRoom(roomRow), onlinePresentCount, paperVotersCount);
 
         const allRoundRows = await tx
           .select()
@@ -1156,31 +2110,46 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             .where(eq(ballots.roundId, roundId))
             .orderBy(asc(ballots.candidateId));
           const ballotCandidateIds = ballotRows.map((item) => item.candidateId);
-          const votedCount = ballotCandidateIds.length;
+          const onlineVotedCount = ballotCandidateIds.length;
 
-          if (votedCount < presentCount && !closeOptions?.confirmPending) {
+          if (onlineVotedCount < onlinePresentCount && !closeOptions?.confirmPending) {
             return {
               ok: false as const,
               reason: "voting_incomplete" as const,
-              votedCount,
-              presentCount,
+              votedCount: onlineVotedCount,
+              presentCount: onlinePresentCount,
             };
           }
 
-          didNotVoteCount = Math.max(0, presentCount - votedCount);
+          const [paperTallyRow] = await tx
+            .select()
+            .from(roundPaperTallies)
+            .where(eq(roundPaperTallies.roundId, roundId))
+            .limit(1);
+
+          if (paperVotersCount > 0 && !paperTallyRow && !closeOptions?.confirmNoPaperBallots) {
+            return {
+              ok: false as const,
+              reason: "paper_tally_required" as const,
+              paperVotersCount,
+            };
+          }
+
+          didNotVoteCount =
+            Math.max(0, onlinePresentCount - onlineVotedCount) +
+            Math.max(0, paperVotersCount - (paperTallyRow?.ballotCount ?? 0));
 
           const candidateRows = await tx
             .select({
               id: candidates.id,
               roomId: candidates.roomId,
+              memberId: candidates.memberId,
               displayName: candidates.displayName,
               photoUrl: candidates.photoUrl,
-              memberPhotoUrl: members.photoUrl,
-              memberBirthDate: members.birthDate,
+              birthDate: candidates.birthDate,
               isEligible: candidates.isEligible,
             })
             .from(candidates)
-            .leftJoin(members, eq(candidates.memberId, members.id))
             .where(and(eq(candidates.roomId, roomId), eq(candidates.isEligible, true)))
             .orderBy(asc(candidates.displayName));
           const eligibleCandidates = candidateRows.map(toStoredCandidate);
@@ -1189,6 +2158,16 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             tally = tallyRoundVotes(eligibleCandidates, ballotCandidateIds, {
               roundNumber: officeRoundNumber,
               ...(didNotVoteCount > 0 ? { didNotVoteCount } : {}),
+              ...(paperTallyRow
+                ? {
+                    paperTally: {
+                      ballotCount: paperTallyRow.ballotCount,
+                      blankVotes: paperTallyRow.blankVotes,
+                      nullVotes: paperTallyRow.nullVotes,
+                      candidateVotes: paperTallyRow.candidateVotes,
+                    },
+                  }
+                : {}),
             });
             outcome = tally.outcome;
           }
@@ -1243,6 +2222,141 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           didNotVoteCount,
         };
       });
+    },
+
+    async upsertRoundPaperTally({ roomId, roundId, paperTally, adminId, adminName }) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return { ok: false as const, reason: "room_not_found" as const };
+      }
+
+      return db.transaction(async (tx) => {
+        const [roomRow] = await tx
+          .select({ id: rooms.id, title: rooms.title, churchId: rooms.churchId })
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .limit(1);
+        if (!roomRow) {
+          return { ok: false as const, reason: "room_not_found" as const };
+        }
+
+        const [roundRow] = await tx
+          .select()
+          .from(rounds)
+          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId)))
+          .for("update")
+          .limit(1);
+        if (!roundRow) {
+          return { ok: false as const, reason: "round_not_found" as const };
+        }
+        if (roundRow.status !== "open") {
+          return { ok: false as const, reason: "round_not_open" as const };
+        }
+
+        const [paperVoterRows, eligibleCandidateRows] = await Promise.all([
+          tx
+            .select({ value: count() })
+            .from(roomRoster)
+            .where(
+              and(
+                eq(roomRoster.roomId, roomId),
+                isNull(roomRoster.removedAt),
+                eq(roomRoster.votesOnPaper, true),
+              ),
+            ),
+          tx
+            .select({ id: candidates.id })
+            .from(candidates)
+            .where(and(eq(candidates.roomId, roomId), eq(candidates.isEligible, true))),
+        ]);
+
+        const paperVotersCount = Number(paperVoterRows[0]?.value ?? 0);
+        const validation = validatePaperTally(paperTally, {
+          paperVotersCount,
+          validCandidateIds: eligibleCandidateRows.map((item) => item.id),
+        });
+        if (!validation.valid) {
+          return {
+            ok: false as const,
+            reason: "validation_failed" as const,
+            code: validation.code,
+            message: validation.message,
+          };
+        }
+
+        const now = new Date();
+        const [saved] = await tx
+          .insert(roundPaperTallies)
+          .values({
+            roundId,
+            ballotCount: paperTally.ballotCount,
+            blankVotes: paperTally.blankVotes,
+            nullVotes: paperTally.nullVotes,
+            candidateVotes: paperTally.candidateVotes,
+            recordedByAdminId: adminId,
+            recordedByName: adminName,
+            recordedAt: now,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: roundPaperTallies.roundId,
+            set: {
+              ballotCount: paperTally.ballotCount,
+              blankVotes: paperTally.blankVotes,
+              nullVotes: paperTally.nullVotes,
+              candidateVotes: paperTally.candidateVotes,
+              recordedByAdminId: adminId,
+              recordedByName: adminName,
+              updatedAt: now,
+            },
+          })
+          .returning();
+        if (!saved) {
+          throw new Error("Paper tally upsert returned no row");
+        }
+
+        await insertAuditEvent(
+          tx,
+          roomId,
+          "paper_tally_recorded",
+          {
+            roundId: roundRow.id,
+            roundNumber: roundRow.number,
+            ballotCount: saved.ballotCount,
+            blankVotes: saved.blankVotes,
+            nullVotes: saved.nullVotes,
+            candidateVotes: saved.candidateVotes,
+            recordedByName: adminName,
+          },
+          {
+            churchId: roomRow.churchId,
+            roomTitle: roomRow.title,
+            actorRole: "admin",
+          },
+        );
+
+        return { ok: true as const, paperTally: toStoredPaperTally(saved) };
+      });
+    },
+
+    async findRoundPaperTally(roundId) {
+      const [row] = await db
+        .select()
+        .from(roundPaperTallies)
+        .where(eq(roundPaperTallies.roundId, roundId))
+        .limit(1);
+      return row ? toStoredPaperTally(row) : null;
+    },
+
+    async listRoundPaperTallies(roundIds) {
+      if (roundIds.length === 0) {
+        return [];
+      }
+      const rows = await db
+        .select()
+        .from(roundPaperTallies)
+        .where(inArray(roundPaperTallies.roundId, [...roundIds]));
+      return rows.map(toStoredPaperTally);
     },
 
     async resolveRoundTie(roomId, roundId, winnerCandidateId) {
@@ -1794,7 +2908,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         const existingRows = await tx
           .select()
           .from(members)
-          .where(eq(members.churchId, churchId));
+          .where(and(eq(members.churchId, churchId), isNull(members.deletedAt)));
         const existingByName = new Map(
           existingRows.map((row) => [row.fullName.toLocaleLowerCase(), row]),
         );
@@ -1872,6 +2986,8 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       if (!church) {
         return null;
       }
+      const parsedBirthDate = input.birthDate ? new Date(`${input.birthDate}T00:00:00.000Z`) : null;
+      const nextFlags = input.societyFlags ?? {};
       return db.transaction(async (tx) => {
         const updated = await tx
           .update(members)
@@ -1879,22 +2995,100 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             fullName: input.fullName,
             isCommunicant: input.isCommunicant,
             isMale: input.isMale,
-            birthDate: input.birthDate ? new Date(`${input.birthDate}T00:00:00.000Z`) : null,
+            birthDate: parsedBirthDate,
             photoUrl: input.photoUrl ?? null,
-            societyFlags: input.societyFlags ?? {},
+            societyFlags: nextFlags,
           })
-          .where(and(eq(members.id, memberId), eq(members.churchId, church.id)))
+          .where(
+            and(
+              eq(members.id, memberId),
+              eq(members.churchId, church.id),
+              isNull(members.deletedAt),
+            ),
+          )
           .returning();
-        if (updated[0]) {
-          await tx
-            .update(candidates)
-            .set({
-              displayName: input.fullName,
-              photoUrl: input.photoUrl ?? null,
-            })
-            .where(eq(candidates.memberId, memberId));
+        const updatedMember = updated[0];
+        if (!updatedMember) {
+          return null;
         }
-        return updated[0] ? toStoredMember(updated[0]) : null;
+
+        // Propagate ONLY to non-closed rooms with 0 rounds.
+        const openRooms = await tx
+          .select({ id: rooms.id, roomType: rooms.roomType })
+          .from(rooms)
+          .where(and(eq(rooms.churchId, church.id), ne(rooms.status, "closed")));
+
+        if (openRooms.length > 0) {
+          const roundRooms = await tx
+            .selectDistinct({ roomId: rounds.roomId })
+            .from(rounds)
+            .where(inArray(rounds.roomId, openRooms.map((row) => row.id)));
+          const roomsWithRounds = new Set(roundRooms.map((row) => row.roomId));
+          const untouchedRooms = openRooms.filter((row) => !roomsWithRounds.has(row.id));
+          const untouchedRoomIds = untouchedRooms.map((row) => row.id);
+
+          if (untouchedRoomIds.length > 0) {
+            await tx
+              .update(candidates)
+              .set({
+                displayName: input.fullName,
+                photoUrl: input.photoUrl ?? null,
+                birthDate: parsedBirthDate,
+              })
+              .where(
+                and(
+                  eq(candidates.memberId, memberId),
+                  inArray(candidates.roomId, untouchedRoomIds),
+                ),
+              );
+
+            await tx
+              .update(roomMemberCodes)
+              .set({ displayName: input.fullName })
+              .where(
+                and(
+                  eq(roomMemberCodes.memberId, memberId),
+                  inArray(roomMemberCodes.roomId, untouchedRoomIds),
+                  isNull(roomMemberCodes.revokedAt),
+                ),
+              );
+
+            for (const untouchedRoom of untouchedRooms) {
+              const isEligibleVoter = isMemberEligibleVoter(
+                {
+                  isCommunicant: input.isCommunicant,
+                  societyFlags: nextFlags,
+                },
+                untouchedRoom.roomType as RoomType,
+              );
+              const updatedRoster = await tx
+                .update(roomRoster)
+                .set({
+                  fullName: input.fullName,
+                  photoUrl: input.photoUrl ?? null,
+                  birthDate: parsedBirthDate,
+                  isCommunicant: input.isCommunicant,
+                  isMale: input.isMale,
+                  societyFlags: nextFlags,
+                  isEligibleVoter,
+                })
+                .where(
+                  and(
+                    eq(roomRoster.roomId, untouchedRoom.id),
+                    eq(roomRoster.memberId, memberId),
+                    isNull(roomRoster.removedAt),
+                  ),
+                )
+                .returning({ id: roomRoster.id });
+
+              if (updatedRoster.length > 0) {
+                await recalculateRoomEligibleCount(tx, untouchedRoom.id);
+              }
+            }
+          }
+        }
+
+        return toStoredMember(updatedMember);
       });
     },
 
@@ -1904,23 +3098,69 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         return false;
       }
       return db.transaction(async (tx) => {
-        await tx
-          .update(roomMemberCodes)
-          .set({ memberId: null })
-          .where(eq(roomMemberCodes.memberId, memberId));
-        await tx
-          .update(participants)
-          .set({ memberId: null })
-          .where(eq(participants.memberId, memberId));
-        await tx
-          .update(candidates)
-          .set({ memberId: null })
-          .where(eq(candidates.memberId, memberId));
-        const deleted = await tx
-          .delete(members)
-          .where(and(eq(members.id, memberId), eq(members.churchId, church.id)))
+        const now = new Date();
+        const softDeleted = await tx
+          .update(members)
+          .set({ deletedAt: now })
+          .where(
+            and(
+              eq(members.id, memberId),
+              eq(members.churchId, church.id),
+              isNull(members.deletedAt),
+            ),
+          )
           .returning({ id: members.id });
-        return deleted.length > 0;
+        if (softDeleted.length === 0) {
+          return false;
+        }
+
+        const openRooms = await tx
+          .select({ id: rooms.id })
+          .from(rooms)
+          .where(and(eq(rooms.churchId, church.id), ne(rooms.status, "closed")));
+        const openRoomIds = openRooms.map((row) => row.id);
+
+        if (openRoomIds.length > 0) {
+          const removedRoster = await tx
+            .update(roomRoster)
+            .set({ removedAt: now })
+            .where(
+              and(
+                inArray(roomRoster.roomId, openRoomIds),
+                eq(roomRoster.memberId, memberId),
+                isNull(roomRoster.removedAt),
+              ),
+            )
+            .returning({ roomId: roomRoster.roomId });
+
+          await tx
+            .update(roomMemberCodes)
+            .set({ revokedAt: now })
+            .where(
+              and(
+                inArray(roomMemberCodes.roomId, openRoomIds),
+                eq(roomMemberCodes.memberId, memberId),
+                isNull(roomMemberCodes.revokedAt),
+              ),
+            );
+
+          await tx
+            .update(participants)
+            .set({ isPresent: false, joinKeyHash: null })
+            .where(
+              and(
+                inArray(participants.roomId, openRoomIds),
+                eq(participants.memberId, memberId),
+              ),
+            );
+
+          const affectedRoomIds = Array.from(new Set(removedRoster.map((row) => row.roomId)));
+          for (const affectedRoomId of affectedRoomIds) {
+            await recalculateRoomEligibleCount(tx, affectedRoomId);
+          }
+        }
+
+        return true;
       });
     },
 
@@ -1933,7 +3173,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       const rows = await db
         .select()
         .from(members)
-        .where(eq(members.churchId, church.id))
+        .where(and(eq(members.churchId, church.id), isNull(members.deletedAt)))
         .orderBy(asc(members.fullName));
       return rows.map(toStoredMember);
     },
@@ -2136,20 +3376,101 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
 function toStoredCandidate(row: {
   id: string;
   roomId: string;
+  memberId?: string | null;
   displayName: string;
   photoUrl?: string | null;
-  memberPhotoUrl?: string | null;
-  memberBirthDate?: Date | null;
+  birthDate?: Date | null;
   isEligible: boolean;
 }): StoredCandidate {
   return {
     id: row.id,
     roomId: row.roomId,
+    ...(row.memberId !== undefined ? { memberId: row.memberId } : {}),
     displayName: row.displayName,
-    photoUrl: row.memberPhotoUrl ?? row.photoUrl ?? null,
-    birthDate: row.memberBirthDate ? row.memberBirthDate.toISOString().slice(0, 10) : null,
+    photoUrl: row.photoUrl ?? null,
+    birthDate: row.birthDate ? row.birthDate.toISOString().slice(0, 10) : null,
     isEligible: row.isEligible,
   };
+}
+
+function toStoredRosterEntry(
+  row: {
+    id: string;
+    roomId: string;
+    memberId: string | null;
+    fullName: string;
+    birthDate: Date | null;
+    isCommunicant: boolean;
+    isMale: boolean | null;
+    isEligibleVoter: boolean;
+    votesOnPaper: boolean;
+    createdAt: Date;
+  },
+  accessCode: { id: string; code: string; revokedAt: Date | null } | null,
+  isPresent: boolean,
+): StoredRosterEntry {
+  return {
+    id: row.id,
+    roomId: row.roomId,
+    memberId: row.memberId,
+    fullName: row.fullName,
+    birthDate: row.birthDate ? row.birthDate.toISOString().slice(0, 10) : null,
+    isCommunicant: row.isCommunicant,
+    isMale: row.isMale,
+    isEligibleVoter: row.isEligibleVoter,
+    votesOnPaper: row.votesOnPaper,
+    createdAt: row.createdAt,
+    accessCode: accessCode
+      ? {
+          id: accessCode.id,
+          code: accessCode.code,
+          revokedAt: accessCode.revokedAt,
+        }
+      : null,
+    isPresent,
+  };
+}
+
+function toStoredPaperTally(row: {
+  id: string;
+  roundId: string;
+  ballotCount: number;
+  blankVotes: number;
+  nullVotes: number;
+  candidateVotes: Record<string, number>;
+  recordedByAdminId: string | null;
+  recordedByName: string | null;
+  recordedAt: Date;
+  updatedAt: Date;
+}): StoredPaperTally {
+  return {
+    id: row.id,
+    roundId: row.roundId,
+    ballotCount: row.ballotCount,
+    blankVotes: row.blankVotes,
+    nullVotes: row.nullVotes,
+    candidateVotes: row.candidateVotes ?? {},
+    recordedByAdminId: row.recordedByAdminId ?? null,
+    recordedByName: row.recordedByName ?? null,
+    recordedAt: row.recordedAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+async function recalculateRoomEligibleCount(tx: DbTransaction, roomId: string): Promise<number> {
+  const rows = await tx
+    .select({ value: count() })
+    .from(roomRoster)
+    .where(
+      and(
+        eq(roomRoster.roomId, roomId),
+        isNull(roomRoster.removedAt),
+        eq(roomRoster.isEligibleVoter, true),
+      ),
+    );
+  const eligibleCount = Number(rows[0]?.value ?? 0);
+  await tx.update(rooms).set({ eligibleCount }).where(eq(rooms.id, roomId));
+  return eligibleCount;
 }
 
 function toStoredMember(row: {
@@ -2199,6 +3520,154 @@ async function findParticipantByJoinKey(
   return rows[0] ?? null;
 }
 
+type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+async function joinParticipantInTransaction(
+  tx: DbTransaction,
+  roomId: string,
+  room: { id: string; title: string; status: string; churchId: string } | undefined,
+  rawCode: string,
+  joinKeyHash: string,
+): Promise<JoinWithCodeResult> {
+  const code = normalizeAccessCode(rawCode);
+  const codeRows = await tx
+    .select()
+    .from(roomMemberCodes)
+    .where(and(eq(roomMemberCodes.roomId, roomId), eq(roomMemberCodes.code, code)))
+    .limit(1)
+    .for("update");
+  const codeRow = codeRows[0];
+  if (!codeRow) {
+    return { ok: false, reason: "invalid_access_code" };
+  }
+  if (codeRow.revokedAt !== null) {
+    return { ok: false, reason: "revoked_access_code" };
+  }
+  if (codeRow.isSimulated && room && room.status !== "test") {
+    return { ok: false, reason: "simulation_requires_test_room" };
+  }
+
+  const existingByCode = await tx
+    .select()
+    .from(participants)
+    .where(and(eq(participants.roomId, roomId), eq(participants.accessCodeId, codeRow.id)))
+    .for("update")
+    .limit(1);
+  const existingByMember =
+    !existingByCode[0] && codeRow.memberId
+      ? await tx
+          .select()
+          .from(participants)
+          .where(and(eq(participants.roomId, roomId), eq(participants.memberId, codeRow.memberId)))
+          .for("update")
+          .limit(1)
+      : [];
+  const existing = existingByCode[0] ?? existingByMember[0];
+
+  if (existing) {
+    if (existing.joinKeyHash !== null && existing.joinKeyHash !== joinKeyHash) {
+      return { ok: false, reason: "access_code_in_use" };
+    }
+
+    const existingByJoinKey = await findParticipantByJoinKey(tx, roomId, joinKeyHash);
+    if (existingByJoinKey && existingByJoinKey.id !== existing.id) {
+      return { ok: false, reason: "access_code_in_use" };
+    }
+
+    const isSameSession = existing.joinKeyHash === joinKeyHash;
+    const updated = await tx
+      .update(participants)
+      .set({
+        accessCodeId: codeRow.id,
+        rosterEntryId: codeRow.rosterEntryId ?? null,
+        displayName: codeRow.displayName,
+        joinKeyHash,
+        isPresent: true,
+      })
+      .where(eq(participants.id, existing.id))
+      .returning();
+    const row = updated[0] ?? existing;
+    await insertAuditEvent(
+      tx,
+      roomId,
+      "participant_joined",
+      {
+        roomStatus: room?.status ?? "open",
+        voterOrigin: codeRow.isSimulated ? "test_simulator" : "authenticated_member",
+        isSimulated: codeRow.isSimulated,
+        memberVerified: !codeRow.isSimulated && codeRow.memberId !== null,
+        sessionFingerprint: joinKeyHash.slice(0, 12),
+        alreadyJoined: isSameSession,
+        adminIntervention: false,
+      },
+      {
+        churchId: room?.churchId ?? null,
+        roomTitle: room?.title ?? null,
+        actorRole: codeRow.isSimulated ? "simulated_voter" : "voter",
+      },
+    );
+    return {
+      ok: true,
+      participant: {
+        id: row.id,
+        roomId: row.roomId,
+        displayName: row.displayName,
+        alreadyJoined: isSameSession,
+      },
+    };
+  }
+
+  const existingByJoinKey = await findParticipantByJoinKey(tx, roomId, joinKeyHash);
+  if (existingByJoinKey) {
+    return { ok: false, reason: "access_code_in_use" };
+  }
+
+  const inserted = await tx
+    .insert(participants)
+    .values({
+      roomId,
+      memberId: codeRow.memberId,
+      accessCodeId: codeRow.id,
+      rosterEntryId: codeRow.rosterEntryId ?? null,
+      displayName: codeRow.displayName,
+      joinKeyHash,
+      isPresent: true,
+    })
+    .returning();
+  const row = inserted[0];
+  if (!row) {
+    throw new Error("Participant insert returned no row");
+  }
+  await insertAuditEvent(
+    tx,
+    roomId,
+    "participant_joined",
+    {
+      roomStatus: room?.status ?? "open",
+      voterOrigin: codeRow.isSimulated ? "test_simulator" : "authenticated_member",
+      isSimulated: codeRow.isSimulated,
+      memberVerified: !codeRow.isSimulated && codeRow.memberId !== null,
+      sessionFingerprint: joinKeyHash.slice(0, 12),
+      alreadyJoined: false,
+      adminIntervention: false,
+    },
+    {
+      churchId: room?.churchId ?? null,
+      roomTitle: room?.title ?? null,
+      actorRole: codeRow.isSimulated ? "simulated_voter" : "voter",
+    },
+  );
+  return {
+    ok: true,
+    participant: {
+      id: row.id,
+      roomId: row.roomId,
+      displayName: row.displayName,
+      alreadyJoined: false,
+    },
+  };
+}
+
 function toStoredRoom(row: {
   id: string;
   title: string;
@@ -2209,6 +3678,7 @@ function toStoredRoom(row: {
   eligibleCount: number;
   officeBanners?: Record<string, string> | null;
   inviteToken: string;
+  shortCode: string;
   status: string;
   reactionsEnabled: boolean;
   chatMuted?: boolean;
@@ -2224,6 +3694,7 @@ function toStoredRoom(row: {
     eligibleCount: row.eligibleCount,
     officeBanners: row.officeBanners ?? {},
     inviteToken: row.inviteToken,
+    shortCode: row.shortCode,
     status: row.status as RoomStatus,
     reactionsEnabled: row.reactionsEnabled,
     chatMuted: row.chatMuted ?? false,
@@ -2438,6 +3909,7 @@ function allocateUniqueCode(used: Set<string>): string {
 function toStoredAccessCode(row: {
   id: string;
   roomId: string;
+  rosterEntryId?: string | null;
   memberId: string | null;
   displayName: string;
   code: string;
@@ -2448,6 +3920,7 @@ function toStoredAccessCode(row: {
   return {
     id: row.id,
     roomId: row.roomId,
+    ...(row.rosterEntryId !== undefined ? { rosterEntryId: row.rosterEntryId } : {}),
     memberId: row.memberId,
     displayName: row.displayName,
     code: row.code,

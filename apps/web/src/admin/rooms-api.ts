@@ -1,5 +1,6 @@
 import { readQuorumPresence, type QuorumPresence } from "./presence-event";
 import type {
+  CandidateOption,
   CreatableRoomStatus,
   FieldError,
   IntegrityLogsResponse,
@@ -9,9 +10,11 @@ import type {
   PresetDefinition,
   QuorumUnit,
   RoomDetail,
+  RoomRosterEntryItem,
   RoomRound,
   RoomSummary,
   RoomType,
+  RoundPaperTally,
   RulesPreset,
   StoredMemberItem,
 } from "./types";
@@ -132,11 +135,18 @@ export async function closeRound(
   apiBase: string,
   roomId: string,
   roundId: string,
-  options?: { confirmPending?: boolean },
+  options?: { confirmPending?: boolean; confirmNoPaperBallots?: boolean },
 ): Promise<RoomRound> {
+  const payload: Record<string, unknown> = {};
+  if (options?.confirmPending) {
+    payload.confirmPending = true;
+  }
+  if (options?.confirmNoPaperBallots) {
+    payload.confirmNoPaperBallots = true;
+  }
   return postRound(
     `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds/${encodeURIComponent(roundId)}/close`,
-    options?.confirmPending ? { confirmPending: true } : undefined,
+    Object.keys(payload).length > 0 ? payload : undefined,
   );
 }
 
@@ -487,6 +497,36 @@ export async function listPresentParticipants(
   return body.participants;
 }
 
+export type ReleaseSessionResult = {
+  released: boolean;
+  participant: {
+    id: string;
+    displayName: string;
+    isPresent: boolean;
+  };
+};
+
+export async function releaseParticipantSession(
+  apiBase: string,
+  roomId: string,
+  participantId: string,
+): Promise<ReleaseSessionResult> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/participants/${encodeURIComponent(participantId)}/release-session`,
+    {
+      method: "POST",
+      credentials: "include",
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as Partial<ReleaseSessionResult> & {
+    error?: string;
+  };
+  if (!response.ok || typeof body.released !== "boolean" || !body.participant) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return { released: body.released, participant: body.participant };
+}
+
 export async function expelParticipants(
   apiBase: string,
   roomId: string,
@@ -649,6 +689,231 @@ export async function fetchIntegrityLogs(
     logs: body.logs,
     rooms: Array.isArray(body.rooms) ? body.rooms : [],
     summary: body.summary,
+  };
+}
+
+export async function fetchRoomRoster(
+  apiBase: string,
+  roomId: string,
+): Promise<{ entries: RoomRosterEntryItem[]; eligibleCount: number }> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/roster`,
+    { credentials: "include" },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    entries?: RoomRosterEntryItem[];
+    eligibleCount?: number;
+    error?: string;
+  };
+  if (!response.ok || !Array.isArray(body.entries)) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return {
+    entries: body.entries,
+    eligibleCount: typeof body.eligibleCount === "number" ? body.eligibleCount : body.entries.length,
+  };
+}
+
+export async function addRoomRosterMember(
+  apiBase: string,
+  roomId: string,
+  input:
+    | { memberId: string }
+    | { fullName: string; birthDate?: string | null; isCommunicant?: boolean; isMale?: boolean | null },
+): Promise<{
+  entry: RoomRosterEntryItem;
+  accessCode: MemberAccessCodeItem | null;
+  eligibleCount: number;
+}> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/roster`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    entry?: RoomRosterEntryItem;
+    accessCode?: MemberAccessCodeItem | null;
+    eligibleCount?: number;
+    error?: string;
+  };
+  if (!response.ok || !body.entry) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return {
+    entry: body.entry,
+    accessCode: body.accessCode ?? null,
+    eligibleCount: typeof body.eligibleCount === "number" ? body.eligibleCount : 0,
+  };
+}
+
+export async function removeRoomRosterEntry(
+  apiBase: string,
+  roomId: string,
+  entryId: string,
+): Promise<{ removed: boolean; eligibleCount: number }> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/roster/${encodeURIComponent(entryId)}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    removed?: boolean;
+    eligibleCount?: number;
+    error?: string;
+  };
+  if (!response.ok) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return {
+    removed: Boolean(body.removed ?? true),
+    eligibleCount: typeof body.eligibleCount === "number" ? body.eligibleCount : 0,
+  };
+}
+
+export async function setRosterPaperMode(
+  apiBase: string,
+  roomId: string,
+  entryId: string,
+  votesOnPaper: boolean,
+): Promise<{
+  entry: RoomRosterEntryItem;
+  accessCode: MemberAccessCodeItem | null;
+  presence: {
+    presentCount: number;
+    onlinePresentCount?: number;
+    paperVotersCount?: number;
+    eligibleCount: number;
+    requiredCount: number;
+    quorumMet: boolean;
+  };
+}> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/roster/${encodeURIComponent(entryId)}/paper-mode`,
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ votesOnPaper }),
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    entry?: RoomRosterEntryItem;
+    accessCode?: MemberAccessCodeItem | null;
+    presence?: {
+      presentCount: number;
+      onlinePresentCount?: number;
+      paperVotersCount?: number;
+      eligibleCount: number;
+      requiredCount: number;
+      quorumMet: boolean;
+    };
+    error?: string;
+  };
+  if (!response.ok || !body.entry || !body.presence) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return {
+    entry: body.entry,
+    accessCode: body.accessCode ?? null,
+    presence: body.presence,
+  };
+}
+
+export async function savePaperTally(
+  apiBase: string,
+  roomId: string,
+  roundId: string,
+  payload: {
+    ballotCount: number;
+    blankVotes: number;
+    nullVotes: number;
+    candidateVotes: Record<string, number>;
+  },
+): Promise<RoundPaperTally> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/rounds/${encodeURIComponent(roundId)}/paper-tally`,
+    {
+      method: "PUT",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    paperTally?: RoundPaperTally;
+    error?: string;
+  };
+  if (!response.ok || !body.paperTally) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return body.paperTally;
+}
+
+export async function addRoomCandidate(
+  apiBase: string,
+  roomId: string,
+  input: {
+    memberId?: string;
+    rosterEntryId?: string;
+    displayName?: string;
+    birthDate?: string | null;
+    officeLabel?: string;
+  },
+): Promise<{ candidate: CandidateOption; candidates: CandidateOption[] }> {
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/candidates`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    candidate?: CandidateOption;
+    candidates?: CandidateOption[];
+    error?: string;
+  };
+  if (!response.ok || !body.candidate || !Array.isArray(body.candidates)) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return {
+    candidate: body.candidate,
+    candidates: body.candidates,
+  };
+}
+
+export async function removeRoomCandidate(
+  apiBase: string,
+  roomId: string,
+  candidateId: string,
+  officeLabel?: string,
+): Promise<{ removed: boolean; candidates: CandidateOption[] }> {
+  const qs = officeLabel ? `?officeLabel=${encodeURIComponent(officeLabel)}` : "";
+  const response = await fetch(
+    `${apiBase}/v1/admin/rooms/${encodeURIComponent(roomId)}/candidates/${encodeURIComponent(candidateId)}${qs}`,
+    {
+      method: "DELETE",
+      credentials: "include",
+    },
+  );
+  const body = (await response.json().catch(() => ({}))) as {
+    removed?: boolean;
+    candidates?: CandidateOption[];
+    error?: string;
+  };
+  if (!response.ok || !Array.isArray(body.candidates)) {
+    throw new RoomRequestError(response.status, body.error ?? "unknown");
+  }
+  return {
+    removed: Boolean(body.removed ?? true),
+    candidates: body.candidates,
   };
 }
 

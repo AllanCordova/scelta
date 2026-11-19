@@ -1,11 +1,22 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JoinRoom } from "./JoinRoom";
-import { writeJoinIdentity } from "./join-identity";
+import { readJoinIdentity, writeJoinIdentity } from "./join-identity";
 
 describe("JoinRoom", () => {
+  const originalUserAgent = navigator.userAgent;
+
   beforeEach(() => {
     window.localStorage.clear();
+    window.history.replaceState(null, "", "/");
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, "userAgent", {
+      value: originalUserAgent,
+      configurable: true,
+    });
+    vi.restoreAllMocks();
   });
 
   it("asks for an access code and confirms entry", async () => {
@@ -703,6 +714,262 @@ describe("JoinRoom", () => {
     const banner = await screen.findByAltText("Banner do cargo Presidente");
     expect(banner).toHaveAttribute("src", "https://example.com/presidente-banner.png");
     expect(banner.closest(".voter-scrutiny-brief")).not.toBeNull();
+  });
+
+  it("joins via shortCode, strips ?c= via history.replaceState, and uses returned inviteToken for ballot calls", async () => {
+    window.history.replaceState(null, "", "/s/K7M2P9?c=A7K9M2");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/join/s/K7M2P9") && !init) {
+        return json({ title: "Assembleia Curta", status: "open", shortCode: "K7M2P9", canJoin: true });
+      }
+      if (url.endsWith("/v1/join/s/K7M2P9") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { code: string; joinKey: string };
+        expect(body.code).toBe("A7K9M2");
+        return json({
+          title: "Assembleia Curta",
+          status: "open",
+          shortCode: "K7M2P9",
+          inviteToken: "resolved-invite-token",
+          displayName: "Ana",
+          presentCount: 1,
+          alreadyJoined: false,
+        });
+      }
+      if (url.endsWith("/v1/join/resolved-invite-token/ballot")) {
+        return json({
+          roomStatus: "open",
+          candidates: [{ id: "cand-1", displayName: "Paulo" }],
+          round: { id: "round-1", number: 1, status: "open", outcome: null },
+        });
+      }
+      if (url.endsWith("/v1/join/resolved-invite-token/ballot/receipt")) {
+        return json({ roundId: "round-1", hasVoted: false });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<JoinRoom shortCode="k7m-2p9" />);
+
+    expect(await screen.findByRole("button", { name: "Paulo" })).toBeInTheDocument();
+    expect(window.location.search).toBe("");
+    expect(window.location.pathname).toBe("/s/K7M2P9");
+    expect(readJoinIdentity(window.localStorage, "s.K7M2P9")?.accessCode).toBe("A7K9M2");
+    expect(readJoinIdentity(window.localStorage, "resolved-invite-token")?.accessCode).toBe("A7K9M2");
+  });
+
+  it("preserves stored identity across transient errors and retries auto-join with exponential backoff", async () => {
+    const existingKey = "z".repeat(32);
+    writeJoinIdentity(window.localStorage, "retry-token", {
+      joinKey: existingKey,
+      displayName: "Ana",
+      accessCode: "A7K9M2",
+    });
+
+    let postAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/join/retry-token") && init?.method === "POST") {
+          postAttempts += 1;
+          if (postAttempts === 1) {
+            throw new TypeError("Failed to fetch");
+          }
+          if (postAttempts === 2) {
+            return json({ error: "rate_limited" }, 429);
+          }
+          return json({
+            title: "Assembleia Resiliente",
+            status: "open",
+            displayName: "Ana",
+            presentCount: 1,
+            alreadyJoined: true,
+          });
+        }
+        if (url.endsWith("/v1/join/retry-token")) {
+          return json({ title: "Assembleia Resiliente", status: "open", canJoin: true });
+        }
+        if (url.endsWith("/ballot")) {
+          return json({ roomStatus: "open", candidates: [], round: null });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(<JoinRoom token="retry-token" retryDelaysMs={[5, 10, 20]} />);
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/Tentando novamente/);
+    expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
+
+    expect(await screen.findByRole("heading", { name: "Você entrou" })).toBeInTheDocument();
+    expect(postAttempts).toBe(3);
+    expect(readJoinIdentity(window.localStorage, "retry-token")).toEqual({
+      joinKey: existingKey,
+      displayName: "Ana",
+      accessCode: "A7K9M2",
+    });
+  });
+
+  it("keeps stored identity intact when max transient retries are exhausted and offers manual retry", async () => {
+    const existingKey = "y".repeat(32);
+    writeJoinIdentity(window.localStorage, "down-token", {
+      joinKey: existingKey,
+      displayName: "Ana",
+      accessCode: "A7K9M2",
+    });
+
+    let shouldFail = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/join/down-token") && init?.method === "POST") {
+          if (shouldFail) {
+            return json({ error: "internal_error" }, 503);
+          }
+          return json({
+            title: "Assembleia",
+            status: "open",
+            displayName: "Ana",
+            presentCount: 1,
+            alreadyJoined: true,
+          });
+        }
+        if (url.endsWith("/v1/join/down-token")) {
+          return json({ title: "Assembleia", status: "open", canJoin: true });
+        }
+        if (url.endsWith("/ballot")) {
+          return json({ roomStatus: "open", candidates: [], round: null });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(<JoinRoom token="down-token" retryDelaysMs={[5, 10]} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Não foi possível conectar ao servidor. Tente novamente em instantes.",
+    );
+    expect(readJoinIdentity(window.localStorage, "down-token")).toEqual({
+      joinKey: existingKey,
+      displayName: "Ana",
+      accessCode: "A7K9M2",
+    });
+
+    shouldFail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(await screen.findByRole("heading", { name: "Você entrou" })).toBeInTheDocument();
+  });
+
+  it("shows 409 access_code_in_use message without clearing stored joinKey or triggering retries", async () => {
+    const existingKey = "x".repeat(32);
+    writeJoinIdentity(window.localStorage, "conflict-token", {
+      joinKey: existingKey,
+      displayName: "Ana",
+      accessCode: "A7K9M2",
+    });
+
+    let postCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          postCalls += 1;
+          return json(
+            { error: "access_code_in_use", message: "Este código já está em uso. Procure a mesa." },
+            409,
+          );
+        }
+        return json({ title: "Assembleia", status: "open", canJoin: true });
+      }),
+    );
+
+    render(<JoinRoom token="conflict-token" retryDelaysMs={[5, 10]} />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Este código já está em uso. Procure a mesa.",
+    );
+    expect(postCalls).toBe(1);
+    expect(readJoinIdentity(window.localStorage, "conflict-token")).toEqual({
+      joinKey: existingKey,
+      displayName: "Ana",
+      accessCode: "A7K9M2",
+    });
+  });
+
+  it("clears stored accessCode only on permanent 403 invalid_access_code", async () => {
+    const existingKey = "w".repeat(32);
+    writeJoinIdentity(window.localStorage, "auth-fail-token", {
+      joinKey: existingKey,
+      displayName: "Ana",
+      accessCode: "A7K9M2",
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          return json({ error: "invalid_access_code" }, 403);
+        }
+        return json({ title: "Assembleia", status: "open", canJoin: true });
+      }),
+    );
+
+    render(<JoinRoom token="auth-fail-token" />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Código de acesso inválido ou revogado.",
+    );
+    expect(readJoinIdentity(window.localStorage, "auth-fail-token")).toEqual({
+      joinKey: existingKey,
+      displayName: "",
+    });
+  });
+
+  it("renders in-app browser warning before calling join API or stripping ?c=, and proceeds on dismiss", async () => {
+    Object.defineProperty(navigator, "userAgent", {
+      value:
+        "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36 WhatsApp/2.24.1",
+      configurable: true,
+    });
+    window.history.replaceState(null, "", "/s/K7M2P9?c=A7K9M2");
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/join/s/K7M2P9") && !init) {
+        return json({ title: "Assembleia", status: "open", shortCode: "K7M2P9", canJoin: true });
+      }
+      if (url.endsWith("/v1/join/s/K7M2P9") && init?.method === "POST") {
+        return json({
+          title: "Assembleia",
+          status: "open",
+          shortCode: "K7M2P9",
+          inviteToken: "inapp-invite-token",
+          displayName: "Ana",
+          presentCount: 1,
+          alreadyJoined: false,
+        });
+      }
+      if (url.endsWith("/v1/join/inapp-invite-token/ballot")) {
+        return json({ roomStatus: "open", candidates: [], round: null });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<JoinRoom shortCode="K7M2P9" />);
+
+    expect(screen.getByTestId("in-app-browser-warning")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(window.location.search).toBe("?c=A7K9M2");
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar mesmo assim" }));
+
+    expect(await screen.findByRole("heading", { name: "Você entrou" })).toBeInTheDocument();
+    expect(window.location.search).toBe("");
+    expect(fetchMock).toHaveBeenCalled();
   });
 });
 

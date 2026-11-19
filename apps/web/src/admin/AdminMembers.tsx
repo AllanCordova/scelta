@@ -724,7 +724,7 @@ const csvImportSchema = z.object({
         title="Remover membro"
         description={
           pendingDeleteMember
-            ? `Tem certeza que deseja remover "${pendingDeleteMember.fullName}" do rol de membros?`
+            ? `Tem certeza que deseja remover "${pendingDeleteMember.fullName}" do rol de membros? O código de acesso será revogado nas salas abertas, mas salas encerradas e votos já registrados permanecem preservados.`
             : ""
         }
         confirmLabel={deletingMemberId ? "Removendo…" : "Remover"}

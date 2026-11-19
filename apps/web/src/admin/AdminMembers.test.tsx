@@ -120,6 +120,8 @@ describe("AdminMembers", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remover" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent('Tem certeza que deseja remover "Ana Clara"');
+    expect(dialog).toHaveTextContent("O código de acesso será revogado nas salas abertas");
+    expect(dialog).toHaveTextContent("salas encerradas e votos já registrados permanecem preservados");
 
     fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

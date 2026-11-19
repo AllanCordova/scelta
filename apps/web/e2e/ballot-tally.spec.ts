@@ -19,7 +19,7 @@ test("two voters cast distinct votes, results match, and neither UI exposes who 
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
-  const invite = page.getByRole("link", { name: /\/join\// });
+  const invite = page.getByRole("link", { name: /\/s\// });
   await expect(invite).toBeVisible();
   const href = await invite.getAttribute("href");
   if (!href) {

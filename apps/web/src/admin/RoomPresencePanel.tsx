@@ -5,6 +5,7 @@ import { ConfirmDialog } from "../shell/ConfirmDialog";
 import {
   expelParticipants,
   listPresentParticipants,
+  releaseParticipantSession,
   type PresentParticipant,
 } from "./rooms-api";
 
@@ -24,7 +25,10 @@ export function RoomPresencePanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [pending, setPending] = useState<
-    { type: "one"; person: PresentParticipant } | { type: "all" } | null
+    | { type: "expel-one"; person: PresentParticipant }
+    | { type: "expel-all" }
+    | { type: "release-session"; person: PresentParticipant }
+    | null
   >(null);
 
   useEffect(() => {
@@ -78,6 +82,28 @@ export function RoomPresencePanel({
     }
   }
 
+  async function releaseSession(person: PresentParticipant) {
+    if (isBusy) {
+      return;
+    }
+    setIsBusy(true);
+    try {
+      await releaseParticipantSession(apiBase, roomId, person.id);
+      const next = await listPresentParticipants(apiBase, roomId).catch(() =>
+        people.filter((item) => item.id !== person.id),
+      );
+      setPeople(next);
+      toast.success(
+        `Sessão de ${person.displayName} liberada. O código já pode ser usado em outro aparelho.`,
+      );
+      onChanged?.();
+    } catch {
+      toast.error("Não foi possível liberar a sessão.");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   return (
     <section className="panel access-codes-card" aria-labelledby="room-presence-heading">
       <div className="audit-feed-header">
@@ -99,14 +125,25 @@ export function RoomPresencePanel({
                 <span className="access-code-name">{person.displayName}</span>
                 <span className="muted">Entrou {formatJoinedAt(person.joinedAt)}</span>
               </div>
-              <button
-                type="button"
-                className="ghost danger-text round-action"
-                disabled={isBusy}
-                onClick={() => setPending({ type: "one", person })}
-              >
-                Expulsar
-              </button>
+              <div className="access-code-meta">
+                <button
+                  type="button"
+                  className="ghost round-action"
+                  data-testid="release-session-btn"
+                  disabled={isBusy}
+                  onClick={() => setPending({ type: "release-session", person })}
+                >
+                  Liberar sessão
+                </button>
+                <button
+                  type="button"
+                  className="ghost danger-text round-action"
+                  disabled={isBusy}
+                  onClick={() => setPending({ type: "expel-one", person })}
+                >
+                  Expulsar
+                </button>
+              </div>
             </li>
           ))}
         </ul>
@@ -116,22 +153,36 @@ export function RoomPresencePanel({
           type="button"
           className="ghost danger-text round-action"
           disabled={isBusy || people.length === 0}
-          onClick={() => setPending({ type: "all" })}
+          onClick={() => setPending({ type: "expel-all" })}
         >
           Expulsar todas
         </button>
       </div>
       <ConfirmDialog
         open={pending !== null}
-        title={pending?.type === "all" ? "Esvaziar a sala" : "Expulsar da sala"}
-        description={
-          pending?.type === "all"
-            ? "Isso zera as pessoas presentes. Os códigos de acesso não são revogados."
-            : pending?.type === "one"
-              ? `Expulsar ${pending.person.displayName}? O código de acesso dessa pessoa continua válido.`
-              : ""
+        title={
+          pending?.type === "expel-all"
+            ? "Esvaziar a sala"
+            : pending?.type === "release-session"
+              ? "Liberar sessão"
+              : "Expulsar da sala"
         }
-        confirmLabel={pending?.type === "all" ? "Expulsar todas" : "Expulsar"}
+        description={
+          pending?.type === "expel-all"
+            ? "Isso zera as pessoas presentes. Os códigos de acesso não são revogados."
+            : pending?.type === "release-session"
+              ? `Liberar a sessão de ${pending.person.displayName}? Isso encerra a sessão atual e permite que o mesmo código seja usado em outro aparelho.`
+              : pending?.type === "expel-one"
+                ? `Expulsar ${pending.person.displayName}? O código de acesso dessa pessoa continua válido.`
+                : ""
+        }
+        confirmLabel={
+          pending?.type === "expel-all"
+            ? "Expulsar todas"
+            : pending?.type === "release-session"
+              ? "Liberar sessão"
+              : "Expulsar"
+        }
         busy={isBusy}
         onCancel={() => setPending(null)}
         onConfirm={() => {
@@ -140,8 +191,10 @@ export function RoomPresencePanel({
           if (!target) {
             return;
           }
-          if (target.type === "all") {
+          if (target.type === "expel-all") {
             void expel({ all: true });
+          } else if (target.type === "release-session") {
+            void releaseSession(target.person);
           } else {
             void expel({ participantId: target.person.id });
           }

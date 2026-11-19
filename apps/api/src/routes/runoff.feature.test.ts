@@ -5,6 +5,7 @@ import {
   members,
   participants,
   roomMemberCodes,
+  roomRoster,
   rooms,
   rounds,
   voteReceipts,
@@ -64,6 +65,7 @@ describe("multi-round and runoff elections", () => {
     await db.delete(rounds);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
+    await db.delete(roomRoster);
     await clearAuditEvents(db);
     await db.delete(rooms);
     await db.delete(members);
@@ -443,18 +445,16 @@ describe("multi-round and runoff elections", () => {
       });
     }
     const memberName = `${displayName} (${joinKey.slice(-6)})`;
-    let generated = await repository.generateMemberAccessCodes(room.id);
+    const generated = await repository.listAccessCodes(room.id);
     let memberCode = generated.find((item) => item.displayName === memberName && !item.revokedAt);
     if (!memberCode) {
-      await repository.createMember({
+      const added = await repository.addRosterEntry!(room.id, {
         fullName: memberName,
-        isCommunicant: true,
-        isMale: true,
         birthDate: "1990-01-01",
-        societyFlags: { upaActive: true, umpActive: true },
       });
-      generated = await repository.generateMemberAccessCodes(room.id);
-      memberCode = generated.find((item) => item.displayName === memberName && !item.revokedAt);
+      if (added.ok) {
+        memberCode = added.accessCode;
+      }
     }
     return app.inject({
       method: "POST",

@@ -7,8 +7,9 @@ import { AdminRoomDetail } from "../admin/AdminRoomDetail";
 import { AdminRooms } from "../admin/AdminRooms";
 import { LoginPage } from "../auth/LoginPage";
 import { useAuth } from "../auth/AuthProvider";
+import { EnterCodePage } from "../join/EnterCodePage";
 import { JoinRoom } from "../join/JoinRoom";
-import { joinTokenFromPath } from "../join/path";
+import { joinTargetFromPath } from "../join/path";
 import { AccountPage } from "./AccountPage";
 import { Header } from "./Header";
 import { adminRoomIdFromPath } from "./paths";
@@ -17,7 +18,7 @@ import { TabBar } from "./TabBar";
 export function Shell() {
   const pathname = window.location.pathname;
   const page = pageFor(pathname);
-  const joinToken = page === "join" ? joinTokenFromPath(pathname) : null;
+  const joinTarget = page === "join" ? joinTargetFromPath(pathname) : null;
   const adminRoomId = page === "admin-room-detail" ? adminRoomIdFromPath(pathname) : null;
 
   return (
@@ -37,7 +38,12 @@ export function Shell() {
           {page === "admin-logs" ? <AdminGate view="logs" /> : null}
           {page === "admin-profile" ? <AdminGate view="profile" /> : null}
           {page === "account" ? <AccountPage /> : null}
-          {page === "join" && joinToken ? <JoinRoom token={joinToken} /> : null}
+          {page === "join" && joinTarget?.mode === "token" ? (
+            <JoinRoom token={joinTarget.token} />
+          ) : null}
+          {page === "join" && joinTarget?.mode === "shortCode" ? (
+            <JoinRoom shortCode={joinTarget.shortCode} />
+          ) : null}
         </main>
       </div>
       <TabBar />
@@ -53,7 +59,12 @@ function RootLanding() {
   if (auth.status === "authenticated") {
     return auth.user.role === "admin" ? <AdminHub /> : <AccountPage />;
   }
-  return <LoginPage />;
+  return (
+    <div className="join-page">
+      <EnterCodePage />
+      <LoginPage />
+    </div>
+  );
 }
 
 function AdminGate({
@@ -112,7 +123,7 @@ function AdminGate({
 }
 
 /**
- * Join (`/join/...`) and future ballot pages stay on the public branch.
+ * Join (`/join/...`, `/s/...`) and future ballot pages stay on the public branch.
  * Only `/admin` asks for an admin session.
  */
 function pageFor(
@@ -130,7 +141,7 @@ function pageFor(
   | "account"
   | "join" {
   const path = pathname.replace(/\/+$/, "") || "/";
-  if (path === "/entrar") {
+  if (path === "/entrar" || path === "/login") {
     return "login";
   }
   if (path === "/admin") {
@@ -157,7 +168,7 @@ function pageFor(
   if (path === "/conta") {
     return "account";
   }
-  if (joinTokenFromPath(path)) {
+  if (joinTargetFromPath(path)) {
     return "join";
   }
   return "home";

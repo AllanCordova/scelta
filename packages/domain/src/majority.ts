@@ -1,3 +1,5 @@
+import type { PaperTallyInput } from "./paper-votes.js";
+
 export type TallyEntry = {
   candidateId: string;
   votes: number;
@@ -22,6 +24,22 @@ export type CandidateStanding = {
   candidateId: string;
   displayName: string;
   votes: number;
+  onlineVotes?: number;
+  paperVotes?: number;
+};
+
+export type VoteOriginBreakdown = {
+  online: {
+    ballots: number;
+    candidateVotes: number;
+    blankVotes: number;
+  };
+  paper: {
+    ballots: number;
+    candidateVotes: number;
+    blankVotes: number;
+    nullVotes: number;
+  };
 };
 
 export type TieBreakReason = "age" | "admin_tiebreak";
@@ -37,6 +55,7 @@ export type TallyRoundOptions = {
   winnerOverrideId?: string | null;
   tieBreakReason?: TieBreakReason | null;
   didNotVoteCount?: number;
+  paperTally?: PaperTallyInput;
 };
 
 export type RoundTally = {
@@ -51,6 +70,7 @@ export type RoundTally = {
   tieBreakReason?: TieBreakReason;
   tieBreakRequired?: boolean;
   tiedCandidates?: TiedCandidateOption[];
+  voteOrigin?: VoteOriginBreakdown;
 };
 
 /** Absolute majority: strictly more than 50% of votes (> half). */
@@ -77,39 +97,93 @@ export function tallyRoundVotes(
   options?: TallyRoundOptions,
 ): RoundTally {
   const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-  const counts = new Map<string, number>();
+  const onlineCounts = new Map<string, number>();
   for (const candidate of candidates) {
-    counts.set(candidate.id, 0);
+    onlineCounts.set(candidate.id, 0);
   }
 
-  let nullVotes = 0;
+  let onlineBlankVotes = 0;
+  let onlineCandidateVotes = 0;
   for (const candidateId of ballotCandidateIds) {
     if (candidateId === null) {
-      nullVotes += 1;
+      onlineBlankVotes += 1;
       continue;
     }
-    const current = counts.get(candidateId);
+    const current = onlineCounts.get(candidateId);
     if (current === undefined) {
       throw new Error("Ballot references an unknown candidate");
     }
-    counts.set(candidateId, current + 1);
+    onlineCounts.set(candidateId, current + 1);
+    onlineCandidateVotes += 1;
+  }
+
+  const paperTally = options?.paperTally;
+  const paperCounts = new Map<string, number>();
+  let paperCandidateMarks = 0;
+  if (paperTally) {
+    for (const candidate of candidates) {
+      paperCounts.set(candidate.id, 0);
+    }
+    for (const [candidateId, votes] of Object.entries(paperTally.candidateVotes)) {
+      if (votes === 0) {
+        continue;
+      }
+      if (!byId.has(candidateId)) {
+        throw new Error("Paper tally references an unknown candidate");
+      }
+      paperCounts.set(candidateId, (paperCounts.get(candidateId) ?? 0) + votes);
+      paperCandidateMarks += votes;
+    }
   }
 
   const tallies: TallyEntry[] = candidates.map((candidate) => ({
     candidateId: candidate.id,
-    votes: counts.get(candidate.id) ?? 0,
+    votes: (onlineCounts.get(candidate.id) ?? 0) + (paperCounts.get(candidate.id) ?? 0),
   }));
 
-  const majority = hasAbsoluteMajority(tallies, 1, nullVotes);
+  // Paper null votes are invalid votes and stay outside the majority denominator,
+  // while blank votes (online and paper) count toward totalVotes.
+  const majorityBlankVotes = onlineBlankVotes + (paperTally?.blankVotes ?? 0);
+  const nullVotes = majorityBlankVotes + (paperTally?.nullVotes ?? 0);
+  const majority = hasAbsoluteMajority(tallies, 1, majorityBlankVotes);
   const nameById = new Map(candidates.map((candidate) => [candidate.id, candidate.displayName]));
-  const standings: CandidateStanding[] = majority.sorted.map((entry) => ({
-    candidateId: entry.candidateId,
-    displayName: nameById.get(entry.candidateId) ?? "",
-    votes: entry.votes,
-  }));
+  const standings: CandidateStanding[] = majority.sorted.map((entry) => {
+    if (!paperTally) {
+      return {
+        candidateId: entry.candidateId,
+        displayName: nameById.get(entry.candidateId) ?? "",
+        votes: entry.votes,
+      };
+    }
+    return {
+      candidateId: entry.candidateId,
+      displayName: nameById.get(entry.candidateId) ?? "",
+      votes: entry.votes,
+      onlineVotes: onlineCounts.get(entry.candidateId) ?? 0,
+      paperVotes: paperCounts.get(entry.candidateId) ?? 0,
+    };
+  });
 
-  const didNotVoteExtra =
-    options?.didNotVoteCount !== undefined ? { didNotVoteCount: options.didNotVoteCount } : {};
+  const extraFields: Pick<RoundTally, "didNotVoteCount" | "voteOrigin"> = {
+    ...(options?.didNotVoteCount !== undefined ? { didNotVoteCount: options.didNotVoteCount } : {}),
+    ...(paperTally
+      ? {
+          voteOrigin: {
+            online: {
+              ballots: ballotCandidateIds.length,
+              candidateVotes: onlineCandidateVotes,
+              blankVotes: onlineBlankVotes,
+            },
+            paper: {
+              ballots: paperTally.ballotCount,
+              candidateVotes: paperCandidateMarks,
+              blankVotes: paperTally.blankVotes,
+              nullVotes: paperTally.nullVotes,
+            },
+          },
+        }
+      : {}),
+  };
 
   if (options?.winnerOverrideId) {
     const overrideWinner = byId.get(options.winnerOverrideId);
@@ -122,7 +196,7 @@ export function tallyRoundVotes(
         winnerId: overrideWinner.id,
         winnerName: overrideWinner.displayName,
         standings,
-        ...didNotVoteExtra,
+        ...extraFields,
         ...(options.tieBreakReason ? { tieBreakReason: options.tieBreakReason } : {}),
       };
     }
@@ -140,7 +214,7 @@ export function tallyRoundVotes(
       winnerId,
       winnerName,
       standings,
-      ...didNotVoteExtra,
+      ...extraFields,
     };
   }
 
@@ -169,7 +243,7 @@ export function tallyRoundVotes(
         winnerId: singleWinner.id,
         winnerName: singleWinner.displayName,
         standings,
-        ...didNotVoteExtra,
+        ...extraFields,
       };
     }
 
@@ -194,7 +268,7 @@ export function tallyRoundVotes(
             winnerId: oldest.id,
             winnerName: oldest.displayName,
             standings,
-            ...didNotVoteExtra,
+            ...extraFields,
             tieBreakReason: "age",
           };
         }
@@ -208,7 +282,7 @@ export function tallyRoundVotes(
         winnerId: null,
         winnerName: null,
         standings,
-        ...didNotVoteExtra,
+        ...extraFields,
         tieBreakRequired: true,
         tiedCandidates: tiedCandidates.map((candidate) => ({
           id: candidate.id,
@@ -227,7 +301,7 @@ export function tallyRoundVotes(
     winnerId: null,
     winnerName: null,
     standings,
-    ...didNotVoteExtra,
+    ...extraFields,
   };
 }
 

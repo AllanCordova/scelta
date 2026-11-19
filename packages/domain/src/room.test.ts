@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canManageRoomCandidates,
   canOpenRound,
   canSimulateInRoom,
   canTransitionRoomStatus,
@@ -314,5 +315,28 @@ describe("validateCreateRoom", () => {
     if (!result.ok) {
       expect(result.errors).toContainEqual({ field: "title", code: "required" });
     }
+  });
+
+  it("allows candidate management only when room is not closed and no round exists for scope", () => {
+    expect(canManageRoomCandidates("draft", false)).toEqual({ allowed: true });
+    expect(canManageRoomCandidates("open", false)).toEqual({ allowed: true });
+    expect(canManageRoomCandidates("test", false)).toEqual({ allowed: true });
+
+    expect(canManageRoomCandidates("closed", false)).toEqual({
+      allowed: false,
+      reason: "room_closed",
+    });
+    expect(canManageRoomCandidates("closed", true)).toEqual({
+      allowed: false,
+      reason: "room_closed",
+    });
+    expect(canManageRoomCandidates("open", true)).toEqual({
+      allowed: false,
+      reason: "candidates_locked_after_round",
+    });
+    expect(canManageRoomCandidates("test", true)).toEqual({
+      allowed: false,
+      reason: "candidates_locked_after_round",
+    });
   });
 });

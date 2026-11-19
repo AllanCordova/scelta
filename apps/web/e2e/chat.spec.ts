@@ -21,7 +21,7 @@ test("live room chat supports text + emotes, 2 msgs/5s rate limit, and admin mut
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
-  const invite = page.getByRole("link", { name: /\/join\// });
+  const invite = page.getByRole("link", { name: /\/s\// });
   await expect(invite).toBeVisible();
   const href = await invite.getAttribute("href");
   if (!href) {

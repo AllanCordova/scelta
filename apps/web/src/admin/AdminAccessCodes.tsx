@@ -1,10 +1,17 @@
 import { useEffect, useState } from "react";
-import QRCode from "qrcode";
 import { toast } from "sonner";
 import { apiUrl } from "../api-url";
+import {
+  fetchPublicConfig,
+  hasOriginMismatch,
+  resolvePublicOrigin,
+  type PublicConfig,
+} from "../config-api";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { AccessCodesPanel } from "./AccessCodesPanel";
-import { inviteUrl } from "./room-draft";
+import { paginateCardsForPrint } from "./card-pagination";
+import { generateQrSvg } from "./qr-svg";
+import { displayShortRoomUrl, inviteUrl, shortRoomUrl } from "./room-draft";
 import { listRooms, rotateRoomInvite } from "./rooms-api";
 import type { MemberAccessCodeItem, RoomSummary } from "./types";
 
@@ -16,10 +23,26 @@ export function AdminAccessCodes() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRotating, setIsRotating] = useState(false);
   const [confirmRotate, setConfirmRotate] = useState(false);
+  const [publicConfig, setPublicConfig] = useState<PublicConfig>({ publicUrl: null });
   const [printError, setPrintError] = useState<string | null>(null);
   const [printCards, setPrintCards] = useState<
-    Array<{ id: string; displayName: string; code: string; qrUrl: string; loginUrl: string }> | null
+    Array<{ id: string; displayName: string; code: string; qrSvg: string; displayUrl: string }> | null
   >(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPublicConfig()
+      .then((config) => {
+        if (!cancelled) {
+          setPublicConfig(config);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,8 +73,10 @@ export function AdminAccessCodes() {
   }, []);
 
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
+  const publicOrigin = resolvePublicOrigin(publicConfig.publicUrl, window.location.origin);
+  const originMismatch = hasOriginMismatch(publicConfig.publicUrl, window.location.origin);
   const fullInviteUrl = selectedRoom
-    ? inviteUrl(window.location.origin, selectedRoom.invitePath ?? `/join/${selectedRoom.inviteToken}`)
+    ? inviteUrl(publicOrigin, selectedRoom.invitePath ?? `/join/${selectedRoom.inviteToken}`)
     : null;
 
   async function handleRotateInvite() {
@@ -74,7 +99,7 @@ export function AdminAccessCodes() {
   }
 
   async function handlePreparePrintCards(activeCodesList: MemberAccessCodeItem[]) {
-    if (!fullInviteUrl) {
+    if (!selectedRoom) {
       return;
     }
     const activeCodes = activeCodesList
@@ -86,16 +111,17 @@ export function AdminAccessCodes() {
     }
     setPrintError(null);
     try {
+      const displayUrl = displayShortRoomUrl(publicOrigin, selectedRoom.shortCode);
       const cards = await Promise.all(
         activeCodes.map(async (item) => {
-          const urlWithCode = `${fullInviteUrl}?code=${encodeURIComponent(item.code)}`;
-          const qrUrl = await QRCode.toDataURL(urlWithCode, { margin: 1, width: 120 });
+          const urlWithCode = shortRoomUrl(publicOrigin, selectedRoom.shortCode, item.code);
+          const qrSvg = await generateQrSvg(urlWithCode);
           return {
             id: item.id,
             displayName: item.displayName,
             code: item.code,
-            qrUrl,
-            loginUrl: urlWithCode,
+            qrSvg,
+            displayUrl,
           };
         }),
       );
@@ -116,6 +142,20 @@ export function AdminAccessCodes() {
           Selecione uma sala para gerar, visualizar, imprimir e revogar códigos individuais de entrada.
         </p>
       </header>
+
+      {originMismatch ? (
+        <div
+          className="tiebreak-admin-box no-print"
+          role="status"
+          data-testid="public-url-mismatch-warning"
+        >
+          <p>
+            Você está acessando o painel por <strong>{window.location.origin}</strong>, mas a URL
+            pública configurada é <strong>{publicOrigin}</strong>. Os links e QR Codes estão usando
+            a URL pública configurada.
+          </p>
+        </div>
+      ) : null}
 
       {isLoading ? (
         <section className="panel">
@@ -216,25 +256,27 @@ export function AdminAccessCodes() {
               </button>
             </div>
           </div>
-          <div className="print-cards-grid">
-            {printCards.map((card) => (
-              <article key={card.id} className="print-card-item">
-                <img
-                  src={card.qrUrl}
-                  alt={`QR Code de ${card.displayName}`}
-                  width={104}
-                  height={104}
-                />
-                <div className="print-card-details">
-                  <span className="print-card-room">{selectedRoom.title}</span>
-                  <strong className="print-card-name">{card.displayName}</strong>
-                  <span className="print-card-code-label">Código de acesso:</span>
-                  <code className="print-card-code">{card.code}</code>
-                  <span className="print-card-url">{card.loginUrl}</span>
-                </div>
-              </article>
-            ))}
-          </div>
+          {paginateCardsForPrint(printCards).map((sheetCards, sheetIndex) => (
+            <div key={sheetIndex} className="print-sheet">
+              {sheetCards.map((card) => (
+                <article key={card.id} className="print-card-item">
+                  <div
+                    className="print-card-qr"
+                    role="img"
+                    aria-label={`QR Code de ${card.displayName}`}
+                    dangerouslySetInnerHTML={{ __html: card.qrSvg }}
+                  />
+                  <div className="print-card-details">
+                    <span className="print-card-room">{selectedRoom.title}</span>
+                    <strong className="print-card-name">{card.displayName}</strong>
+                    <span className="print-card-code-label">Código de acesso:</span>
+                    <code className="print-card-code">{card.code}</code>
+                    <span className="print-card-short-url">{card.displayUrl}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ))}
         </div>
       ) : null}
     </div>

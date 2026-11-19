@@ -34,12 +34,16 @@ For every stage (`Etapa 0` through `Etapa 7`) in [`docs/plano-v2.md`](docs/plano
 3. **Follow Mandatory Engineering Standards**:
    - **Code (`agents/code-standards.md`)**: English identifiers and comments, atomic single-purpose functions, SOLID principles, pure domain logic in `@scelta/domain`, side effects at boundaries.
    - **Security (`agents/security.md`)**: Strict ballot anonymity (never link voter identity or timestamp to ballot choice), server-side authz, input validation, rate limiting, immutable audit trail.
-   - **Testing (`agents/testing.md`)**: Every task must include Unit tests (`packages/domain`, `apps/api`, `apps/web`), Feature/Integration tests (`*.feature.test.ts`), and Browser E2E tests (`apps/web/e2e`) when user-visible.
+   - **Testing (`agents/testing.md`)**: Every task must include Unit tests (`packages/domain`, `apps/api`, `apps/web`), Feature/Integration tests (`*.feature.test.ts`), and **new Playwright Browser E2E tests** (`apps/web/e2e/*.spec.ts`) covering all new user-visible features.
+   - **Mandatory Playwright E2E Execution**: After implementing a stage (and after any UI/routing/API change), ALWAYS execute the full Playwright E2E suite (`pnpm test:e2e`) to test the new features end-to-end and verify zero regressions across all existing specs. Update stale selectors when intentional UX changes occur, and never mark a stage done with failing E2E tests.
 4. **Mandatory Review Round (Clean Context)**:
    - After implementing a stage, run a dedicated **Review Round** using a clean-context `gemini-4-hydrogen-high` / `gemini-4-hydrogen-medium` reviewer covering:
      1. **Code & Architecture Review** against acceptance criteria and `agents/code-standards.md`.
      2. **Security Audit** against `agents/security.md` and voting anonymity invariants.
      3. **Test & Verification Audit** against `agents/testing.md` and local CI execution (`build`, `typecheck`, `lint`, `test`, `test:feature`, `test:e2e`).
    - Address all blockers and regressions found during the review round before marking any task complete.
-5. **Update the Kanban Board (GitHub Project + Repo Docs)**:
-   - Once implementation and the review round pass, update the GitHub Project Kanban (`https://github.com/users/AllanCordova/projects/8/views/1`) as well as [`docs/backlog.md`](docs/backlog.md) and [`docs/plano-v2.md`](docs/plano-v2.md) with what was implemented in the stage.
+5. **Update the Kanban Board Immediately After Each Stage (GitHub Project + Repo Docs)**:
+   - **Mandatory post-stage step:** Once implementation and the review round pass, **immediately** update:
+     1. The local Kanban tables in [`docs/backlog.md`](docs/backlog.md) and [`docs/plano-v2.md`](docs/plano-v2.md) with every completed task.
+     2. The GitHub Project Kanban board (`https://github.com/users/AllanCordova/projects/8/views/1`), moving the stage's tasks to `Done`.
+   - **No Browser for GitHub:** Do **NOT** open GitHub in the browser to read or update the Kanban board. Always use the **GitHub MCP server** or the **`gh` CLI** (`gh project item-edit`). If neither is available/authenticated in the environment, inform the user clearly so they can connect it.

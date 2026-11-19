@@ -11,6 +11,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  varchar,
 } from "drizzle-orm/pg-core";
 
 export const quorumUnitEnum = pgEnum("quorum_unit", ["absolute", "percent"]);
@@ -80,6 +81,7 @@ export const members = pgTable("members", {
   birthDate: timestamp("birth_date", { mode: "date" }),
   photoUrl: text("photo_url"),
   societyFlags: jsonb("society_flags").$type<Record<string, unknown>>().default({}),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -99,12 +101,42 @@ export const rooms = pgTable(
     eligibleCount: integer("eligible_count").notNull().default(0),
     officeBanners: jsonb("office_banners").$type<Record<string, string>>().notNull().default({}),
     inviteToken: text("invite_token").notNull(),
+    shortCode: varchar("short_code", { length: 12 }).notNull(),
     status: roomStatusEnum("status").notNull().default("draft"),
     reactionsEnabled: boolean("reactions_enabled").notNull().default(true),
     chatMuted: boolean("chat_muted").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [uniqueIndex("rooms_invite_token_uidx").on(table.inviteToken)],
+  (table) => [
+    uniqueIndex("rooms_invite_token_uidx").on(table.inviteToken),
+    uniqueIndex("rooms_short_code_uidx").on(table.shortCode),
+  ],
+);
+
+export const roomRoster = pgTable(
+  "room_roster",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    memberId: uuid("member_id").references(() => members.id, { onDelete: "set null" }),
+    fullName: text("full_name").notNull(),
+    photoUrl: text("photo_url"),
+    birthDate: timestamp("birth_date", { mode: "date" }),
+    isCommunicant: boolean("is_communicant").notNull().default(true),
+    isMale: boolean("is_male"),
+    societyFlags: jsonb("society_flags").$type<Record<string, unknown>>().default({}),
+    isEligibleVoter: boolean("is_eligible_voter").notNull().default(true),
+    votesOnPaper: boolean("votes_on_paper").notNull().default(false),
+    removedAt: timestamp("removed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("room_roster_active_member_uidx")
+      .on(table.roomId, table.memberId)
+      .where(sql`removed_at IS NULL AND member_id IS NOT NULL`),
+  ],
 );
 
 export const roomMemberCodes = pgTable(
@@ -114,6 +146,7 @@ export const roomMemberCodes = pgTable(
     roomId: uuid("room_id")
       .notNull()
       .references(() => rooms.id),
+    rosterEntryId: uuid("roster_entry_id").references(() => roomRoster.id, { onDelete: "set null" }),
     memberId: uuid("member_id").references(() => members.id),
     displayName: text("display_name").notNull(),
     code: text("code").notNull(),
@@ -138,9 +171,10 @@ export const participants = pgTable(
       .references(() => rooms.id),
     memberId: uuid("member_id").references(() => members.id),
     accessCodeId: uuid("access_code_id").references(() => roomMemberCodes.id),
+    rosterEntryId: uuid("roster_entry_id").references(() => roomRoster.id, { onDelete: "set null" }),
     displayName: text("display_name").notNull(),
-    /** SHA-256 of the client join key. One presence row per room and key. */
-    joinKeyHash: text("join_key_hash").notNull(),
+    /** SHA-256 of the client join key, or null when released by an admin. */
+    joinKeyHash: text("join_key_hash"),
     isPresent: boolean("is_present").notNull().default(true),
     chatMuted: boolean("chat_muted").notNull().default(false),
     joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
@@ -193,6 +227,7 @@ export const candidates = pgTable("candidates", {
   memberId: uuid("member_id").references(() => members.id),
   displayName: text("display_name").notNull(),
   photoUrl: text("photo_url"),
+  birthDate: timestamp("birth_date", { mode: "date" }),
   isEligible: boolean("is_eligible").notNull().default(true),
 });
 
@@ -228,6 +263,27 @@ export const voteReceipts = pgTable(
       table.participantId,
     ),
   ],
+);
+
+export const roundPaperTallies = pgTable(
+  "round_paper_tallies",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roundId: uuid("round_id")
+      .notNull()
+      .references(() => rounds.id, { onDelete: "cascade" }),
+    ballotCount: integer("ballot_count").notNull().default(0),
+    blankVotes: integer("blank_votes").notNull().default(0),
+    nullVotes: integer("null_votes").notNull().default(0),
+    candidateVotes: jsonb("candidate_votes").$type<Record<string, number>>().notNull().default({}),
+    recordedByAdminId: uuid("recorded_by_admin_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    recordedByName: text("recorded_by_name"),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("round_paper_tallies_round_uidx").on(table.roundId)],
 );
 
 export const auditEvents = pgTable("audit_events", {

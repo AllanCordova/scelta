@@ -2,8 +2,10 @@ import {
   ballots,
   candidates,
   createPgliteDatabase,
+  members,
   participants,
   roomMemberCodes,
+  roomRoster,
   rooms,
   rounds,
   voteReceipts,
@@ -74,7 +76,9 @@ describe("round lifecycle and restart", () => {
     await db.delete(rounds);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
+    await db.delete(roomRoster);
     await db.delete(rooms);
+    await db.delete(members);
   });
 
   it("annuls the restarted round while preserving its ballots and receipts, opens a new round with the next number, and records annulled totals in the audit log", async () => {
@@ -391,18 +395,16 @@ describe("round lifecycle and restart", () => {
       });
     }
     const memberName = `${displayName} (${joinKey.slice(-6)})`;
-    let generated = await repository.generateMemberAccessCodes(room.id);
+    const generated = await repository.listAccessCodes(room.id);
     let memberCode = generated.find((item) => item.displayName === memberName && !item.revokedAt);
     if (!memberCode) {
-      await repository.createMember({
+      const added = await repository.addRosterEntry!(room.id, {
         fullName: memberName,
-        isCommunicant: true,
-        isMale: true,
         birthDate: "1990-01-01",
-        societyFlags: { upaActive: true, umpActive: true },
       });
-      generated = await repository.generateMemberAccessCodes(room.id);
-      memberCode = generated.find((item) => item.displayName === memberName && !item.revokedAt);
+      if (added.ok) {
+        memberCode = added.accessCode;
+      }
     }
     return app.inject({
       method: "POST",
