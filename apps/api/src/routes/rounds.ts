@@ -1,12 +1,15 @@
 import {
+  canConfigureRoomVacancies,
   canDeclineRound,
   canOpenRound,
   canPublishWinner,
   canRestartRound,
   closeRoundOutcome,
   countOfficeRoundNumber,
+  evaluateMultiVacancyProgress,
   isMultiOfficeRoomType,
   isRoundAnnulled,
+  MAX_ROOM_VACANCIES,
   resolveNextRoundCandidateIds,
   resolveTargetOffice,
   tallyRoundVotes,
@@ -110,9 +113,31 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         const latestClosedForOffice = [...officeRounds]
           .filter((round) => round.status === "closed")
           .sort((a, b) => b.number - a.number)[0] ?? null;
+
+        const isMultiOffice = isMultiOfficeRoomType(room.roomType);
+        const roomVacancies = isMultiOffice ? 1 : (room.vacancies ?? 1);
+        const vacancyProgress = evaluateMultiVacancyProgress(roomVacancies, officeRounds);
+
+        let nextRoundVacancies = vacancyProgress.remainingVacancies;
+        if (parsedBody.vacancies !== undefined) {
+          if (!canConfigureRoomVacancies(room.roomType) && parsedBody.vacancies > 1) {
+            return reply.code(400).send({ error: "invalid_vacancies" });
+          }
+          if (vacancyProgress.remainingVacancies <= 0) {
+            return reply.code(409).send({ error: "winner_already_elected" });
+          }
+          if (parsedBody.vacancies > vacancyProgress.remainingVacancies) {
+            return reply.code(400).send({ error: "invalid_vacancies" });
+          }
+          nextRoundVacancies = parsedBody.vacancies;
+        } else if (nextRoundVacancies <= 0) {
+          return reply.code(409).send({ error: "winner_already_elected" });
+        }
+
         const isFirstRoundOfOffice =
           officeRounds.length === 0 || latestClosedForOffice?.outcome === "declined";
-        let candidatePool = isFirstRoundOfOffice ? allRoomCandidates : eligibleRoomCandidates;
+        const previousRoundPool = isFirstRoundOfOffice ? allRoomCandidates : eligibleRoomCandidates;
+        let candidatePool = previousRoundPool;
 
         const declinedForOfficeIds = new Set(
           officeRounds
@@ -127,7 +152,12 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           );
         }
 
-        if (isFirstRoundOfOffice && isMultiOfficeRoomType(room.roomType) && allRounds.length > 0) {
+        if (vacancyProgress.electedCandidateIds.length > 0) {
+          const electedSet = new Set(vacancyProgress.electedCandidateIds);
+          candidatePool = candidatePool.filter((candidate) => !electedSet.has(candidate.id));
+        }
+
+        if (isFirstRoundOfOffice && isMultiOffice && allRounds.length > 0) {
           const officeState = await loadRoomOfficeState(
             repository,
             room,
@@ -149,21 +179,45 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         }
 
         let previousTallies: TallyEntry[] = [];
-        if (
-          latestClosedForOffice &&
-          latestClosedForOffice.outcome === "no_majority" &&
-          candidatePool.length > 0
-        ) {
-          const [ballotCandidateIds, paperTally] = await Promise.all([
-            repository.listRoundBallotCandidateIds(latestClosedForOffice.id),
+        let lastVacancyTieCandidateIds: string[] = [];
+        let previousTotalBallots: number | undefined;
+        let previousBlankVotes: number | undefined;
+
+        const shouldInspectPreviousTally =
+          latestClosedForOffice !== null &&
+          (latestClosedForOffice.outcome === "no_majority" ||
+            (latestClosedForOffice.outcome === "elected" && roomVacancies > 1));
+
+        if (shouldInspectPreviousTally && latestClosedForOffice) {
+          const [ballotChoices, paperTally] = await Promise.all([
+            repository.listRoundBallotMarks
+              ? repository.listRoundBallotMarks(latestClosedForOffice.id)
+              : repository.listRoundBallotCandidateIds(latestClosedForOffice.id),
             repository.findRoundPaperTally
               ? repository.findRoundPaperTally(latestClosedForOffice.id)
               : Promise.resolve(null),
           ]);
-          const tally = tallyRoundVotes(
-            candidatePool,
-            ballotCandidateIds,
-            paperTally
+          const prevPoolIds = new Set(previousRoundPool.map((candidate) => candidate.id));
+          const paperIds = paperTally
+            ? Object.entries(paperTally.candidateVotes)
+                .filter(([, votes]) => votes > 0)
+                .map(([id]) => id)
+            : [];
+          const usePrevPool =
+            previousRoundPool.length > 0 &&
+            ballotChoices.every((choice) =>
+              choice === null
+                ? true
+                : typeof choice === "string"
+                  ? prevPoolIds.has(choice)
+                  : choice.every((id) => prevPoolIds.has(id)),
+            ) &&
+            paperIds.every((id) => prevPoolIds.has(id));
+          const tallyPool = usePrevPool ? previousRoundPool : allRoomCandidates;
+
+          const tally = tallyRoundVotes(tallyPool, ballotChoices, {
+            vacancies: latestClosedForOffice.vacancies ?? 1,
+            ...(paperTally
               ? {
                   paperTally: {
                     ballotCount: paperTally.ballotCount,
@@ -172,12 +226,15 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
                     candidateVotes: paperTally.candidateVotes,
                   },
                 }
-              : undefined,
-          );
+              : {}),
+          });
           previousTallies = tally.standings.map((standing) => ({
             candidateId: standing.candidateId,
             votes: standing.votes,
           }));
+          lastVacancyTieCandidateIds = tally.lastVacancyTieCandidateIds ?? [];
+          previousTotalBallots = tally.totalVotes;
+          previousBlankVotes = Math.max(0, tally.nullVotes - (paperTally?.nullVotes ?? 0));
         }
 
         const previousOfficeRoundNumber =
@@ -191,6 +248,12 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           previousOutcome: latestClosedForOffice?.outcome ?? null,
           eligibleCandidateIds: candidatePool.map((candidate) => candidate.id),
           previousTallies,
+          vacancies: roomVacancies,
+          remainingVacancies: nextRoundVacancies,
+          alreadyElectedCandidateIds: vacancyProgress.electedCandidateIds,
+          ...(lastVacancyTieCandidateIds.length > 0 ? { lastVacancyTieCandidateIds } : {}),
+          ...(previousTotalBallots !== undefined ? { previousTotalBallots } : {}),
+          ...(previousBlankVotes !== undefined ? { previousBlankVotes } : {}),
           ...(parsedBody.candidateIds === undefined
             ? {}
             : { requestedCandidateIds: parsedBody.candidateIds }),
@@ -206,7 +269,16 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(400).send({ error: "invalid_candidate_subset" });
         }
 
-        const opened = await repository.openRound(room.id, resolved.candidateIds, targetOffice);
+        if (resolved.candidateIds.length === 0) {
+          return reply.code(409).send({ error: "no_eligible_candidates" });
+        }
+
+        const opened = await repository.openRound(
+          room.id,
+          resolved.candidateIds,
+          targetOffice,
+          nextRoundVacancies,
+        );
         if (!opened.ok) {
           return reply.code(409).send({ error: opened.reason });
         }
@@ -293,6 +365,7 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: result.reason });
         }
 
+        options.presencePublisher?.publishTelaoUpdated?.(roomId);
         return { paperTally: toPaperTallySummary(result.paperTally) };
       } catch (error) {
         request.log.error({ err: error, roomId, roundId }, "Failed to record paper tally");
@@ -385,13 +458,15 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         const officeRoundNumber = countOfficeRoundNumber(allRoundsBeforeClose, round);
 
         if (quorum.quorumMet) {
-          const [ballotCandidateIds, paperTally] = await Promise.all([
-            repository.listRoundBallotCandidateIds(roundId),
+          const [ballotChoices, paperTally] = await Promise.all([
+            repository.listRoundBallotMarks
+              ? repository.listRoundBallotMarks(roundId)
+              : repository.listRoundBallotCandidateIds(roundId),
             repository.findRoundPaperTally
               ? repository.findRoundPaperTally(roundId)
               : Promise.resolve(null),
           ]);
-          const onlineVotedCount = ballotCandidateIds.length;
+          const onlineVotedCount = ballotChoices.length;
           if (onlineVotedCount < onlinePresentCount && !parsedClose.confirmPending) {
             return reply.code(409).send({
               error: "voting_incomplete",
@@ -415,8 +490,9 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
 
           const candidates = await repository.listCandidates(roomId);
           if (candidates.length > 0) {
-            tally = tallyRoundVotes(candidates, ballotCandidateIds, {
+            tally = tallyRoundVotes(candidates, ballotChoices, {
               roundNumber: officeRoundNumber,
+              vacancies: round.vacancies ?? 1,
               ...(didNotVoteCount > 0 ? { didNotVoteCount } : {}),
               ...(paperTally
                 ? {
@@ -435,6 +511,7 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
 
         const closed = await repository.closeRound(roomId, roundId, outcome, {
           winnerCandidateId: tally?.winnerId ?? null,
+          winnerCandidateIds: tally?.winnerIds ?? [],
           tieBreakReason: tally?.tieBreakReason ?? null,
           didNotVoteCount,
         });
@@ -536,18 +613,22 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: check.reason });
         }
 
-        const [allCandidates, ballotCandidateIds, allRoundsBeforeDecline, paperTally] =
+        const [allCandidates, ballotChoices, allRoundsBeforeDecline, paperTally] =
           await Promise.all([
             repository.listAllCandidates(roomId),
-            repository.listRoundBallotCandidateIds(roundId),
+            repository.listRoundBallotMarks
+              ? repository.listRoundBallotMarks(roundId)
+              : repository.listRoundBallotCandidateIds(roundId),
             repository.listRounds(room.id),
             repository.findRoundPaperTally
               ? repository.findRoundPaperTally(roundId)
               : Promise.resolve(null),
           ]);
-        const tally = tallyRoundVotes(allCandidates, ballotCandidateIds, {
+        const tally = tallyRoundVotes(allCandidates, ballotChoices, {
           roundNumber: countOfficeRoundNumber(allRoundsBeforeDecline, round),
-          winnerOverrideId: round.winnerCandidateId,
+          vacancies: round.vacancies ?? 1,
+          winnerOverrideId:
+            round.tieBreakReason === "admin_tiebreak" ? round.winnerCandidateId : undefined,
           tieBreakReason: round.tieBreakReason,
           ...(paperTally
             ? {
@@ -630,11 +711,13 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "tie_break_not_required" });
         }
 
-        const [candidates, allCandidates, ballotCandidateIds, allRounds, paperTally] =
+        const [candidates, allCandidates, ballotChoices, allRounds, paperTally] =
           await Promise.all([
             repository.listCandidates(roomId),
             repository.listAllCandidates(roomId),
-            repository.listRoundBallotCandidateIds(roundId),
+            repository.listRoundBallotMarks
+              ? repository.listRoundBallotMarks(roundId)
+              : repository.listRoundBallotCandidateIds(roundId),
             repository.listRounds(room.id),
             repository.findRoundPaperTally
               ? repository.findRoundPaperTally(roundId)
@@ -656,8 +739,9 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
             }
           : {};
         const activePool = candidates.length > 0 ? candidates : allCandidates;
-        const initialTally = tallyRoundVotes(activePool, ballotCandidateIds, {
+        const initialTally = tallyRoundVotes(activePool, ballotChoices, {
           roundNumber: officeRoundNumber,
+          vacancies: round.vacancies ?? 1,
           ...paperTallyOption,
         });
         if (!initialTally.tieBreakRequired || !initialTally.tiedCandidates) {
@@ -675,8 +759,9 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
           return reply.code(409).send({ error: "tie_break_not_required" });
         }
 
-        const finalTally = tallyRoundVotes(activePool, ballotCandidateIds, {
+        const finalTally = tallyRoundVotes(activePool, ballotChoices, {
           roundNumber: officeRoundNumber,
+          vacancies: round.vacancies ?? 1,
           winnerOverrideId: winnerCandidateId,
           tieBreakReason: "admin_tiebreak",
           ...(resolved.didNotVoteCount !== undefined && resolved.didNotVoteCount > 0
@@ -699,6 +784,110 @@ export const roundRoutes: FastifyPluginAsync<RoundRouteOptions> = async (app, op
         };
       } catch (error) {
         request.log.error({ err: error, roomId, roundId }, "Failed to resolve round tie");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/rounds/:roundId/reveal",
+    { schema: { params: Type.Object({ roomId: Uuid, roundId: Uuid }) } },
+    async (request, reply) => {
+      const repository = await adminRepository(request, reply, options);
+      if (!repository) {
+        return;
+      }
+      if (!repository.revealRoundResult) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId, roundId } = request.params as { roomId: string; roundId: string };
+      try {
+        const result = await repository.revealRoundResult(roomId, roundId);
+        if (!result.ok) {
+          if (result.reason === "room_not_found" || result.reason === "round_not_found") {
+            return reply.code(404).send({ error: result.reason });
+          }
+          return reply.code(409).send({
+            error: "round_not_closed",
+            message: "O resultado só pode ser revelado após o encerramento do escrutínio.",
+          });
+        }
+
+        const [allRounds, candidates, allCandidates, paperTally] = await Promise.all([
+          repository.listRounds(roomId),
+          repository.listCandidates(roomId),
+          repository.listAllCandidates(roomId),
+          repository.findRoundPaperTally
+            ? repository.findRoundPaperTally(roundId)
+            : Promise.resolve(null),
+        ]);
+        const officeRoundNumber = countOfficeRoundNumber(allRounds, result.round);
+
+        let tally: RoundTally | null = null;
+        if (
+          (result.round.outcome === "elected" || result.round.outcome === "no_majority") &&
+          (candidates.length > 0 || allCandidates.length > 0)
+        ) {
+          const ballotChoices = repository.listRoundBallotMarks
+            ? await repository.listRoundBallotMarks(roundId)
+            : await repository.listRoundBallotCandidateIds(roundId);
+          const eligibleIds = new Set(candidates.map((c) => c.id));
+          const paperIds = paperTally
+            ? Object.entries(paperTally.candidateVotes)
+                .filter(([, count]) => count > 0)
+                .map(([id]) => id)
+            : [];
+          const useEligible =
+            candidates.length > 0 &&
+            ballotChoices.every((choice) =>
+              choice === null
+                ? true
+                : typeof choice === "string"
+                  ? eligibleIds.has(choice)
+                  : choice.every((id) => eligibleIds.has(id)),
+            ) &&
+            paperIds.every((id) => eligibleIds.has(id));
+          tally = tallyRoundVotes(useEligible ? candidates : allCandidates, ballotChoices, {
+            roundNumber: officeRoundNumber,
+            vacancies: result.round.vacancies ?? 1,
+            winnerOverrideId:
+              result.round.tieBreakReason === "admin_tiebreak"
+                ? result.round.winnerCandidateId
+                : undefined,
+            tieBreakReason: result.round.tieBreakReason,
+            ...(result.round.didNotVoteCount !== undefined && result.round.didNotVoteCount > 0
+              ? { didNotVoteCount: result.round.didNotVoteCount }
+              : {}),
+            ...(paperTally
+              ? {
+                  paperTally: {
+                    ballotCount: paperTally.ballotCount,
+                    blankVotes: paperTally.blankVotes,
+                    nullVotes: paperTally.nullVotes,
+                    candidateVotes: paperTally.candidateVotes,
+                  },
+                }
+              : {}),
+          });
+        }
+
+        options.presencePublisher?.publishTelaoUpdated?.(roomId);
+        options.presencePublisher?.publishRoundState?.(roomId, {
+          roundId: result.round.id,
+          roundNumber: result.round.number,
+          ...(result.round.officeLabel !== null
+            ? { officeLabel: result.round.officeLabel, officeRoundNumber }
+            : {}),
+          state: "closed",
+        });
+
+        return {
+          round: toRoundSummary(result.round, tally, officeRoundNumber, paperTally),
+          alreadyRevealed: result.alreadyRevealed,
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId, roundId }, "Failed to reveal round result");
         return reply.code(500).send({ error: "persistence_failed" });
       }
     },
@@ -764,8 +953,8 @@ async function adminRepository(
 function parseOpenRoundBody(
   body: unknown,
 ):
-  | { ok: true; candidateIds?: string[]; officeLabel?: string }
-  | { ok: false; error: "invalid_office" | "invalid_candidate_subset" } {
+  | { ok: true; candidateIds?: string[]; officeLabel?: string; vacancies?: number }
+  | { ok: false; error: "invalid_office" | "invalid_candidate_subset" | "invalid_vacancies" } {
   if (body === undefined || body === null) {
     return { ok: true };
   }
@@ -775,7 +964,7 @@ function parseOpenRoundBody(
 
   const record = body as Record<string, unknown>;
   const keys = Object.keys(record);
-  if (keys.some((key) => key !== "candidateIds" && key !== "officeLabel")) {
+  if (keys.some((key) => key !== "candidateIds" && key !== "officeLabel" && key !== "vacancies")) {
     return { ok: false, error: "invalid_candidate_subset" };
   }
 
@@ -789,6 +978,19 @@ function parseOpenRoundBody(
       return { ok: false, error: "invalid_office" };
     }
     officeLabel = trimmed;
+  }
+
+  let vacancies: number | undefined;
+  if (record.vacancies !== undefined) {
+    if (
+      typeof record.vacancies !== "number" ||
+      !Number.isInteger(record.vacancies) ||
+      record.vacancies < 1 ||
+      record.vacancies > MAX_ROOM_VACANCIES
+    ) {
+      return { ok: false, error: "invalid_vacancies" };
+    }
+    vacancies = record.vacancies;
   }
 
   let candidateIds: string[] | undefined;
@@ -808,6 +1010,7 @@ function parseOpenRoundBody(
     ok: true,
     ...(candidateIds === undefined ? {} : { candidateIds }),
     ...(officeLabel === undefined ? {} : { officeLabel }),
+    ...(vacancies === undefined ? {} : { vacancies }),
   };
 }
 

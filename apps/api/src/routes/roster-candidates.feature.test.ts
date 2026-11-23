@@ -81,6 +81,7 @@ describe("Etapa 2: room roster, immutability, and candidate management", () => {
         `ALTER TABLE "participants" DROP COLUMN IF EXISTS "roster_entry_id"`,
         `ALTER TABLE "candidates" DROP COLUMN IF EXISTS "birth_date"`,
         `ALTER TABLE "members" DROP COLUMN IF EXISTS "deleted_at"`,
+        `DROP TABLE IF EXISTS "room_entry_requests"`,
         `DROP TABLE IF EXISTS "room_roster"`,
       ]) {
         await legacy.db.execute(sql.raw(stmt));

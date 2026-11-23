@@ -1,0 +1,21 @@
+nome,comungante,sexo,data_nascimento,upa_ativo,upa_ingresso,ump_ativo,ump_ingresso
+Davi Teen UPA,nao,M,2011-04-10,sim,2024-02-01,nao,
+Rebeca Teen UPA,nao,F,2012-08-19,sim,2024-03-01,nao,
+Samuel Teen UPA,nao,M,2010-11-03,sim,2024-01-15,nao,
+Lucas Jovem UPA,sim,M,2008-02-15,sim,2023-05-01,nao,
+Sara Jovem UPA,sim,F,2009-06-22,sim,2023-06-01,nao,
+Gabriel Jovem UPA,sim,M,2009-12-05,sim,2024-01-10,nao,
+Mateus Socio UMP,nao,M,2003-05-14,nao,,sim,2024-01-10
+Ester Socia UMP,nao,F,2004-09-28,nao,,sim,2024-02-10
+Tiago Lider UMP,sim,M,1999-03-11,nao,,sim,2022-04-01
+Debora Lider UMP,sim,F,2000-07-17,nao,,sim,2022-05-01
+Felipe Socio UMP,sim,M,2001-10-08,nao,,sim,2023-01-15
+Abraao Silva,sim,M,1975-01-20,nao,,nao,
+Barnabe Souza,sim,M,1978-05-12,nao,,nao,
+Calebe Oliveira,sim,M,1980-08-30,nao,,nao,
+Daniel Santos,sim,M,1982-11-14,nao,,nao,
+Estevao Pereira,sim,M,1984-03-25,nao,,nao,
+Filipe Costa,sim,M,1986-07-09,nao,,nao,
+Noemi Almeida,sim,F,1979-09-18,nao,,nao,
+Visitante Pedro,nao,M,1995-02-02,nao,,nao,
+Crianca Ana,nao,F,2016-06-06,nao,,nao,

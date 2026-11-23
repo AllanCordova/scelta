@@ -514,6 +514,54 @@ describe("AdminRooms", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Excluir" }));
     expect(await screen.findByText("Nenhuma sala ainda.")).toBeInTheDocument();
   });
+
+  it("allows configuring entryMode and maxParticipants when creating a room", async () => {
+    render(<AdminRooms />);
+    await screen.findByDisplayValue("34");
+
+    fireEvent.change(screen.getByLabelText("Título"), {
+      target: { value: "Assembleia por aprovação" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Aprovação da mesa" }));
+    fireEvent.change(screen.getByLabelText(/Limite de participantes/i), {
+      target: { value: "25" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
+
+    await screen.findByRole("link");
+    const fetchMock = vi.mocked(fetch);
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    const body = JSON.parse(String(post?.[1]?.body)) as {
+      entryMode?: string;
+      maxParticipants?: number;
+    };
+    expect(body.entryMode).toBe("aprovacao");
+    expect(body.maxParticipants).toBe(25);
+  });
+
+  it("allows configuring vacancies on elder/deacon rooms and hides it on UPA board rooms", async () => {
+    render(<AdminRooms />);
+    await screen.findByDisplayValue("34");
+
+    const vacanciesInput = screen.getByTestId("room-vacancies-input");
+    fireEvent.change(vacanciesInput, { target: { value: "5" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Diretoria UPA" }));
+    expect(screen.queryByTestId("room-vacancies-input")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Diácono" }));
+    expect(screen.getByTestId("room-vacancies-input")).toHaveValue(5);
+
+    fireEvent.change(screen.getByLabelText("Título"), { target: { value: "Diáconos 2026" } });
+    fireEvent.click(screen.getByRole("button", { name: "Criar sala" }));
+
+    await screen.findByRole("link");
+    const fetchMock = vi.mocked(fetch);
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    const body = JSON.parse(String(post?.[1]?.body)) as { vacancies?: number; roomType?: string };
+    expect(body.roomType).toBe("deacon");
+    expect(body.vacancies).toBe(5);
+  });
 });
 
 function rulesGroup() {

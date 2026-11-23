@@ -303,6 +303,23 @@ function formatActionTitle(action: string): string {
       return "Link de Convite Rotacionado";
     case "room_deleted":
       return "Sala Excluída (Logs Preservados)";
+    case "entry_opened":
+      return "Entrada na Sala Reaberta";
+    case "entry_closed":
+      return "Entrada na Sala Encerrada";
+    case "entry_config_changed":
+      return "Configuração de Entrada Alterada";
+    case "entry_request_created":
+      return "Pedido de Entrada Enviado";
+    case "entry_request_approved":
+      return "Pedido de Entrada Aprovado";
+    case "entry_request_rejected":
+      return "Pedido de Entrada Recusado";
+    case "entry_request_disputed":
+      return "Nome Disputado Sinalizado";
+    case "roster_name_released":
+    case "participant_expelled_and_released":
+      return "Participante Expulso e Nome Liberado";
     default:
       return action;
   }

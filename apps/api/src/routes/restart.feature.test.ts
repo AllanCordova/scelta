@@ -126,8 +126,10 @@ describe("round lifecycle and restart", () => {
       round: {
         id: newRoundId,
         number: 2,
+        vacancies: 1,
         status: "open",
         outcome: null,
+        resultRevealed: false,
         restartCount: 1,
       },
     });
@@ -176,8 +178,10 @@ describe("round lifecycle and restart", () => {
     expect(ballotState.json().round).toEqual({
       id: newRoundId,
       number: 2,
+      vacancies: 1,
       status: "open",
       outcome: null,
+      resultRevealed: false,
       restartCount: 1,
     });
 
@@ -193,8 +197,11 @@ describe("round lifecycle and restart", () => {
     expect(closed.json().round).toEqual({
       id: newRoundId,
       number: 2,
+      vacancies: 1,
       status: "closed",
       outcome: "elected",
+      resultRevealed: false,
+      winnerCandidateIds: [silas.id],
       restartCount: 1,
       tally: {
         totalVotes: 2,
@@ -203,6 +210,10 @@ describe("round lifecycle and restart", () => {
         outcome: "elected",
         winnerId: silas.id,
         winnerName: "Silas",
+        vacancies: 1,
+        winnerIds: [silas.id],
+        winnerNames: ["Silas"],
+        remainingVacancies: 0,
         standings: [
           { candidateId: silas.id, displayName: "Silas", votes: 2 },
           { candidateId: paulo.id, displayName: "Paulo", votes: 0 },

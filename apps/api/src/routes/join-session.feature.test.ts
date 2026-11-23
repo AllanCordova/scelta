@@ -132,6 +132,10 @@ describe("room short code and one-session-per-code", () => {
       status: "open",
       shortCode: room.shortCode,
       canJoin: true,
+      entryMode: "codigo",
+      entryOpen: true,
+      maxParticipants: 1,
+      presentCount: 0,
     });
     expect(preview.json()).not.toHaveProperty("inviteToken");
 

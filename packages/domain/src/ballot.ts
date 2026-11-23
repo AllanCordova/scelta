@@ -23,7 +23,25 @@ export type BallotRejectionReason =
   | "participant_not_present"
   | "access_code_revoked"
   | "already_voted"
+  | "invalid_candidate"
+  | "too_many_marks"
+  | "duplicate_candidate_mark";
+
+export type BallotMarksRejectionReason =
+  | "invalid_vacancies"
+  | "too_many_marks"
+  | "duplicate_candidate_mark"
   | "invalid_candidate";
+
+export type BallotMarksValidationInput = {
+  candidateIds: readonly string[];
+  vacancies: number;
+  eligibleCandidateIds: readonly string[];
+};
+
+export type ValidateBallotMarksResult =
+  | { ok: true; candidateIds: string[] }
+  | { ok: false; reason: BallotMarksRejectionReason };
 
 export function validateCandidateNames(
   rawNames: readonly string[],
@@ -79,4 +97,35 @@ export function canCastBallot(
   }
 
   return { ok: true };
+}
+
+/**
+ * Validates the set of marked candidates on a ballot for an N-vacancy scrutiny.
+ * An empty list represents a blank ballot. Duplicate marks and marks above N are rejected.
+ */
+export function validateBallotMarks(
+  input: BallotMarksValidationInput,
+): ValidateBallotMarksResult {
+  if (!Number.isInteger(input.vacancies) || input.vacancies < 1) {
+    return { ok: false, reason: "invalid_vacancies" };
+  }
+
+  if (input.candidateIds.length > input.vacancies) {
+    return { ok: false, reason: "too_many_marks" };
+  }
+
+  const eligibleSet = new Set(input.eligibleCandidateIds);
+  const seen = new Set<string>();
+
+  for (const candidateId of input.candidateIds) {
+    if (seen.has(candidateId)) {
+      return { ok: false, reason: "duplicate_candidate_mark" };
+    }
+    if (!eligibleSet.has(candidateId)) {
+      return { ok: false, reason: "invalid_candidate" };
+    }
+    seen.add(candidateId);
+  }
+
+  return { ok: true, candidateIds: [...input.candidateIds] };
 }

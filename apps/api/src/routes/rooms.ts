@@ -1,18 +1,25 @@
 import { createHash } from "node:crypto";
 import {
+  canConfigureRoomVacancies,
   canSimulateInRoom,
   canTransitionRoomStatus,
   canUpdateRoomQuorum,
   countOfficeRoundNumber,
+  evaluateMultiVacancyProgress,
   findPreset,
   isMemberEligibleForRoomType,
+  isMemberEligibleVoter,
   isMultiOfficeRoomType,
   isValidOfficeForRoomType,
+  MAX_ROOM_VACANCIES,
   parseIsoDate,
   parsePhotoUrl,
+  resolveRoomMaxParticipants,
   tallyRoundVotes,
   validateCandidateNames,
   validateCreateRoom,
+  type BallotChoiceInput,
+  type RoomEntryMode,
   type RoundTally,
   type ValidRoomConfig,
 } from "@scelta/domain";
@@ -30,11 +37,12 @@ import {
 import type {
   RoomRepository,
   StoredCandidate,
+  StoredEntryRequest,
   StoredPaperTally,
   StoredRound,
   StoredRoom,
 } from "../rooms/room-repository.js";
-import { toRoundSummary } from "../rooms/round-summary.js";
+import { toRoundSummary, type LiveRoundTally } from "../rooms/round-summary.js";
 import type { UserRepository } from "../users/user-repository.js";
 
 const CreateRoomBody = Type.Object(
@@ -60,6 +68,13 @@ const CreateRoomBody = Type.Object(
     status: Type.Optional(
       Type.Union([Type.Literal("draft"), Type.Literal("open"), Type.Literal("test")]),
     ),
+    vacancies: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_ROOM_VACANCIES })),
+    entryMode: Type.Optional(Type.Union([Type.Literal("codigo"), Type.Literal("aprovacao")])),
+    entryOpen: Type.Optional(Type.Boolean()),
+    maxParticipants: Type.Optional(
+      Type.Union([Type.Integer({ minimum: 1, maximum: 100_000 }), Type.Null()]),
+    ),
+    showLiveCandidateTally: Type.Optional(Type.Boolean()),
     candidates: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { maxItems: 50 })),
   },
   { additionalProperties: false },
@@ -73,6 +88,11 @@ type CreateRoomBodyType = {
   quorumUnit?: string;
   eligibleCount?: number;
   status?: string;
+  vacancies?: number;
+  entryMode?: RoomEntryMode;
+  entryOpen?: boolean;
+  maxParticipants?: number | null;
+  showLiveCandidateTally?: boolean;
   candidates?: string[];
 };
 
@@ -90,6 +110,13 @@ const UpdateRoomBody = Type.Object(
         Type.Literal("closed"),
       ]),
     ),
+    vacancies: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_ROOM_VACANCIES })),
+    entryMode: Type.Optional(Type.Union([Type.Literal("codigo"), Type.Literal("aprovacao")])),
+    entryOpen: Type.Optional(Type.Boolean()),
+    maxParticipants: Type.Optional(
+      Type.Union([Type.Integer({ minimum: 1, maximum: 100_000 }), Type.Null()]),
+    ),
+    showLiveCandidateTally: Type.Optional(Type.Boolean()),
     reactionsEnabled: Type.Optional(Type.Boolean()),
     chatMuted: Type.Optional(Type.Boolean()),
   },
@@ -102,6 +129,11 @@ type UpdateRoomBodyType = {
   quorumUnit?: "absolute" | "percent";
   eligibleCount?: number;
   status?: "draft" | "open" | "test" | "closed";
+  vacancies?: number;
+  entryMode?: RoomEntryMode;
+  entryOpen?: boolean;
+  maxParticipants?: number | null;
+  showLiveCandidateTally?: boolean;
   reactionsEnabled?: boolean;
   chatMuted?: boolean;
 };
@@ -177,6 +209,19 @@ const CandidateIdParams = Type.Object({
   roomId: Uuid,
   candidateId: Uuid,
 });
+
+const EntryRequestIdParams = Type.Object({
+  roomId: Uuid,
+  requestId: Uuid,
+});
+
+const ReleaseClaimedNameBody = Type.Object(
+  {
+    rosterEntryId: Type.Optional(Uuid),
+    participantId: Type.Optional(Uuid),
+  },
+  { additionalProperties: false },
+);
 
 const AddRosterEntryBody = Type.Object(
   {
@@ -279,23 +324,29 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
             }
           }
         } else {
-          const communicants = roll.filter((member) => member.isCommunicant);
-          if (communicants.length === 0) {
-            return reply.code(400).send({
-              error: "invalid_room",
-              details: [{ field: "candidates", code: "required" }],
-            });
-          }
-          const validatedCommunicants = validateCandidateNames(
-            communicants.map((member) => member.fullName),
+          const eligibleCandidates = roll.filter((member) =>
+            isMemberEligibleForRoomType(member, { roomType: validated.value.roomType }),
           );
-          if (!validatedCommunicants.ok || validatedCommunicants.value.length === 0) {
+          const fallbackPool =
+            eligibleCandidates.length > 0
+              ? eligibleCandidates
+              : roll.filter((member) => isMemberEligibleVoter(member, validated.value.roomType));
+          if (fallbackPool.length === 0) {
             return reply.code(400).send({
               error: "invalid_room",
               details: [{ field: "candidates", code: "required" }],
             });
           }
-          candidateNames = validatedCommunicants.value;
+          const validatedDefaultCandidates = validateCandidateNames(
+            fallbackPool.map((member) => member.fullName),
+          );
+          if (!validatedDefaultCandidates.ok || validatedDefaultCandidates.value.length === 0) {
+            return reply.code(400).send({
+              error: "invalid_room",
+              details: [{ field: "candidates", code: "required" }],
+            });
+          }
+          candidateNames = validatedDefaultCandidates.value;
         }
 
         const stored = await options.roomRepository.createRoom({
@@ -306,6 +357,11 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           quorumUnit: validated.value.quorumUnit,
           eligibleCount: validated.value.eligibleCount,
           status: validated.value.status,
+          vacancies: validated.value.vacancies,
+          entryMode: validated.value.entryMode,
+          entryOpen: validated.value.entryOpen,
+          maxParticipants: validated.value.maxParticipants,
+          showLiveCandidateTally: body.showLiveCandidateTally ?? false,
           ...(candidateNames.length > 0 ? { candidates: candidateNames } : {}),
         });
         const storedCandidates =
@@ -405,24 +461,51 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           [roomId, roomCandidates.length > 0 ? roomCandidates : allCandidates],
         ]);
         const allCandidatesByRoom = new Map([[roomId, allCandidates]]);
-        const [tallyByRound, roundPaperTally, receiptDates, officeState] = await Promise.all([
-          loadTalliesForClosedRounds(
-            options.roomRepository,
-            round ? [round] : [],
-            candidatesByRoom,
-            allCandidatesByRoom,
-            round && officeRoundNumber !== undefined
-              ? new Map([[round.id, officeRoundNumber]])
-              : undefined,
-          ),
-          round && options.roomRepository.findRoundPaperTally
-            ? options.roomRepository.findRoundPaperTally(round.id)
-            : Promise.resolve(null),
-          round
-            ? options.roomRepository.listRoundReceiptTimestamps(round.id)
-            : Promise.resolve([]),
-          loadRoomOfficeState(options.roomRepository, room, allCandidates, allRounds),
-        ]);
+        const [tallyByRound, roundPaperTally, receiptDates, officeState, openRoundBallotChoices] =
+          await Promise.all([
+            loadTalliesForClosedRounds(
+              options.roomRepository,
+              round ? [round] : [],
+              candidatesByRoom,
+              allCandidatesByRoom,
+              round && officeRoundNumber !== undefined
+                ? new Map([[round.id, officeRoundNumber]])
+                : undefined,
+            ),
+            round && options.roomRepository.findRoundPaperTally
+              ? options.roomRepository.findRoundPaperTally(round.id)
+              : Promise.resolve(null),
+            round
+              ? options.roomRepository.listRoundReceiptTimestamps(round.id)
+              : Promise.resolve([]),
+            loadRoomOfficeState(options.roomRepository, room, allCandidates, allRounds),
+            round && round.status === "open"
+              ? options.roomRepository.listRoundBallotMarks
+                ? options.roomRepository.listRoundBallotMarks(round.id)
+                : options.roomRepository.listRoundBallotCandidateIds(round.id)
+              : Promise.resolve(null),
+          ]);
+
+        const liveTally =
+          round && round.status === "open" && openRoundBallotChoices !== null
+            ? buildLiveRoundTally({
+                candidates: roomCandidates.length > 0 ? roomCandidates : allCandidates,
+                ballotChoices: openRoundBallotChoices,
+                paperTally: roundPaperTally,
+                vacancies: round.vacancies ?? 1,
+                includeStandings: room.showLiveCandidateTally ?? false,
+              })
+            : null;
+
+        const vacancyProgress = evaluateMultiVacancyProgress(room.vacancies ?? 1, allRounds);
+        const electedCandidates = vacancyProgress.electedCandidateIds
+          .map((id) => allCandidates.find((candidate) => candidate.id === id))
+          .filter((candidate): candidate is StoredCandidate => Boolean(candidate))
+          .map((candidate) => ({
+            id: candidate.id,
+            displayName: candidate.displayName,
+            photoUrl: toCandidatePhotoUrl(room.id, candidate.id, candidate.photoUrl),
+          }));
 
         return {
           room: {
@@ -432,6 +515,8 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
               includeCandidateDetails: true,
             }),
             hasRounds: allRounds.length > 0,
+            remainingVacancies: vacancyProgress.remainingVacancies,
+            electedCandidates,
             lockedOffices: Array.from(
               new Set(
                 allRounds
@@ -465,6 +550,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
               round ? (tallyByRound.get(round.id) ?? null) : null,
               officeRoundNumber,
               roundPaperTally,
+              liveTally,
             ),
           },
         };
@@ -669,6 +755,41 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           }
         }
 
+        if (body.vacancies !== undefined && body.vacancies !== existing.vacancies) {
+          if (existing.status === "closed") {
+            return reply.code(409).send({
+              error: "room_closed",
+              message: "Não é possível alterar o número de vagas de uma sala encerrada.",
+            });
+          }
+          if (!canConfigureRoomVacancies(existing.roomType) && body.vacancies > 1) {
+            return reply.code(400).send({
+              error: "invalid_room",
+              details: [{ field: "vacancies", code: "invalid" }],
+            });
+          }
+          if (roomRounds.length > 0) {
+            return reply.code(409).send({
+              error: "vacancies_locked_after_round",
+              message: "Não é possível alterar o número de vagas após a abertura do 1º escrutínio.",
+            });
+          }
+        }
+
+        const isUpdatingEntryConfig =
+          (body.entryMode !== undefined && body.entryMode !== existing.entryMode) ||
+          (body.entryOpen !== undefined && body.entryOpen !== existing.entryOpen) ||
+          (body.maxParticipants !== undefined && body.maxParticipants !== existing.maxParticipants) ||
+          (body.showLiveCandidateTally !== undefined &&
+            body.showLiveCandidateTally !== existing.showLiveCandidateTally);
+
+        if (isUpdatingEntryConfig && existing.status === "closed") {
+          return reply.code(409).send({
+            error: "room_closed",
+            message: "Não é possível alterar as configurações de entrada de uma sala encerrada.",
+          });
+        }
+
         if (
           body.status === "open" &&
           existing.status === "test" &&
@@ -683,6 +804,11 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           quorumUnit: body.quorumUnit,
           eligibleCount: body.eligibleCount,
           status: body.status,
+          vacancies: body.vacancies,
+          entryMode: body.entryMode,
+          entryOpen: body.entryOpen,
+          maxParticipants: body.maxParticipants,
+          showLiveCandidateTally: body.showLiveCandidateTally,
           reactionsEnabled: body.reactionsEnabled,
           chatMuted: body.chatMuted,
         });
@@ -702,6 +828,9 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
           options.presencePublisher?.publishChatConfig?.(roomId, {
             chatMuted: updated.chatMuted ?? false,
           });
+        }
+        if (body.showLiveCandidateTally !== undefined || body.entryOpen !== undefined) {
+          options.presencePublisher?.publishTelaoUpdated?.(roomId);
         }
 
         return { room: toRoomResponse(updated, { includeInvite: true, candidates }) };
@@ -948,6 +1077,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
         );
         const presence = await loadRoomPresence(options.roomRepository, room);
         options.presencePublisher?.publishPresence(roomId, presence);
+        options.presencePublisher?.publishEntryRequestsUpdated?.(roomId);
         return { expelledCount, presence };
       } catch (error) {
         request.log.error({ err: error, roomId }, "Failed to expel participants");
@@ -989,6 +1119,7 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
 
         const presence = await loadRoomPresence(options.roomRepository, room);
         options.presencePublisher?.publishPresence(roomId, presence);
+        options.presencePublisher?.publishEntryRequestsUpdated?.(roomId);
 
         return {
           released: true,
@@ -1540,6 +1671,246 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
     },
   );
 
+  app.get(
+    "/v1/admin/rooms/:roomId/entry-requests",
+    { schema: { params: RoomIdParams } },
+    async (request, reply) => {
+      if (!(await requireAdmin(request, reply, options.userRepository))) {
+        return;
+      }
+      if (!options.roomRepository?.listEntryRequests) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const snapshot = await options.roomRepository.listEntryRequests(roomId);
+        if (!snapshot) {
+          return reply.code(404).send({ error: "room_not_found" });
+        }
+
+        return {
+          requests: snapshot.requests.map(toEntryRequestResponse),
+          claimedParticipants: snapshot.claimedParticipants.map((participant) => ({
+            participantId: participant.participantId,
+            rosterEntryId: participant.rosterEntryId,
+            displayName: participant.displayName,
+            isPresent: participant.isPresent,
+            joinedAt: participant.joinedAt.toISOString(),
+            disputedAttemptCount: participant.disputedAttemptCount,
+            lastDisputedAt: participant.lastDisputedAt
+              ? participant.lastDisputedAt.toISOString()
+              : null,
+          })),
+          disputes: snapshot.disputes.map((dispute) => ({
+            rosterEntryId: dispute.rosterEntryId,
+            displayName: dispute.displayName,
+            disputedAttemptCount: dispute.disputedAttemptCount,
+            lastDisputedAt: dispute.lastDisputedAt.toISOString(),
+            currentHolderStatus: dispute.currentHolderStatus,
+            requestId: dispute.requestId,
+            participantId: dispute.participantId,
+          })),
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to list entry requests");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/entry-requests/:requestId/approve",
+    { schema: { params: EntryRequestIdParams } },
+    async (request, reply) => {
+      const admin = await requireAdmin(request, reply, options.userRepository);
+      if (!admin) {
+        return;
+      }
+      if (!options.roomRepository?.approveEntryRequest) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId, requestId } = request.params as { roomId: string; requestId: string };
+      try {
+        const result = await options.roomRepository.approveEntryRequest(
+          roomId,
+          requestId,
+          admin.id,
+        );
+        if (!result.ok) {
+          if (
+            result.reason === "room_not_found" ||
+            result.reason === "request_not_found" ||
+            result.reason === "roster_entry_not_found"
+          ) {
+            return reply.code(404).send({ error: result.reason });
+          }
+          const messages: Record<string, string> = {
+            room_not_joinable: "A sala não está aberta para entrada de eleitores.",
+            request_not_pending: "Este pedido de entrada já foi processado.",
+            voter_on_paper: "Este eleitor está marcado para votar em papel.",
+            room_capacity_reached: "O limite de participantes da sala foi atingido.",
+            session_already_in_use: "Este navegador já possui outra sessão ativa na sala.",
+          };
+          return reply.code(409).send({
+            error: result.reason,
+            message: messages[result.reason] ?? "Não foi possível aprovar o pedido.",
+          });
+        }
+
+        const room = await options.roomRepository.findRoomById(roomId);
+        const presence = room ? await loadRoomPresence(options.roomRepository, room) : null;
+        if (presence) {
+          options.presencePublisher?.publishPresence(roomId, presence);
+        }
+        options.presencePublisher?.publishEntryRequestsUpdated?.(roomId);
+
+        return {
+          request: toEntryRequestResponse(result.request),
+          participantId: result.participantId,
+          ...(presence ? { presence } : {}),
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId, requestId }, "Failed to approve entry request");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/entry-requests/approve-all",
+    { schema: { params: RoomIdParams } },
+    async (request, reply) => {
+      const admin = await requireAdmin(request, reply, options.userRepository);
+      if (!admin) {
+        return;
+      }
+      if (!options.roomRepository?.approveAllEntryRequests) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      try {
+        const result = await options.roomRepository.approveAllEntryRequests(roomId, admin.id);
+        if (!result.ok) {
+          if (result.reason === "room_not_found") {
+            return reply.code(404).send({ error: result.reason });
+          }
+          return reply.code(409).send({
+            error: result.reason,
+            message:
+              result.reason === "room_capacity_reached"
+                ? "O limite de participantes da sala foi atingido."
+                : "A sala não está aberta para entrada de eleitores.",
+          });
+        }
+
+        const room = await options.roomRepository.findRoomById(roomId);
+        const presence = room ? await loadRoomPresence(options.roomRepository, room) : null;
+        if (presence) {
+          options.presencePublisher?.publishPresence(roomId, presence);
+        }
+        options.presencePublisher?.publishEntryRequestsUpdated?.(roomId);
+
+        return {
+          approvedCount: result.approvedCount,
+          skippedCount: result.skippedCount,
+          ...(presence ? { presence } : {}),
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to approve all entry requests");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/entry-requests/:requestId/reject",
+    { schema: { params: EntryRequestIdParams } },
+    async (request, reply) => {
+      const admin = await requireAdmin(request, reply, options.userRepository);
+      if (!admin) {
+        return;
+      }
+      if (!options.roomRepository?.rejectEntryRequest) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId, requestId } = request.params as { roomId: string; requestId: string };
+      try {
+        const result = await options.roomRepository.rejectEntryRequest(
+          roomId,
+          requestId,
+          admin.id,
+        );
+        if (!result.ok) {
+          if (result.reason === "room_not_found" || result.reason === "request_not_found") {
+            return reply.code(404).send({ error: result.reason });
+          }
+          return reply.code(409).send({
+            error: result.reason,
+            message: "Este pedido de entrada já foi processado.",
+          });
+        }
+
+        options.presencePublisher?.publishEntryRequestsUpdated?.(roomId);
+
+        return {
+          request: toEntryRequestResponse(result.request),
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId, requestId }, "Failed to reject entry request");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
+  app.post(
+    "/v1/admin/rooms/:roomId/entry-requests/release-name",
+    { schema: { params: RoomIdParams, body: ReleaseClaimedNameBody } },
+    async (request, reply) => {
+      const admin = await requireAdmin(request, reply, options.userRepository);
+      if (!admin) {
+        return;
+      }
+      if (!options.roomRepository?.releaseClaimedName) {
+        return reply.code(503).send({ error: "persistence_unavailable" });
+      }
+
+      const { roomId } = request.params as { roomId: string };
+      const body = request.body as { rosterEntryId?: string; participantId?: string };
+      if (!body.rosterEntryId && !body.participantId) {
+        return reply.code(400).send({ error: "invalid_release_target" });
+      }
+
+      try {
+        const result = await options.roomRepository.releaseClaimedName(roomId, body, admin.id);
+        if (!result.ok) {
+          return reply.code(404).send({ error: result.reason });
+        }
+
+        const room = await options.roomRepository.findRoomById(roomId);
+        const presence = room ? await loadRoomPresence(options.roomRepository, room) : null;
+        if (presence) {
+          options.presencePublisher?.publishPresence(roomId, presence);
+        }
+        options.presencePublisher?.publishEntryRequestsUpdated?.(roomId);
+
+        return {
+          released: true,
+          rosterEntryId: result.rosterEntryId,
+          participantId: result.participantId,
+          displayName: result.displayName,
+          ...(presence ? { presence } : {}),
+        };
+      } catch (error) {
+        request.log.error({ err: error, roomId }, "Failed to release claimed name");
+        return reply.code(500).send({ error: "persistence_failed" });
+      }
+    },
+  );
+
   app.get("/v1/admin/logs", async (request, reply) => {
     if (!(await requireAdmin(request, reply, options.userRepository))) {
       return;
@@ -1703,6 +2074,19 @@ export const roomRoutes: FastifyPluginAsync<RoomRouteOptions> = async (app, opti
   });
 };
 
+function toEntryRequestResponse(request: StoredEntryRequest) {
+  return {
+    id: request.id,
+    rosterEntryId: request.rosterEntryId,
+    displayName: request.displayName,
+    status: request.status,
+    disputedAttemptCount: request.disputedAttemptCount,
+    lastDisputedAt: request.lastDisputedAt ? request.lastDisputedAt.toISOString() : null,
+    createdAt: request.createdAt.toISOString(),
+    decidedAt: request.decidedAt ? request.decidedAt.toISOString() : null,
+  };
+}
+
 function toRosterEntryResponse(entry: {
   id: string;
   roomId: string;
@@ -1790,6 +2174,12 @@ function toRoomResponse(
     eligibleCount: room.eligibleCount,
     officeBanners: toPublicOfficeBanners(room.id, room.officeBanners),
     status: room.status,
+    vacancies: room.vacancies ?? 1,
+    entryMode: room.entryMode,
+    entryOpen: room.entryOpen,
+    maxParticipants: room.maxParticipants,
+    effectiveMaxParticipants: resolveRoomMaxParticipants(room),
+    showLiveCandidateTally: room.showLiveCandidateTally ?? false,
     shortCode: room.shortCode,
     reactionsEnabled: room.reactionsEnabled,
     chatMuted: room.chatMuted ?? false,
@@ -1818,6 +2208,58 @@ function toRoomResponse(
     majorityRule: preset.majorityRule,
     roundBehavior: preset.roundBehavior,
     createdAt: room.createdAt.toISOString(),
+  };
+}
+
+function buildLiveRoundTally(input: {
+  candidates: StoredCandidate[];
+  ballotChoices: readonly BallotChoiceInput[];
+  paperTally: StoredPaperTally | null;
+  vacancies: number;
+  includeStandings: boolean;
+}): LiveRoundTally {
+  const onlineBallots = input.ballotChoices.length;
+  const paperBallots = input.paperTally?.ballotCount ?? 0;
+  let onlineBlankVotes = 0;
+  for (const choice of input.ballotChoices) {
+    if (choice === null || (Array.isArray(choice) && choice.length === 0)) {
+      onlineBlankVotes += 1;
+    }
+  }
+  const blankVotes = onlineBlankVotes + (input.paperTally?.blankVotes ?? 0);
+  const nullVotes = input.paperTally?.nullVotes ?? 0;
+
+  if (!input.includeStandings || input.candidates.length === 0) {
+    return {
+      totalBallots: onlineBallots + paperBallots,
+      onlineBallots,
+      paperBallots,
+      blankVotes,
+      nullVotes,
+    };
+  }
+
+  const partial = tallyRoundVotes(input.candidates, input.ballotChoices, {
+    vacancies: input.vacancies,
+    ...(input.paperTally
+      ? {
+          paperTally: {
+            ballotCount: input.paperTally.ballotCount,
+            blankVotes: input.paperTally.blankVotes,
+            nullVotes: input.paperTally.nullVotes,
+            candidateVotes: input.paperTally.candidateVotes,
+          },
+        }
+      : {}),
+  });
+
+  return {
+    totalBallots: onlineBallots + paperBallots,
+    onlineBallots,
+    paperBallots,
+    blankVotes,
+    nullVotes,
+    standings: partial.standings,
   };
 }
 
@@ -1858,7 +2300,9 @@ async function loadTalliesForClosedRounds(
     if (primaryCandidates.length === 0 && fallbackCandidates.length === 0) {
       continue;
     }
-    const ballotCandidateIds = await repository.listRoundBallotCandidateIds(round.id);
+    const ballotChoices: readonly BallotChoiceInput[] = repository.listRoundBallotMarks
+      ? await repository.listRoundBallotMarks(round.id)
+      : await repository.listRoundBallotCandidateIds(round.id);
     const paperTally = paperTallyByRoundId.get(round.id);
     const primaryIds = new Set(primaryCandidates.map((candidate) => candidate.id));
     const paperVoteIds = paperTally
@@ -1868,15 +2312,23 @@ async function loadTalliesForClosedRounds(
       : [];
     const usePrimary =
       primaryCandidates.length > 0 &&
-      ballotCandidateIds.every((id) => id === null || primaryIds.has(id)) &&
+      ballotChoices.every((choice) =>
+        choice === null
+          ? true
+          : typeof choice === "string"
+            ? primaryIds.has(choice)
+            : choice.every((id) => primaryIds.has(id)),
+      ) &&
       paperVoteIds.every((id) => primaryIds.has(id));
     const pool = usePrimary ? primaryCandidates : fallbackCandidates;
     const roundNumber = officeRoundNumberByRoundId?.get(round.id) ?? round.number;
     tallies.set(
       round.id,
-      tallyRoundVotes(pool, ballotCandidateIds, {
+      tallyRoundVotes(pool, ballotChoices, {
         roundNumber,
-        winnerOverrideId: round.winnerCandidateId,
+        vacancies: round.vacancies ?? 1,
+        winnerOverrideId:
+          round.tieBreakReason === "admin_tiebreak" ? round.winnerCandidateId : undefined,
         tieBreakReason: round.tieBreakReason,
         ...(round.didNotVoteCount !== undefined && round.didNotVoteCount > 0
           ? { didNotVoteCount: round.didNotVoteCount }

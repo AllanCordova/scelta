@@ -10,6 +10,8 @@ export type RoomType =
   | "custom";
 export type CreatableRoomStatus = "draft" | "open" | "test";
 export type RoomStatus = CreatableRoomStatus | "closed";
+export type RoomEntryMode = "codigo" | "aprovacao";
+export type EntryRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 
 export type PresetDefinition = {
   preset: RulesPreset;
@@ -141,6 +143,12 @@ export type RoundTally = {
   outcome: "elected" | "no_majority";
   winnerId: string | null;
   winnerName: string | null;
+  vacancies?: number;
+  winnerIds?: string[];
+  winnerNames?: string[];
+  remainingVacancies?: number;
+  partialElection?: boolean;
+  lastVacancyTieCandidateIds?: string[];
   standings: CandidateStanding[];
   didNotVoteCount?: number;
   tieBreakReason?: TieBreakReason;
@@ -167,7 +175,50 @@ export type RoomSummary = {
   shortPath?: string;
   majorityRule: string;
   roundBehavior: string;
+  entryMode?: RoomEntryMode;
+  entryOpen?: boolean;
+  maxParticipants?: number | null;
+  effectiveMaxParticipants?: number;
+  vacancies?: number;
+  showLiveCandidateTally?: boolean;
   createdAt: string;
+};
+
+export type RoomEntryRequestItem = {
+  id: string;
+  rosterEntryId: string;
+  displayName: string;
+  status: EntryRequestStatus;
+  disputedAttemptCount: number;
+  lastDisputedAt: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+};
+
+export type ClaimedParticipantItem = {
+  participantId: string;
+  rosterEntryId: string | null;
+  displayName: string;
+  isPresent: boolean;
+  joinedAt: string;
+  disputedAttemptCount: number;
+  lastDisputedAt: string | null;
+};
+
+export type DisputedNameItem = {
+  rosterEntryId: string;
+  displayName: string;
+  disputedAttemptCount: number;
+  lastDisputedAt: string | null;
+  currentHolderStatus: "pending" | "approved";
+  requestId: string | null;
+  participantId: string | null;
+};
+
+export type RoomEntryRequestsResponse = {
+  requests: RoomEntryRequestItem[];
+  claimedParticipants: ClaimedParticipantItem[];
+  disputes: DisputedNameItem[];
 };
 
 export type OfficeProgressStatus = "pending" | "open" | "in_progress" | "elected";
@@ -243,6 +294,8 @@ export type RoomDetail = RoomSummary & {
   receiptTimestamps: string[];
   offices?: OfficeProgressItem[];
   recommendedOffice?: string | null;
+  remainingVacancies?: number;
+  electedCandidates?: { id: string; displayName: string; photoUrl?: string | null }[];
   auditEvents?: AuditEventItem[];
 };
 
@@ -251,13 +304,26 @@ export type FieldErrorCode = "required" | "invalid" | "out_of_range" | "incomple
 export type RoundResult = "failed_quorum" | "no_majority" | "elected" | "declined";
 export type RoundStatus = "pending" | "open" | "closed" | "restarted";
 
+export type LiveRoundTally = {
+  totalBallots: number;
+  onlineBallots: number;
+  paperBallots: number;
+  blankVotes: number;
+  nullVotes: number;
+  standings?: CandidateStanding[];
+};
+
 export type RoomRound = {
   id: string;
   number: number;
   officeLabel?: string | null;
   officeRoundNumber?: number;
+  vacancies?: number;
+  winnerCandidateIds?: string[];
   status: RoundStatus;
   outcome: RoundResult | null;
+  resultRevealed?: boolean;
+  liveTally?: LiveRoundTally;
   restartCount?: number;
   didNotVoteCount?: number;
   tally?: RoundTally;
@@ -273,6 +339,10 @@ export type FieldError = {
     | "quorumUnit"
     | "eligibleCount"
     | "status"
-    | "candidates";
+    | "candidates"
+    | "entryMode"
+    | "entryOpen"
+    | "maxParticipants"
+    | "vacancies";
   code: FieldErrorCode;
 };

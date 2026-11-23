@@ -105,12 +105,24 @@ export function validatePaperTally(
           "A soma dos votos nos candidatos deve ser igual ao número de cédulas válidas (cédulas menos brancos e nulos).",
       };
     }
-  } else if (candidateMarks > maxMarksPerBallot * validBallots) {
-    return {
-      valid: false,
-      code: "paper_marks_exceed_ballots",
-      message: "O total de marcações nos candidatos excede o limite permitido pelas cédulas válidas.",
-    };
+  } else {
+    if (candidateMarks > maxMarksPerBallot * validBallots) {
+      return {
+        valid: false,
+        code: "paper_marks_exceed_ballots",
+        message: "O total de marcações nos candidatos excede o limite permitido pelas cédulas válidas.",
+      };
+    }
+    for (const votes of Object.values(input.candidateVotes)) {
+      if (votes > validBallots) {
+        return {
+          valid: false,
+          code: "paper_marks_exceed_ballots",
+          message:
+            "Um candidato não pode receber mais marcações em papel do que o número de cédulas válidas.",
+        };
+      }
+    }
   }
 
   return { valid: true };

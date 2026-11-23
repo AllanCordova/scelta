@@ -101,7 +101,15 @@ describe("join room", () => {
 
     const preview = await app.inject({ method: "GET", url: `/v1/join/${room.inviteToken}` });
     expect(preview.statusCode).toBe(200);
-    expect(preview.json()).toEqual({ title: "Assembleia", status: "open", canJoin: true });
+    expect(preview.json()).toEqual({
+      title: "Assembleia",
+      status: "open",
+      canJoin: true,
+      entryMode: "codigo",
+      entryOpen: true,
+      maxParticipants: 2,
+      presentCount: 0,
+    });
     expect(preview.json()).not.toHaveProperty("inviteToken");
 
     const first = await join(app, room.inviteToken, anaCode.code.toLowerCase(), anaKey);

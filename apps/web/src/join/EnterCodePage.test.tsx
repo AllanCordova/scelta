@@ -23,4 +23,28 @@ describe("EnterCodePage", () => {
 
     expect(onNavigate).toHaveBeenCalledWith("/s/K7M2P9?c=A7K9M2");
   });
+
+  it("allows navigating with only room short code when personal code is left blank (approval mode)", () => {
+    const onNavigate = vi.fn();
+    render(<EnterCodePage onNavigate={onNavigate} />);
+
+    fireEvent.change(screen.getByLabelText("Código da sala"), { target: { value: "k7m2p9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar na sala" }));
+
+    expect(onNavigate).toHaveBeenCalledWith("/s/K7M2P9");
+  });
+
+  it("validates personal code format when provided", () => {
+    const onNavigate = vi.fn();
+    render(<EnterCodePage onNavigate={onNavigate} />);
+
+    fireEvent.change(screen.getByLabelText("Código da sala"), { target: { value: "K7M2P9" } });
+    fireEvent.change(screen.getByLabelText("Seu código"), { target: { value: "123" } });
+    fireEvent.click(screen.getByRole("button", { name: "Entrar na sala" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Seu código deve ter 6 letras ou números.",
+    );
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
 });

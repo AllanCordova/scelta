@@ -16,6 +16,13 @@ import {
 
 export const quorumUnitEnum = pgEnum("quorum_unit", ["absolute", "percent"]);
 export const roomStatusEnum = pgEnum("room_status", ["draft", "open", "test", "closed"]);
+export const roomEntryModeEnum = pgEnum("room_entry_mode", ["codigo", "aprovacao"]);
+export const entryRequestStatusEnum = pgEnum("entry_request_status", [
+  "pending",
+  "approved",
+  "rejected",
+  "cancelled",
+]);
 export const rulesPresetEnum = pgEnum("rules_preset", [
   "ipb_local_officers",
   "ipb_society_board",
@@ -103,6 +110,11 @@ export const rooms = pgTable(
     inviteToken: text("invite_token").notNull(),
     shortCode: varchar("short_code", { length: 12 }).notNull(),
     status: roomStatusEnum("status").notNull().default("draft"),
+    entryMode: roomEntryModeEnum("entry_mode").notNull().default("codigo"),
+    entryOpen: boolean("entry_open").notNull().default(true),
+    maxParticipants: integer("max_participants"),
+    vacancies: integer("vacancies").notNull().default(1),
+    showLiveCandidateTally: boolean("show_live_candidate_tally").notNull().default(false),
     reactionsEnabled: boolean("reactions_enabled").notNull().default(true),
     chatMuted: boolean("chat_muted").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -110,6 +122,7 @@ export const rooms = pgTable(
   (table) => [
     uniqueIndex("rooms_invite_token_uidx").on(table.inviteToken),
     uniqueIndex("rooms_short_code_uidx").on(table.shortCode),
+    check("rooms_vacancies_check", sql`vacancies >= 1`),
   ],
 );
 
@@ -184,7 +197,40 @@ export const participants = pgTable(
     uniqueIndex("participants_room_access_code_uidx")
       .on(table.roomId, table.accessCodeId)
       .where(sql`access_code_id IS NOT NULL`),
+    uniqueIndex("participants_room_roster_entry_uidx")
+      .on(table.roomId, table.rosterEntryId)
+      .where(sql`roster_entry_id IS NOT NULL`),
     uniqueIndex("participants_room_join_key_uidx").on(table.roomId, table.joinKeyHash),
+  ],
+);
+
+export const roomEntryRequests = pgTable(
+  "room_entry_requests",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => rooms.id, { onDelete: "cascade" }),
+    rosterEntryId: uuid("roster_entry_id")
+      .notNull()
+      .references(() => roomRoster.id, { onDelete: "cascade" }),
+    displayName: text("display_name").notNull(),
+    joinKeyHash: text("join_key_hash").notNull(),
+    status: entryRequestStatusEnum("status").notNull().default("pending"),
+    disputedAttemptCount: integer("disputed_attempt_count").notNull().default(0),
+    lastDisputedAt: timestamp("last_disputed_at", { withTimezone: true }),
+    decidedByAdminId: uuid("decided_by_admin_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("room_entry_requests_pending_roster_uidx")
+      .on(table.roomId, table.rosterEntryId)
+      .where(sql`status = 'pending'`),
+    index("room_entry_requests_room_status_idx").on(table.roomId, table.status),
+    index("room_entry_requests_room_join_key_idx").on(table.roomId, table.joinKeyHash),
   ],
 );
 
@@ -197,13 +243,16 @@ export const rounds = pgTable(
       .references(() => rooms.id),
     number: integer("number").notNull(),
     officeLabel: text("office_label"),
+    vacancies: integer("vacancies").notNull().default(1),
     status: roundStatusEnum("status").notNull().default("pending"),
     /** null while open or waiting for the tally; otherwise a round result. */
     outcome: text("outcome"),
     declinedCandidateId: uuid("declined_candidate_id"),
     winnerCandidateId: uuid("winner_candidate_id"),
+    winnerCandidateIds: jsonb("winner_candidate_ids").$type<string[]>().notNull().default([]),
     tieBreakReason: text("tie_break_reason"),
     didNotVoteCount: integer("did_not_vote_count"),
+    resultRevealed: boolean("result_revealed").notNull().default(false),
     openedAt: timestamp("opened_at", { withTimezone: true }),
     closedAt: timestamp("closed_at", { withTimezone: true }),
   },
@@ -216,6 +265,7 @@ export const rounds = pgTable(
       "rounds_outcome_check",
       sql`outcome IS NULL OR outcome IN ('failed_quorum', 'no_majority', 'elected', 'declined', 'annulled')`,
     ),
+    check("rounds_vacancies_check", sql`vacancies >= 1`),
   ],
 );
 
@@ -240,9 +290,33 @@ export const ballots = pgTable("ballots", {
   roundId: uuid("round_id")
     .notNull()
     .references(() => rounds.id),
-  /** Null represents a blank/null vote. */
+  /** Null represents a blank vote or a multi-vacancy ballot whose marks live in ballot_marks. */
   candidateId: uuid("candidate_id").references(() => candidates.id),
 });
+
+/**
+ * Anonymous multi-vacancy ballot marks: links a ballot to up to N marked candidates.
+ * Anonymity invariant (T0.5 / T5.2): never add participant_id, cast timestamp, or token here.
+ */
+export const ballotMarks = pgTable(
+  "ballot_marks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    ballotId: uuid("ballot_id")
+      .notNull()
+      .references(() => ballots.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id")
+      .notNull()
+      .references(() => candidates.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    uniqueIndex("ballot_marks_ballot_candidate_uidx").on(
+      table.ballotId,
+      table.candidateId,
+    ),
+    index("ballot_marks_ballot_idx").on(table.ballotId),
+  ],
+);
 
 /** Proves a participant voted in a round without revealing the choice. */
 export const voteReceipts = pgTable(

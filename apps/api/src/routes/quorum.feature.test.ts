@@ -148,7 +148,14 @@ describe("quorum gate", () => {
     const closed = await closeRound(app, room.id, roundId);
     expect(closed.statusCode).toBe(200);
     expect(closed.json()).toEqual({
-      round: { id: roundId, number: 1, status: "closed", outcome: "failed_quorum" },
+      round: {
+        id: roundId,
+        number: 1,
+        vacancies: 1,
+        status: "closed",
+        outcome: "failed_quorum",
+        resultRevealed: false,
+      },
       quorum: { presentCount: 0, eligibleCount: 4, requiredCount: 4, quorumMet: false },
     });
 
@@ -185,7 +192,14 @@ describe("quorum gate", () => {
     expect(listed.json().rooms).toEqual([
       expect.objectContaining({
         id: room.id,
-        round: { id: nextRoundId, number: 2, status: "open", outcome: null },
+        round: {
+          id: nextRoundId,
+          number: 2,
+          vacancies: 1,
+          status: "open",
+          outcome: null,
+          resultRevealed: false,
+        },
       }),
     ]);
 

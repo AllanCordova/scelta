@@ -2299,6 +2299,53 @@ li {
   box-shadow: inset 0 0 0 3px var(--surface);
 }
 
+.voter-checkbox {
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 0.32rem;
+  border: 2px solid var(--line);
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+
+.choice.selected .voter-checkbox {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #ffffff;
+}
+
+.choice.selected .voter-checkbox::after {
+  content: "✓";
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.voter-review-panel {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.voter-review-panel h3 {
+  margin: 0;
+}
+
+.voter-review-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.voter-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: flex-end;
+}
+
 .voter-confirm-dock {
   position: sticky;
   bottom: 0.75rem;
@@ -2481,6 +2528,15 @@ li {
   .voter-confirm-dock {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .voter-review-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .voter-candidates-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -3737,6 +3793,89 @@ button.danger-button:hover:not(:disabled) {
   gap: 0.65rem;
 }
 
+.detail-qr-short-code {
+  margin: 0.5rem 0 0;
+  font-size: 0.95rem;
+}
+
+.detail-qr-short-code strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.14em;
+  font-size: 1.15rem;
+}
+
+.approval-queue-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.approval-queue-title-group,
+.approval-queue-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.approval-queue-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.approval-queue-section h3 {
+  margin: 0.25rem 0 0;
+  font-size: 0.95rem;
+}
+
+.approval-dispute-box {
+  margin: 0;
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.roster-search-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.roster-search-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.approval-selected-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: var(--bg);
+}
+
+.approval-selected-card > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.approval-birth-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.approval-pending-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  align-items: flex-start;
+}
+
 @media print {
   .no-print,
   .topbar,
@@ -3752,5 +3891,210 @@ button.danger-button:hover:not(:disabled) {
   .integrity-logs-table td {
     border-color: #cbd5e1;
     color: #0f172a;
+  }
+}
+
+.room-detail-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.room-detail-tabs [role="tab"] {
+  justify-content: center;
+  text-align: center;
+  font-weight: 600;
+}
+
+.room-tab-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.telao-reveal-bar,
+.telao-partial-toggle-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.telao-partial-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.telao-frame {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.telao-screen {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.telao-top-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.telao-top-subtitle {
+  display: block;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.telao-top-bar h1 {
+  margin: 0.15rem 0 0;
+  font-size: clamp(1.6rem, 2.5vw, 2.25rem);
+}
+
+.telao-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.telao-card {
+  padding: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.telao-kicker {
+  display: inline-block;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--brand);
+}
+
+.telao-entry-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 2rem;
+  align-items: center;
+}
+
+.telao-qr-wrap svg {
+  width: 100%;
+  max-width: 280px;
+  height: auto;
+  background: #fff;
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+}
+
+.telao-short-code-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.75rem 0;
+}
+
+.telao-short-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: clamp(2.5rem, 6vw, 4rem);
+  letter-spacing: 0.18em;
+  line-height: 1.05;
+}
+
+.telao-public-url {
+  font-size: 1.1rem;
+  color: var(--muted);
+  margin: 0 0 1rem;
+}
+
+.telao-voted-counter {
+  font-size: clamp(1.4rem, 2.5vw, 2rem);
+  margin: 0;
+}
+
+.telao-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.telao-kpi {
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.telao-kpi span {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.telao-kpi strong {
+  font-size: clamp(1.5rem, 2.5vw, 2rem);
+}
+
+.telao-standings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.telao-standing-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+  font-size: 1.05rem;
+}
+
+.telao-awaiting-card {
+  align-items: flex-start;
+}
+
+.telao-winner-banner {
+  padding: 1rem 1.25rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--brand);
+  background: color-mix(in srgb, var(--brand) 10%, transparent);
+}
+
+.telao-winner-banner h3 {
+  margin: 0.35rem 0 0;
+  font-size: clamp(1.5rem, 3vw, 2.25rem);
+}
+
+.telao-hidden-notice {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border-radius: 0.65rem;
+  border: 1px dashed var(--line);
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .telao-entry-grid,
+  .telao-kpi-strip {
+    grid-template-columns: 1fr;
   }
 }

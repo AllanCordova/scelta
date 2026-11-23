@@ -2,7 +2,9 @@ import {
   ALLOWED_REACTION_EMOJIS,
   canOpenRound,
   countOfficeRoundNumber,
+  evaluateMultiVacancyProgress,
   tallyRoundVotes,
+  type BallotChoiceInput,
   type RoundTally,
 } from "@scelta/domain";
 import { Type } from "@sinclair/typebox";
@@ -32,7 +34,8 @@ const Uuid = Type.String({
 const CastBallotBody = Type.Object(
   {
     joinKey: Type.String({ minLength: 1, maxLength: 128 }),
-    candidateId: Type.Union([Uuid, Type.Null()]),
+    candidateId: Type.Optional(Type.Union([Uuid, Type.Null()])),
+    candidateIds: Type.Optional(Type.Array(Uuid, { maxItems: 50 })),
   },
   { additionalProperties: false },
 );
@@ -46,7 +49,8 @@ const ReceiptCheckBody = Type.Object(
 
 type CastBallotBodyType = {
   joinKey: string;
-  candidateId: string | null;
+  candidateId?: string | null;
+  candidateIds?: string[];
 };
 
 type ReceiptCheckBodyType = {
@@ -96,9 +100,11 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           (round.outcome === "elected" || round.outcome === "no_majority") &&
           allCandidates.length > 0;
 
-        const [ballotCandidateIds, paperTally, officeState] = await Promise.all([
+        const [ballotChoices, paperTally, officeState] = await Promise.all([
           shouldLoadCurrentTally
-            ? repository.listRoundBallotCandidateIds(round.id)
+            ? repository.listRoundBallotMarks
+              ? repository.listRoundBallotMarks(round.id)
+              : repository.listRoundBallotCandidateIds(round.id)
             : Promise.resolve(null),
           shouldLoadCurrentTally && repository.findRoundPaperTally
             ? repository.findRoundPaperTally(round.id)
@@ -107,7 +113,7 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
         ]);
 
         let tally: RoundTally | null = null;
-        if (shouldLoadCurrentTally && ballotCandidateIds) {
+        if (shouldLoadCurrentTally && ballotChoices) {
           const eligibleIds = new Set(candidates.map((candidate) => candidate.id));
           const paperVoteIds = paperTally
             ? Object.entries(paperTally.candidateVotes)
@@ -116,14 +122,16 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
             : [];
           const useEligibleOnly =
             candidates.length > 0 &&
-            ballotCandidateIds.every((id) => id === null || eligibleIds.has(id)) &&
+            ballotChoices.every((choice) => ballotChoiceUsesPool(choice, eligibleIds)) &&
             paperVoteIds.every((id) => eligibleIds.has(id));
           tally = tallyRoundVotes(
             useEligibleOnly ? candidates : allCandidates,
-            ballotCandidateIds,
+            ballotChoices,
             {
               roundNumber: officeRoundNumber,
-              winnerOverrideId: round.winnerCandidateId,
+              vacancies: round.vacancies ?? 1,
+              winnerOverrideId:
+                round.tieBreakReason === "admin_tiebreak" ? round.winnerCandidateId : undefined,
               tieBreakReason: round.tieBreakReason,
               ...(round.didNotVoteCount !== undefined && round.didNotVoteCount > 0
                 ? { didNotVoteCount: round.didNotVoteCount }
@@ -142,6 +150,16 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           );
         }
 
+        const vacancyProgress = evaluateMultiVacancyProgress(room.vacancies ?? 1, allRounds);
+        const electedCandidates = vacancyProgress.electedCandidateIds
+          .map((id) => allCandidates.find((candidate) => candidate.id === id))
+          .filter((candidate): candidate is (typeof allCandidates)[number] => Boolean(candidate))
+          .map((candidate) => ({
+            id: candidate.id,
+            displayName: candidate.displayName,
+            photoUrl: toCandidatePhotoUrl(room.id, candidate.id, candidate.photoUrl),
+          }));
+
         const officeBanners = toPublicOfficeBanners(room.id, room.officeBanners);
         const activeBannerUrl = round?.officeLabel
           ? (officeBanners[round.officeLabel] ?? null)
@@ -151,6 +169,9 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           roomId: room.id,
           roomStatus: room.status,
           roomType: room.roomType,
+          vacancies: room.vacancies ?? 1,
+          remainingVacancies: vacancyProgress.remainingVacancies,
+          electedCandidates,
           officeBanners,
           activeBannerUrl,
           reactionsEnabled: room.reactionsEnabled,
@@ -265,11 +286,17 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           return reply.code(409).send({ error: "round_not_open" });
         }
 
+        const hasCandidateId = body.candidateId !== undefined;
+        const hasCandidateIds = body.candidateIds !== undefined;
+        if (hasCandidateId === hasCandidateIds) {
+          return reply.code(400).send({ error: "invalid_ballot_payload" });
+        }
+
         const result = await repository.castBallot({
           roomId: room.id,
           roundId: round.id,
           joinKeyHash: hashJoinKey(joinKey),
-          candidateId: body.candidateId,
+          ...(hasCandidateIds ? { candidateIds: body.candidateIds } : { candidateId: body.candidateId }),
         });
 
         if (!result.ok) {
@@ -279,7 +306,11 @@ export const ballotRoutes: FastifyPluginAsync<BallotRouteOptions> = async (app, 
           ) {
             return reply.code(403).send({ error: result.reason });
           }
-          if (result.reason === "invalid_candidate") {
+          if (
+            result.reason === "invalid_candidate" ||
+            result.reason === "too_many_marks" ||
+            result.reason === "duplicate_candidate_mark"
+          ) {
             return reply.code(400).send({ error: result.reason });
           }
           return reply.code(409).send({ error: result.reason });
@@ -314,6 +345,16 @@ function readJoinKeyHeader(value: string | string[] | undefined): string | null 
     return null;
   }
   return joinKey;
+}
+
+function ballotChoiceUsesPool(choice: BallotChoiceInput, pool: ReadonlySet<string>): boolean {
+  if (choice === null) {
+    return true;
+  }
+  if (typeof choice === "string") {
+    return pool.has(choice);
+  }
+  return choice.every((id) => pool.has(id));
 }
 
 /** Prefer the open round everyone should be voting in, even if a later number is already closed. */

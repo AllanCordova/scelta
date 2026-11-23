@@ -5,6 +5,7 @@ import { AdminMembers } from "../admin/AdminMembers";
 import { AdminProfile } from "../admin/AdminProfile";
 import { AdminRoomDetail } from "../admin/AdminRoomDetail";
 import { AdminRooms } from "../admin/AdminRooms";
+import { AdminTelao } from "../admin/AdminTelao";
 import { LoginPage } from "../auth/LoginPage";
 import { useAuth } from "../auth/AuthProvider";
 import { EnterCodePage } from "../join/EnterCodePage";
@@ -12,7 +13,7 @@ import { JoinRoom } from "../join/JoinRoom";
 import { joinTargetFromPath } from "../join/path";
 import { AccountPage } from "./AccountPage";
 import { Header } from "./Header";
-import { adminRoomIdFromPath } from "./paths";
+import { adminRoomIdFromPath, telaoRoomIdFromPath } from "./paths";
 import { TabBar } from "./TabBar";
 
 export function Shell() {
@@ -20,6 +21,15 @@ export function Shell() {
   const page = pageFor(pathname);
   const joinTarget = page === "join" ? joinTargetFromPath(pathname) : null;
   const adminRoomId = page === "admin-room-detail" ? adminRoomIdFromPath(pathname) : null;
+  const telaoRoomId = page === "telao" ? telaoRoomIdFromPath(pathname) : null;
+
+  if (page === "telao" && telaoRoomId) {
+    return (
+      <div className="telao-frame">
+        <AdminGate view="telao" roomId={telaoRoomId} />
+      </div>
+    );
+  }
 
   return (
     <div className="app-frame">
@@ -71,7 +81,7 @@ function AdminGate({
   view,
   roomId,
 }: {
-  view: "hub" | "rooms" | "members" | "codes" | "logs" | "room-detail" | "profile";
+  view: "hub" | "rooms" | "members" | "codes" | "logs" | "room-detail" | "profile" | "telao";
   roomId?: string;
 }) {
   const auth = useAuth();
@@ -91,9 +101,11 @@ function AdminGate({
             ? "Logs de Integridade"
             : view === "profile"
               ? "Perfil"
-              : view === "hub"
-                ? "Administração"
-                : "Salas";
+              : view === "telao"
+                ? "Telão"
+                : view === "hub"
+                  ? "Administração"
+                  : "Salas";
     return (
       <section className="panel">
         <h2>{heading}</h2>
@@ -119,6 +131,9 @@ function AdminGate({
   if (view === "room-detail" && roomId) {
     return <AdminRoomDetail roomId={roomId} />;
   }
+  if (view === "telao" && roomId) {
+    return <AdminTelao roomId={roomId} />;
+  }
   return <AdminRooms />;
 }
 
@@ -139,10 +154,14 @@ function pageFor(
   | "admin-logs"
   | "admin-profile"
   | "account"
-  | "join" {
+  | "join"
+  | "telao" {
   const path = pathname.replace(/\/+$/, "") || "/";
   if (path === "/entrar" || path === "/login") {
     return "login";
+  }
+  if (telaoRoomIdFromPath(path)) {
+    return "telao";
   }
   if (path === "/admin") {
     return "admin";

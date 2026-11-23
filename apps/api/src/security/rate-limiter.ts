@@ -10,19 +10,39 @@ export type RateLimitPolicy = {
 export const JOIN_RATE_LIMIT: RateLimitPolicy = { name: "join", limit: 20, windowMs: 60_000 };
 export const JOIN_BURST_RATE_LIMIT: RateLimitPolicy = {
   name: "join-burst",
-  limit: 300,
+  limit: 1200,
   windowMs: 60_000,
 };
 export const BALLOT_RATE_LIMIT: RateLimitPolicy = { name: "ballot", limit: 30, windowMs: 60_000 };
 export const BALLOT_BURST_RATE_LIMIT: RateLimitPolicy = {
   name: "ballot-burst",
-  limit: 300,
+  limit: 1200,
   windowMs: 60_000,
 };
 export const CHAT_REQUEST_RATE_LIMIT: RateLimitPolicy = { name: "chat", limit: 30, windowMs: 60_000 };
 export const CHAT_BURST_RATE_LIMIT: RateLimitPolicy = {
   name: "chat-burst",
   limit: 300,
+  windowMs: 60_000,
+};
+export const ROSTER_SEARCH_RATE_LIMIT: RateLimitPolicy = {
+  name: "roster-search",
+  limit: 30,
+  windowMs: 60_000,
+};
+export const ROSTER_SEARCH_BURST_RATE_LIMIT: RateLimitPolicy = {
+  name: "roster-search-burst",
+  limit: 1200,
+  windowMs: 60_000,
+};
+export const ENTRY_CONFIRM_RATE_LIMIT: RateLimitPolicy = {
+  name: "entry-confirm",
+  limit: 10,
+  windowMs: 60_000,
+};
+export const ENTRY_CONFIRM_BURST_RATE_LIMIT: RateLimitPolicy = {
+  name: "entry-confirm-burst",
+  limit: 1200,
   windowMs: 60_000,
 };
 

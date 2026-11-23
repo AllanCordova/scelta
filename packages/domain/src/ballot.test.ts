@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canCastBallot, validateCandidateNames } from "./ballot.js";
+import { canCastBallot, validateBallotMarks, validateCandidateNames } from "./ballot.js";
 
 describe("validateCandidateNames", () => {
   it("trims candidate names and preserves order", () => {
@@ -69,5 +69,73 @@ describe("canCastBallot", () => {
       ok: false,
       reason: "invalid_candidate",
     });
+  });
+});
+
+describe("validateBallotMarks", () => {
+  const eligible = ["c1", "c2", "c3", "c4", "c5", "c6"];
+
+  it("allows blank ballots (0 marks), partial marks, and up to N distinct eligible marks", () => {
+    expect(
+      validateBallotMarks({ candidateIds: [], vacancies: 5, eligibleCandidateIds: eligible }),
+    ).toEqual({ ok: true, candidateIds: [] });
+
+    expect(
+      validateBallotMarks({
+        candidateIds: ["c1", "c3"],
+        vacancies: 5,
+        eligibleCandidateIds: eligible,
+      }),
+    ).toEqual({ ok: true, candidateIds: ["c1", "c3"] });
+
+    expect(
+      validateBallotMarks({
+        candidateIds: ["c1", "c2", "c3", "c4", "c5"],
+        vacancies: 5,
+        eligibleCandidateIds: eligible,
+      }),
+    ).toEqual({ ok: true, candidateIds: ["c1", "c2", "c3", "c4", "c5"] });
+  });
+
+  it("rejects more than N marks, duplicate marks, ineligible candidates, and invalid vacancies", () => {
+    expect(
+      validateBallotMarks({
+        candidateIds: ["c1", "c2", "c3", "c4", "c5", "c6"],
+        vacancies: 5,
+        eligibleCandidateIds: eligible,
+      }),
+    ).toEqual({ ok: false, reason: "too_many_marks" });
+
+    expect(
+      validateBallotMarks({
+        candidateIds: ["c1", "c2", "c1"],
+        vacancies: 5,
+        eligibleCandidateIds: eligible,
+      }),
+    ).toEqual({ ok: false, reason: "duplicate_candidate_mark" });
+
+    expect(
+      validateBallotMarks({
+        candidateIds: ["c1", "unknown"],
+        vacancies: 5,
+        eligibleCandidateIds: eligible,
+      }),
+    ).toEqual({ ok: false, reason: "invalid_candidate" });
+
+    expect(
+      validateBallotMarks({
+        candidateIds: [],
+        vacancies: 0,
+        eligibleCandidateIds: eligible,
+      }),
+    ).toEqual({ ok: false, reason: "invalid_vacancies" });
+
+    expect(
+      validateBallotMarks({
+        candidateIds: ["c1"],
+        vacancies: 1.5,
+        eligibleCandidateIds: eligible,
+      }),
+    ).toEqual({ ok: false, reason: "invalid_vacancies" });
   });
 });

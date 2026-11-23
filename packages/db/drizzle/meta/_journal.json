@@ -29,6 +29,27 @@
       "when": 1795118438739,
       "tag": "0003_paper_voting",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795453997662,
+      "tag": "0004_approval_entry",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795456700603,
+      "tag": "0005_multi_vacancy_ballots",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795459646704,
+      "tag": "0006_telao_and_partial_tally",
+      "breakpoints": true
     }
   ]
 }

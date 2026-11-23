@@ -971,6 +971,186 @@ describe("JoinRoom", () => {
     expect(window.location.search).toBe("");
     expect(fetchMock).toHaveBeenCalled();
   });
+
+  it("blocks new entry when approval room has entryOpen=false and unlocks when reopened", async () => {
+    let entryOpen = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/v1/join/s/APR999")) {
+          return json({
+            title: "Assembleia Aprovação",
+            status: "open",
+            canJoin: true,
+            shortCode: "APR999",
+            inviteToken: "tok-apr-999",
+            entryMode: "aprovacao",
+            entryOpen,
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(<JoinRoom shortCode="APR999" />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A entrada nesta sala foi encerrada pela mesa.",
+    );
+
+    entryOpen = true;
+    expect(
+      await screen.findByLabelText("Buscar seu nome no rol", {}, { timeout: 4000 }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps already-joined voter in approval room even when entryOpen=false and returns to search if expelled", async () => {
+    writeJoinIdentity(window.localStorage, "s.APR888", {
+      joinKey: "d".repeat(32),
+      displayName: "Marcos",
+      entryMode: "aprovacao",
+    });
+
+    let viewerAccess: "present" | "absent" = "present";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/v1/join/s/APR888")) {
+          return json({
+            title: "Assembleia Aprovação",
+            status: "open",
+            canJoin: true,
+            shortCode: "APR888",
+            inviteToken: "tok-apr-888",
+            entryMode: "aprovacao",
+            entryOpen: false,
+          });
+        }
+        if (url.endsWith("/v1/join/tok-apr-888/ballot")) {
+          return json({
+            roomStatus: "open",
+            viewerAccess,
+            candidates: [{ id: "cand-1", displayName: "Paulo" }],
+            round: { id: "round-1", number: 1, status: "open", outcome: null },
+          });
+        }
+        if (url.endsWith("/v1/join/tok-apr-888/ballot/receipt")) {
+          return json({ roundId: "round-1", hasVoted: false });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(<JoinRoom shortCode="APR888" />);
+
+    expect(await screen.findByRole("heading", { name: "Você entrou" })).toBeInTheDocument();
+    expect(screen.getByText("Marcos")).toBeInTheDocument();
+
+    viewerAccess = "absent";
+    expect(
+      await screen.findByRole("alert", {}, { timeout: 3000 }),
+    ).toHaveTextContent("Você foi removido da sala pela mesa.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Entrar novamente" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "A entrada nesta sala foi encerrada pela mesa.",
+    );
+  });
+
+  it("supports multi-choice ballot up to N vacancies with live counter, review step, back/confirm, and blank vote", async () => {
+    writeJoinIdentity(window.localStorage, "multi-token", {
+      joinKey: "m".repeat(32),
+      displayName: "Zaqueu",
+      accessCode: "M7K9P2",
+    });
+
+    const submittedPayloads: Array<{ joinKey: string; candidateIds?: string[] }> = [];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/v1/join/multi-token") && !init) {
+          return json({ title: "Eleição Diáconos", status: "open", canJoin: true });
+        }
+        if (url.endsWith("/v1/join/multi-token") && init?.method === "POST") {
+          return json({
+            title: "Eleição Diáconos",
+            status: "open",
+            displayName: "Zaqueu",
+            presentCount: 1,
+            alreadyJoined: true,
+          });
+        }
+        if (url.endsWith("/v1/join/multi-token/ballot") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as {
+            joinKey: string;
+            candidateIds?: string[];
+          };
+          submittedPayloads.push(body);
+          return json({ receipt: { roundId: "round-m1", roundNumber: 1, voted: true } }, 201);
+        }
+        if (url.endsWith("/v1/join/multi-token/ballot")) {
+          return json({
+            roomStatus: "open",
+            vacancies: 3,
+            candidates: [
+              { id: "c1", displayName: "Cand Um" },
+              { id: "c2", displayName: "Cand Dois" },
+              { id: "c3", displayName: "Cand Tres" },
+              { id: "c4", displayName: "Cand Quatro" },
+            ],
+            round: { id: "round-m1", number: 1, vacancies: 3, status: "open", outcome: null },
+          });
+        }
+        if (url.endsWith("/v1/join/multi-token/ballot/receipt")) {
+          return json({ roundId: "round-m1", hasVoted: false });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(<JoinRoom token="multi-token" />);
+
+    expect(await screen.findByTestId("ballot-marks-counter")).toHaveTextContent("0 de 3");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cand Um" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cand Dois" }));
+    expect(screen.getByTestId("ballot-marks-counter")).toHaveTextContent("2 de 3");
+
+    // Review step with < N selections
+    fireEvent.click(screen.getByRole("button", { name: "Revisar voto" }));
+    const reviewStep = await screen.findByTestId("ballot-review-step");
+    expect(reviewStep).toHaveTextContent("Revisão do seu voto");
+    expect(reviewStep).toHaveTextContent("Cand Um");
+    expect(reviewStep).toHaveTextContent("Cand Dois");
+    expect(reviewStep).toHaveTextContent("Você selecionou 2 de 3 vagas disponíveis.");
+
+    // Go back and switch to blank, then back to 3 selections
+    fireEvent.click(screen.getByTestId("ballot-review-back-btn"));
+    expect(screen.queryByTestId("ballot-review-step")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Voto Nulo / Em Branco" }));
+    expect(screen.getByTestId("ballot-marks-counter")).toHaveTextContent("0 de 3");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cand Um" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cand Dois" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cand Tres" }));
+    expect(screen.getByTestId("ballot-marks-counter")).toHaveTextContent("3 de 3");
+    expect(screen.getByRole("button", { name: "Cand Quatro" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Revisar voto" }));
+    fireEvent.click(await screen.findByTestId("ballot-review-confirm-btn"));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Comprovante: seu voto foi registrado com sigilo neste escrutínio.",
+    );
+    expect(submittedPayloads).toEqual([
+      { joinKey: "m".repeat(32), candidateIds: ["c1", "c2", "c3"] },
+    ]);
+  });
 });
 
 function json(body: unknown, status = 200) {

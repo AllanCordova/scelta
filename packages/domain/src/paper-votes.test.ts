@@ -171,4 +171,50 @@ describe("validatePaperTally", () => {
     );
     expect(tooManyMarks).toMatchObject({ valid: false, code: "paper_marks_exceed_ballots" });
   });
+
+  it("validates 5-vacancy paper tally limits (total marks <= 5 * validBallots and per-candidate <= validBallots)", () => {
+    const sixCandidates = ["c1", "c2", "c3", "c4", "c5", "c6"];
+
+    const validFiveVacancies = validatePaperTally(
+      {
+        ballotCount: 10,
+        blankVotes: 1,
+        nullVotes: 1,
+        // validBallots = 8 -> max total marks = 40, max per candidate = 8
+        candidateVotes: { c1: 8, c2: 7, c3: 6, c4: 5, c5: 5, c6: 4 },
+      },
+      { paperVotersCount: 12, validCandidateIds: sixCandidates, maxMarksPerBallot: 5 },
+    );
+    expect(validFiveVacancies).toEqual({ valid: true });
+
+    const candidateExceedsValidBallots = validatePaperTally(
+      {
+        ballotCount: 10,
+        blankVotes: 1,
+        nullVotes: 1,
+        // validBallots = 8, total marks = 14 <= 40, but c1 has 9 > 8 valid ballots!
+        candidateVotes: { c1: 9, c2: 5 },
+      },
+      { paperVotersCount: 12, validCandidateIds: sixCandidates, maxMarksPerBallot: 5 },
+    );
+    expect(candidateExceedsValidBallots).toMatchObject({
+      valid: false,
+      code: "paper_marks_exceed_ballots",
+    });
+
+    const totalExceedsFiveTimesValidBallots = validatePaperTally(
+      {
+        ballotCount: 10,
+        blankVotes: 1,
+        nullVotes: 1,
+        // validBallots = 8 -> max total = 40; total here = 41
+        candidateVotes: { c1: 8, c2: 8, c3: 8, c4: 8, c5: 5, c6: 4 },
+      },
+      { paperVotersCount: 12, validCandidateIds: sixCandidates, maxMarksPerBallot: 5 },
+    );
+    expect(totalExceedsFiveTimesValidBallots).toMatchObject({
+      valid: false,
+      code: "paper_marks_exceed_ballots",
+    });
+  });
 });

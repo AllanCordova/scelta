@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canDeclineRound,
   canRestartRound,
+  evaluateMultiVacancyProgress,
   nextRoundPlan,
   resolveNextRoundCandidateIds,
 } from "./rounds.js";
@@ -23,7 +24,7 @@ describe("nextRoundPlan", () => {
       ],
     });
 
-    expect(outcome).toEqual({ kind: "winners", winnerIds: ["a"] });
+    expect(outcome).toEqual({ kind: "winners", winnerIds: ["a"], remainingVacancies: 0 });
   });
 
   it("keeps all candidates on second ballot when first ballot has no majority", () => {
@@ -36,6 +37,7 @@ describe("nextRoundPlan", () => {
     ).toEqual({
       kind: "next_round",
       candidateIds: ["a", "b", "c"],
+      remainingVacancies: 1,
       reason: "No absolute majority; open another ballot",
     });
 
@@ -48,6 +50,7 @@ describe("nextRoundPlan", () => {
     ).toEqual({
       kind: "next_round",
       candidateIds: ["a", "b", "c"],
+      remainingVacancies: 1,
       reason: "No majority; open another ballot",
     });
   });
@@ -62,6 +65,7 @@ describe("nextRoundPlan", () => {
     expect(outcome).toEqual({
       kind: "next_round",
       candidateIds: ["a", "b"],
+      remainingVacancies: 1,
       reason: "No absolute majority after two ballots; runoff of top 2",
     });
   });
@@ -77,6 +81,7 @@ describe("nextRoundPlan", () => {
     expect(outcome.kind).toBe("next_round");
     if (outcome.kind === "next_round") {
       expect(outcome.candidateIds).toEqual(["a", "b"]);
+      expect(outcome.remainingVacancies).toBe(1);
     }
   });
 
@@ -89,7 +94,87 @@ describe("nextRoundPlan", () => {
       }),
     ).toEqual({
       kind: "inconclusive",
+      remainingVacancies: 1,
       reason: "Custom preset requires explicit runoff configuration",
+    });
+  });
+
+  describe("multi-vacancy officer plans (5 vacancies)", () => {
+    it("returns winners when all 5 vacancies are filled", () => {
+      const outcome = nextRoundPlan({
+        roundNumber: 1,
+        preset: "ipb_local_officers",
+        vacancies: 5,
+        totalBallots: 100,
+        tallies: [
+          { candidateId: "c1", votes: 90 },
+          { candidateId: "c2", votes: 85 },
+          { candidateId: "c3", votes: 80 },
+          { candidateId: "c4", votes: 75 },
+          { candidateId: "c5", votes: 70 },
+          { candidateId: "c6", votes: 60 },
+        ],
+      });
+
+      expect(outcome).toEqual({
+        kind: "winners",
+        winnerIds: ["c1", "c2", "c3", "c4", "c5"],
+        remainingVacancies: 0,
+      });
+    });
+
+    it("plans next scrutiny for 1 remaining vacancy with only unelected candidates when 4 of 5 are elected", () => {
+      const outcome = nextRoundPlan({
+        roundNumber: 1,
+        preset: "ipb_local_officers",
+        vacancies: 5,
+        totalBallots: 100,
+        tallies: [
+          { candidateId: "c1", votes: 85 },
+          { candidateId: "c2", votes: 80 },
+          { candidateId: "c3", votes: 70 },
+          { candidateId: "c4", votes: 60 },
+          { candidateId: "c5", votes: 50 },
+          { candidateId: "c6", votes: 42 },
+          { candidateId: "c7", votes: 30 },
+        ],
+      });
+
+      expect(outcome).toEqual({
+        kind: "next_round",
+        candidateIds: ["c5", "c6", "c7"],
+        electedCandidateIds: ["c1", "c2", "c3", "c4"],
+        remainingVacancies: 1,
+        reason:
+          "Partial election; open another ballot for remaining vacancies with unelected candidates",
+      });
+    });
+
+    it("plans a runoff exclusively among tied candidates when more than N reach majority and tie on the 5th vacancy", () => {
+      const outcome = nextRoundPlan({
+        roundNumber: 1,
+        preset: "ipb_local_officers",
+        vacancies: 5,
+        totalBallots: 100,
+        tallies: [
+          { candidateId: "c1", votes: 90 },
+          { candidateId: "c2", votes: 85 },
+          { candidateId: "c3", votes: 80 },
+          { candidateId: "c4", votes: 75 },
+          { candidateId: "c5", votes: 60 },
+          { candidateId: "c6", votes: 60 },
+          { candidateId: "c7", votes: 45 },
+        ],
+      });
+
+      expect(outcome).toEqual({
+        kind: "next_round",
+        candidateIds: ["c5", "c6"],
+        electedCandidateIds: ["c1", "c2", "c3", "c4"],
+        remainingVacancies: 1,
+        isLastVacancyTieRunoff: true,
+        reason: "Tie on the last vacancy; runoff among tied candidates",
+      });
     });
   });
 });
@@ -213,6 +298,80 @@ describe("resolveNextRoundCandidateIds", () => {
         ],
       }),
     ).toEqual({ ok: false, reason: "max_rounds_reached" });
+  });
+
+  it("supports multi-vacancy partial election next round with only unelected candidates", () => {
+    const resolved = resolveNextRoundCandidateIds({
+      preset: "ipb_local_officers",
+      previousRoundNumber: 1,
+      previousOutcome: "elected",
+      eligibleCandidateIds: ["c1", "c2", "c3", "c4", "c5", "c6", "c7"],
+      previousTallies: [],
+      vacancies: 5,
+      remainingVacancies: 1,
+      alreadyElectedCandidateIds: ["c1", "c2", "c3", "c4"],
+    });
+
+    expect(resolved).toEqual({ ok: true, candidateIds: ["c5", "c6", "c7"] });
+  });
+
+  it("restricts next round exclusively to tied candidates on a last-vacancy tie", () => {
+    const autoResolved = resolveNextRoundCandidateIds({
+      preset: "ipb_local_officers",
+      previousRoundNumber: 1,
+      previousOutcome: "elected",
+      eligibleCandidateIds: ["c1", "c2", "c3", "c4", "c5", "c6", "c7"],
+      previousTallies: [],
+      vacancies: 5,
+      remainingVacancies: 1,
+      alreadyElectedCandidateIds: ["c1", "c2", "c3", "c4"],
+      lastVacancyTieCandidateIds: ["c5", "c6"],
+    });
+    expect(autoResolved).toEqual({ ok: true, candidateIds: ["c5", "c6"] });
+
+    const invalidOverride = resolveNextRoundCandidateIds({
+      preset: "ipb_local_officers",
+      previousRoundNumber: 1,
+      previousOutcome: "elected",
+      eligibleCandidateIds: ["c1", "c2", "c3", "c4", "c5", "c6", "c7"],
+      previousTallies: [],
+      vacancies: 5,
+      remainingVacancies: 1,
+      alreadyElectedCandidateIds: ["c1", "c2", "c3", "c4"],
+      lastVacancyTieCandidateIds: ["c5", "c6"],
+      requestedCandidateIds: ["c5", "c7"],
+    });
+    expect(invalidOverride).toEqual({ ok: false, reason: "invalid_candidate_subset" });
+  });
+});
+
+describe("evaluateMultiVacancyProgress", () => {
+  it("accumulates elected candidates across closed rounds and ignores annulled/declined rounds", () => {
+    const progress = evaluateMultiVacancyProgress(5, [
+      { status: "closed", outcome: "elected", winnerCandidateIds: ["c1", "c2"] },
+      { status: "restarted", outcome: "annulled", winnerCandidateIds: ["c9"] },
+      { status: "closed", outcome: "declined", winnerCandidateIds: ["c8"] },
+      { status: "closed", outcome: "no_majority", winnerCandidateIds: [] },
+      { status: "closed", outcome: "elected", winnerCandidateIds: ["c3", "c4"] },
+    ]);
+
+    expect(progress).toEqual({
+      totalVacancies: 5,
+      electedCandidateIds: ["c1", "c2", "c3", "c4"],
+      remainingVacancies: 1,
+      isComplete: false,
+    });
+
+    const complete = evaluateMultiVacancyProgress(5, [
+      { status: "closed", outcome: "elected", winnerCandidateIds: ["c1", "c2", "c3", "c4"] },
+      { status: "closed", outcome: "elected", winnerCandidateId: "c5" },
+    ]);
+    expect(complete).toEqual({
+      totalVacancies: 5,
+      electedCandidateIds: ["c1", "c2", "c3", "c4", "c5"],
+      remainingVacancies: 0,
+      isComplete: true,
+    });
   });
 });
 

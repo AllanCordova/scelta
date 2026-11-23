@@ -79,6 +79,7 @@ test("admin navigates via /admin hub, manages members manually and via CSV, and 
   await item.getByRole("button", { name: "Abrir escrutínio" }).click();
   await expect(item.getByText("1º escrutínio", { exact: true })).toBeVisible();
   await item.getByRole("link", { name: title }).click();
+  await page.getByRole("tab", { name: "Preparar" }).click();
   const candidatesList = page.getByRole("list", { name: "Candidatos da sala" });
   await expect(candidatesList.getByText("Paulo Apóstolo")).toBeVisible();
   await expect(candidatesList.getByText("Silas Companheiro")).toBeVisible();

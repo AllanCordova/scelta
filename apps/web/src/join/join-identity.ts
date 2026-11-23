@@ -7,6 +7,9 @@ export type StoredJoinIdentity = {
   joinKey: string;
   displayName: string;
   accessCode?: string;
+  pendingRequestId?: string;
+  entryMode?: "codigo" | "aprovacao";
+  inviteToken?: string;
 };
 
 export type KeyValueStore = {
@@ -46,6 +49,13 @@ export function readJoinIdentity(storage: KeyValueStore, token: string): StoredJ
       joinKey: parsed.joinKey,
       displayName: typeof parsed.displayName === "string" ? parsed.displayName : "",
       ...(typeof parsed.accessCode === "string" ? { accessCode: parsed.accessCode } : {}),
+      ...(typeof parsed.pendingRequestId === "string"
+        ? { pendingRequestId: parsed.pendingRequestId }
+        : {}),
+      ...(parsed.entryMode === "codigo" || parsed.entryMode === "aprovacao"
+        ? { entryMode: parsed.entryMode }
+        : {}),
+      ...(typeof parsed.inviteToken === "string" ? { inviteToken: parsed.inviteToken } : {}),
     };
   } catch {
     return null;

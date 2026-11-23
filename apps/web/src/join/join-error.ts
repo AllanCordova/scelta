@@ -55,11 +55,15 @@ export function classifyJoinError(error: unknown): JoinErrorKind {
     return "transient";
   }
 
-  if (err.errorCode === "access_code_in_use") {
+  if (err.errorCode === "access_code_in_use" || err.errorCode === "roster_name_already_claimed") {
     return "conflict_in_use";
   }
 
-  if (err.errorCode === "room_not_joinable") {
+  if (
+    err.errorCode === "room_not_joinable" ||
+    err.errorCode === "entry_closed" ||
+    err.errorCode === "room_capacity_reached"
+  ) {
     return "room_blocked";
   }
 
@@ -119,6 +123,14 @@ export function formatJoinErrorMessage(error: unknown): string {
   const err = asJoinErrorLike(error);
   if (err?.errorCode === "access_code_in_use") {
     return "Este código já está em uso. Procure a mesa.";
+  }
+
+  if (err?.errorCode === "roster_name_already_claimed") {
+    return "Este nome já foi reivindicado. A mesa foi avisada; procure a mesa.";
+  }
+
+  if (err?.errorCode === "birth_date_mismatch") {
+    return "Dia ou mês de nascimento não conferem.";
   }
 
   if (err && (err.status === 429 || err.errorCode === "rate_limited")) {

@@ -13,6 +13,8 @@ import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { EditRoomModal } from "./EditRoomModal";
 import {
   CLOSE_ROUND_LABEL,
+  ENTRY_MODE_LABELS,
+  ENTRY_MODE_OPTIONS,
   FAILED_QUORUM_MESSAGE,
   OPEN_ROUND_LABEL,
   PRESET_OPTIONS,
@@ -46,6 +48,7 @@ import type {
   CreatableRoomStatus,
   PresetDefinition,
   QuorumUnit,
+  RoomEntryMode,
   RoomSummary,
   RoomType,
   RulesPreset,
@@ -65,7 +68,12 @@ export function AdminRooms() {
     quorumUnit: QuorumUnit;
   } | null>(null);
   const [status, setStatus] = useState<CreatableRoomStatus>("draft");
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors<"title" | "quorumValue">>({});
+  const [entryMode, setEntryMode] = useState<RoomEntryMode>("codigo");
+  const [maxParticipantsInput, setMaxParticipantsInput] = useState("");
+  const [vacanciesInput, setVacanciesInput] = useState("1");
+  const [fieldErrors, setFieldErrors] = useState<
+    FieldErrors<"title" | "quorumValue" | "maxParticipants" | "vacancies">
+  >({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [roundError, setRoundError] = useState<{ roomId: string; message: string } | null>(null);
   const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
@@ -181,6 +189,9 @@ export function AdminRooms() {
   const qrSvg = inviteLink && qr?.link === inviteLink ? qr.svg : null;
   const behavior = describePreset(rulesPreset, selectedPreset?.majorityRule);
 
+  const canConfigureVacancies =
+    roomType === "elder" || roomType === "deacon" || roomType === "custom";
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage(null);
@@ -189,6 +200,8 @@ export function AdminRooms() {
       title,
       quorumValue,
       quorumUnit,
+      maxParticipants: maxParticipantsInput,
+      vacancies: canConfigureVacancies ? vacanciesInput : "1",
     });
     if (!validation.ok) {
       setFieldErrors(validation.fieldErrors);
@@ -199,11 +212,16 @@ export function AdminRooms() {
     setFieldErrors({});
     setIsSubmitting(true);
 
+    const trimmedMax = maxParticipantsInput.trim();
+    const parsedVacancies = canConfigureVacancies ? Number(vacanciesInput.trim() || "1") : 1;
     const payload = {
       title: validation.data.title,
       roomType,
       rulesPreset,
       status,
+      entryMode,
+      ...(canConfigureVacancies ? { vacancies: parsedVacancies } : {}),
+      ...(trimmedMax.length > 0 ? { maxParticipants: Number(trimmedMax) } : {}),
       ...quorumPayload(quorumValue, quorumUnit),
     };
 
@@ -212,14 +230,23 @@ export function AdminRooms() {
       const link = shortRoomUrl(publicOrigin, room.shortCode);
       setInviteLink(link);
       setTitle("");
+      setMaxParticipantsInput("");
+      setVacanciesInput("1");
       setListVersion((current) => current + 1);
       toast.success("Sala criada com sucesso.");
     } catch (error) {
       setInviteLink(null);
       if (error instanceof RoomRequestError && error.details.length > 0) {
-        const nextFieldErrors: FieldErrors<"title" | "quorumValue"> = {};
+        const nextFieldErrors: FieldErrors<
+          "title" | "quorumValue" | "maxParticipants" | "vacancies"
+        > = {};
         for (const detail of error.details) {
-          if (detail.field === "title" || detail.field === "quorumValue") {
+          if (
+            detail.field === "title" ||
+            detail.field === "quorumValue" ||
+            detail.field === "maxParticipants" ||
+            detail.field === "vacancies"
+          ) {
             nextFieldErrors[detail.field] = roomErrorMessage(error.errorCode, detail.field);
           }
         }
@@ -381,7 +408,7 @@ export function AdminRooms() {
                 </button>
               ))}
             </div>
-            {roomType === "upa_board" || roomType === "ump_board" ? (
+              {roomType === "upa_board" || roomType === "ump_board" ? (
               <p className="field-hint">
                 Cargos na ordem IPB: Presidente → Vice-Presidente → 1º Secretário → 2º Secretário →
                 Tesoureiro.
@@ -392,6 +419,35 @@ export function AdminRooms() {
               </p>
             ) : null}
           </fieldset>
+
+          {canConfigureVacancies ? (
+            <div className="field">
+              <label>
+                Número de vagas
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  inputMode="numeric"
+                  data-testid="room-vacancies-input"
+                  value={vacanciesInput}
+                  aria-invalid={Boolean(fieldErrors.vacancies)}
+                  onChange={(event) => {
+                    setVacanciesInput(event.target.value);
+                    setFieldErrors((current) => ({ ...current, vacancies: undefined }));
+                  }}
+                />
+              </label>
+              {fieldErrors.vacancies ? (
+                <span className="field-error">{fieldErrors.vacancies}</span>
+              ) : (
+                <p className="field-hint">
+                  Para eleição de oficiais com múltiplas vagas, cada eleitor pode marcar até N
+                  nomes na cédula.
+                </p>
+              )}
+            </div>
+          ) : null}
 
           <fieldset className="choice-field">
             <legend>Regras</legend>
@@ -498,6 +554,52 @@ export function AdminRooms() {
               </p>
             ) : null}
           </fieldset>
+
+          <fieldset className="choice-field">
+            <legend>Modo de entrada</legend>
+            <div className="choice-row compact">
+              {ENTRY_MODE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={entryMode === option.value ? "choice selected" : "choice"}
+                  aria-pressed={entryMode === option.value}
+                  onClick={() => setEntryMode(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <p className="field-hint">
+              {ENTRY_MODE_OPTIONS.find((option) => option.value === entryMode)?.hint}
+            </p>
+          </fieldset>
+
+          <div className="field">
+            <label>
+              Limite de participantes (opcional)
+              <input
+                type="number"
+                min={1}
+                max={100000}
+                inputMode="numeric"
+                value={maxParticipantsInput}
+                aria-invalid={Boolean(fieldErrors.maxParticipants)}
+                onChange={(event) => {
+                  setMaxParticipantsInput(event.target.value);
+                  setFieldErrors((current) => ({ ...current, maxParticipants: undefined }));
+                }}
+                placeholder="Padrão: tamanho do rol"
+              />
+            </label>
+            {fieldErrors.maxParticipants ? (
+              <span className="field-error">{fieldErrors.maxParticipants}</span>
+            ) : (
+              <p className="field-hint">
+                Por padrão, o limite é igual ao tamanho do rol de eleitores aptos da sala.
+              </p>
+            )}
+          </div>
 
           {errorMessage ? (
             <p className="form-error" role="alert">
@@ -733,6 +835,7 @@ function RoomRow({
             </a>
             <span className="card-room-subtitle">
               {roomCode} • {roomTypeLabel}
+              {room.entryMode ? ` • ${ENTRY_MODE_LABELS[room.entryMode]}` : ""}
             </span>
           </div>
           <span className={isActive ? "status status-badge active" : "status status-badge"}>
@@ -902,6 +1005,8 @@ const createRoomFormSchema = z
     title: z.string().trim().min(1, roomErrorMessage("invalid_room", "title")),
     quorumValue: z.string().trim(),
     quorumUnit: z.enum(["absolute", "percent"]),
+    maxParticipants: z.string().trim().optional(),
+    vacancies: z.string().trim().optional(),
   })
   .superRefine((data, ctx) => {
     if (
@@ -914,6 +1019,26 @@ const createRoomFormSchema = z
         code: z.ZodIssueCode.custom,
         path: ["quorumValue"],
         message: roomErrorMessage("invalid_room", "quorumValue"),
+      });
+    }
+    const maxRaw = data.maxParticipants ?? "";
+    if (maxRaw.length > 0) {
+      const parsedMax = Number(maxRaw);
+      if (!/^\d+$/.test(maxRaw) || parsedMax < 1 || parsedMax > 100000) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["maxParticipants"],
+          message: roomErrorMessage("invalid_room", "maxParticipants"),
+        });
+      }
+    }
+    const vacanciesRaw = data.vacancies ?? "1";
+    const parsedVacancies = Number(vacanciesRaw);
+    if (!/^\d+$/.test(vacanciesRaw) || parsedVacancies < 1 || parsedVacancies > 50) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["vacancies"],
+        message: roomErrorMessage("invalid_room", "vacancies"),
       });
     }
   });

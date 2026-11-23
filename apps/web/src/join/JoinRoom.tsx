@@ -8,6 +8,7 @@ import { ShareBoardSheet, ministryLabelForRoomType } from "../admin/ShareBoardPa
 import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
 import { PaginationBar, paginateItems } from "../shell/PaginationBar";
 import { RoomChatPanel } from "../shell/RoomChatPanel";
+import { ApprovalEntryFlow } from "./ApprovalEntryFlow";
 import { BALLOT_WISDOM_VERSE, officeGuidanceForBallot } from "./ballot-guidance";
 import {
   ballotErrorMessage,
@@ -22,6 +23,7 @@ import { detectInAppBrowser } from "./in-app-browser";
 import { InAppBrowserBanner } from "./InAppBrowserBanner";
 import {
   fetchBallotState,
+  fetchEntryRequestStatus,
   fetchJoinPreview,
   fetchVoteReceipt,
   submitBallot,
@@ -70,9 +72,24 @@ type Phase =
   | { kind: "retrying"; message: string }
   | { kind: "transient-error"; message: string }
   | { kind: "invalid"; message: string }
-  | { kind: "blocked"; title: string; message: string }
+  | { kind: "blocked"; title: string; message: string; reason?: "status" | "entry_closed" }
   | { kind: "ready"; title: string; joinKey: string }
-  | { kind: "joined"; title: string; joinKey: string; displayName: string; inviteToken: string };
+  | {
+      kind: "approval-ready";
+      title: string;
+      joinKey: string;
+      inviteToken?: string;
+      pendingRequestId?: string;
+      pendingDisplayName?: string;
+    }
+  | {
+      kind: "joined";
+      title: string;
+      joinKey: string;
+      displayName: string;
+      inviteToken: string;
+      entryMode?: "codigo" | "aprovacao";
+    };
 
 export type JoinRoomProps = (
   | { token: string; shortCode?: undefined }
@@ -195,12 +212,125 @@ export function JoinRoom({
           kind: "blocked",
           title: preview.title,
           message: joinBlockedMessage(preview.status),
+          reason: "status",
         });
         return;
       }
 
       const stored = readStored(resolvedStorageKey);
       const joinKey = stored && isJoinKey(stored.joinKey) ? stored.joinKey : createJoinKey();
+
+      if (preview.entryMode === "aprovacao") {
+        const fallbackInviteToken =
+          preview.inviteToken ?? (resolvedTarget.mode === "token" ? resolvedTarget.token : undefined);
+
+        if (stored?.pendingRequestId) {
+          try {
+            const reqStatus = await fetchEntryRequestStatus(
+              apiUrl(""),
+              resolvedTarget,
+              stored.pendingRequestId,
+              joinKey,
+            );
+            if (cancelled) {
+              return;
+            }
+            if (reqStatus.status === "approved") {
+              const resolvedToken =
+                reqStatus.inviteToken ?? stored.inviteToken ?? fallbackInviteToken;
+              if (resolvedToken) {
+                const finalName = reqStatus.displayName || stored.displayName;
+                const identity: StoredJoinIdentity = {
+                  joinKey,
+                  displayName: finalName,
+                  entryMode: "aprovacao",
+                  inviteToken: resolvedToken,
+                };
+                writeStored(resolvedStorageKey, identity);
+                if (resolvedTarget.mode === "shortCode") {
+                  writeStored(resolvedToken, identity);
+                }
+                setPhase({
+                  kind: "joined",
+                  title: preview.title,
+                  joinKey,
+                  displayName: finalName,
+                  inviteToken: resolvedToken,
+                  entryMode: "aprovacao",
+                });
+                return;
+              }
+            }
+            if (reqStatus.status === "pending") {
+              setPhase({
+                kind: "approval-ready",
+                title: preview.title,
+                joinKey,
+                inviteToken: fallbackInviteToken,
+                pendingRequestId: stored.pendingRequestId,
+                pendingDisplayName: reqStatus.displayName || stored.displayName,
+              });
+              return;
+            }
+          } catch {
+            // Fall through to clearing stale pendingRequestId if request cannot be resumed.
+          }
+          if (cancelled) {
+            return;
+          }
+          writeStored(resolvedStorageKey, { joinKey, displayName: "", entryMode: "aprovacao" });
+        }
+
+        const savedInviteToken = stored?.inviteToken ?? fallbackInviteToken;
+        if (stored?.displayName && savedInviteToken) {
+          const loadedBallot = await fetchBallotState(apiUrl(""), savedInviteToken, joinKey);
+          if (cancelled) {
+            return;
+          }
+          if (loadedBallot.status === "ok" && loadedBallot.state.viewerAccess === "present") {
+            setPhase({
+              kind: "joined",
+              title: preview.title,
+              joinKey,
+              displayName: stored.displayName,
+              inviteToken: savedInviteToken,
+              entryMode: "aprovacao",
+            });
+            return;
+          }
+          clearStored(resolvedStorageKey, joinKey);
+        }
+
+        if (preview.entryOpen === false) {
+          setPhase({
+            kind: "blocked",
+            title: preview.title,
+            message: "A entrada nesta sala foi encerrada pela mesa.",
+            reason: "entry_closed",
+          });
+          return;
+        }
+
+        writeStored(resolvedStorageKey, { joinKey, displayName: "", entryMode: "aprovacao" });
+        setPhase({
+          kind: "approval-ready",
+          title: preview.title,
+          joinKey,
+          inviteToken: fallbackInviteToken,
+        });
+        return;
+      }
+
+      if (preview.entryOpen === false && !stored?.accessCode?.trim()) {
+        setPhase({
+          kind: "blocked",
+          title: preview.title,
+          message: "A entrada nesta sala foi encerrada pela mesa.",
+          reason: "entry_closed",
+        });
+        return;
+      }
+
       const queryCode = readAccessCodeFromSearch(window.location.search);
       const candidateCode = queryCode || stored?.accessCode?.trim() || "";
 
@@ -302,7 +432,11 @@ export function JoinRoom({
     const timer = window.setInterval(() => {
       void fetchJoinPreview(apiUrl(""), resolvedTarget)
         .then((preview) => {
-          if (!cancelled && preview.canJoin) {
+          if (
+            !cancelled &&
+            preview.canJoin &&
+            (preview.entryMode !== "aprovacao" || preview.entryOpen !== false)
+          ) {
             setDoorRetry((current) => current + 1);
           }
         })
@@ -453,6 +587,38 @@ export function JoinRoom({
     );
   }
 
+  if (phase.kind === "approval-ready") {
+    return (
+      <ApprovalEntryFlow
+        target={target}
+        storageKey={storageKey}
+        title={phase.title}
+        joinKey={phase.joinKey}
+        fallbackInviteToken={phase.inviteToken}
+        initialPendingRequestId={phase.pendingRequestId}
+        initialPendingDisplayName={phase.pendingDisplayName}
+        onApproved={(result) =>
+          setPhase({
+            kind: "joined",
+            title: result.title,
+            joinKey: result.joinKey,
+            displayName: result.displayName,
+            inviteToken: result.inviteToken,
+            entryMode: "aprovacao",
+          })
+        }
+        onEntryClosed={() =>
+          setPhase({
+            kind: "blocked",
+            title: phase.title,
+            message: "A entrada nesta sala foi encerrada pela mesa.",
+            reason: "entry_closed",
+          })
+        }
+      />
+    );
+  }
+
   if (phase.kind === "joined") {
     return (
       <JoinedRoomView
@@ -462,6 +628,14 @@ export function JoinRoom({
         title={phase.title}
         joinKey={phase.joinKey}
         displayName={phase.displayName}
+        entryMode={phase.entryMode}
+        onResetToApproval={() => {
+          clearStored(storageKey, phase.joinKey);
+          if (target.mode === "shortCode") {
+            clearStored(phase.inviteToken, phase.joinKey);
+          }
+          setDoorRetry((current) => current + 1);
+        }}
       />
     );
   }
@@ -516,6 +690,8 @@ function JoinedRoomView({
   title,
   joinKey,
   displayName,
+  entryMode,
+  onResetToApproval,
 }: {
   token: string;
   target: JoinRouteTarget;
@@ -523,6 +699,8 @@ function JoinedRoomView({
   title: string;
   joinKey: string;
   displayName: string;
+  entryMode?: "codigo" | "aprovacao";
+  onResetToApproval?: () => void;
 }) {
   const [ballotState, setBallotState] = useState<BallotState | null>(null);
   const [votedRoundIds, setVotedRoundIds] = useState<Record<string, boolean>>({});
@@ -530,6 +708,9 @@ function JoinedRoomView({
     Record<string, { label: string; isNull: boolean; photoUrl: string | null }>
   >({});
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>("");
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+  const [isBlankSelected, setIsBlankSelected] = useState(false);
+  const [reviewRoundKey, setReviewRoundKey] = useState<string | null>(null);
   const [candidateSearch, setCandidateSearch] = useState<string>("");
   const [candidatePage, setCandidatePage] = useState(1);
   const [standingsPage, setStandingsPage] = useState(1);
@@ -600,6 +781,15 @@ function JoinedRoomView({
   }, [isElectedResult, currentRoundKey]);
   const hasVotedInCurrentRound = Boolean(currentRoundKey && votedRoundIds[currentRoundKey]);
   const votedChoice = currentRoundKey ? votedChoicesByRound[currentRoundKey] ?? null : null;
+  const roundVacancies = round?.vacancies ?? 1;
+  const isMultiVacancyRound = roundVacancies > 1;
+  const candidateIdSet = new Set(candidates.map((candidate) => candidate.id));
+  const activeMultiSelectedIds = selectedCandidateIds
+    .filter((id) => candidateIdSet.has(id))
+    .slice(0, roundVacancies);
+  const isReviewingBallot = Boolean(
+    isMultiVacancyRound && currentRoundKey && reviewRoundKey === currentRoundKey,
+  );
   const activeSelectedCandidateId =
     selectedCandidateId === NULL_VOTE_CHOICE ||
     candidates.some((candidate) => candidate.id === selectedCandidateId)
@@ -619,9 +809,86 @@ function JoinedRoomView({
       : candidates.find((candidate) => candidate.id === activeSelectedCandidateId)?.displayName ??
         null;
 
+  const multiSelectedNames = activeMultiSelectedIds
+    .map((id) => candidates.find((candidate) => candidate.id === id)?.displayName)
+    .filter((name): name is string => Boolean(name));
+
+  function handleToggleMultiCandidate(candidateId: string) {
+    if (isVoting) {
+      return;
+    }
+    setIsBlankSelected(false);
+    setVoteError(null);
+    setSelectedCandidateIds((current) => {
+      const validCurrent = current.filter((id) => candidateIdSet.has(id)).slice(0, roundVacancies);
+      if (validCurrent.includes(candidateId)) {
+        return validCurrent.filter((id) => id !== candidateId);
+      }
+      if (validCurrent.length >= roundVacancies) {
+        setVoteError(`Você pode selecionar no máximo ${roundVacancies} candidatos.`);
+        return validCurrent;
+      }
+      return [...validCurrent, candidateId];
+    });
+  }
+
+  function handleToggleMultiBlank() {
+    if (isVoting) {
+      return;
+    }
+    setVoteError(null);
+    setSelectedCandidateIds([]);
+    setIsBlankSelected((current) => !current);
+  }
+
+  async function handleConfirmMultiBallot() {
+    if (!round || round.status !== "open" || isVoting) {
+      return;
+    }
+    setIsVoting(true);
+    setVoteError(null);
+    try {
+      const isNullChoice = isBlankSelected || activeMultiSelectedIds.length === 0;
+      const chosenIds = isNullChoice ? [] : activeMultiSelectedIds;
+      const chosenLabel = isNullChoice ? "Voto Nulo / Em Branco" : multiSelectedNames.join(", ");
+      const receipt = await submitBallot(apiUrl(""), token, {
+        joinKey,
+        candidateIds: chosenIds,
+      });
+      setSelectedCandidateIds([]);
+      setIsBlankSelected(false);
+      setReviewRoundKey(null);
+      const key = roundInstanceKey(receipt.roundId, round.restartCount);
+      setVotedRoundIds((current) => ({ ...current, [key]: true }));
+      toast.success("Voto registrado com sigilo.");
+      setVotedChoicesByRound((current) => ({
+        ...current,
+        [key]: {
+          label: chosenLabel,
+          isNull: isNullChoice,
+          photoUrl: null,
+        },
+      }));
+    } catch (error) {
+      const message = ballotErrorMessage(error);
+      setVoteError(message);
+    } finally {
+      setIsVoting(false);
+    }
+  }
+
   async function handleCastVote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!round || round.status !== "open" || isVoting) {
+      return;
+    }
+    if (isMultiVacancyRound) {
+      if (!isBlankSelected && activeMultiSelectedIds.length === 0) {
+        setVoteError(`Escolha até ${roundVacancies} candidatos ou Voto em Branco / Nulo.`);
+        return;
+      }
+      setVoteError(null);
+      setReviewRoundKey(currentRoundKey);
       return;
     }
     if (!activeSelectedCandidateId) {
@@ -670,8 +937,10 @@ function JoinedRoomView({
     : "";
 
   const totalTallyVotes = round?.tally
-    ? round.tally.standings.reduce((sum, item) => sum + item.votes, 0) +
-      (round.tally.nullVotes ?? 0)
+    ? typeof round.tally.totalVotes === "number"
+      ? round.tally.totalVotes
+      : round.tally.standings.reduce((sum, item) => sum + item.votes, 0) +
+        (round.tally.nullVotes ?? 0)
     : 0;
   const winnerStanding =
     round?.tally?.outcome === "elected" && round.tally.winnerName
@@ -713,6 +982,10 @@ function JoinedRoomView({
     !allBoardOfficesElected;
 
   async function handleReenter() {
+    if (entryMode === "aprovacao") {
+      onResetToApproval?.();
+      return;
+    }
     const stored = readStored(storageKey) ?? readStored(token);
     const accessCode = stored?.accessCode?.trim();
     if (!accessCode) {
@@ -793,7 +1066,9 @@ function JoinedRoomView({
       {blockedAccess ? (
         <section className="panel" aria-live="polite">
           <p className="form-error" role="alert">
-            {voterSessionMessage(blockedAccess)}
+            {entryMode === "aprovacao" && blockedAccess !== "revoked"
+              ? "Você foi removido da sala pela mesa. Peça entrada novamente quando a mesa liberar seu nome."
+              : voterSessionMessage(blockedAccess)}
           </p>
           {blockedAccess !== "revoked" ? (
             <button type="button" disabled={isReentering} onClick={() => void handleReenter()}>
@@ -838,7 +1113,13 @@ function JoinedRoomView({
           <div className="panel voter-scrutiny-brief">
             <div className="voter-scrutiny-top">
               <span className="voter-scrutiny-kicker">Cédula Eleitoral</span>
-              <span className="voter-secret-badge">1 escolha permitida</span>
+              {isMultiVacancyRound ? (
+                <span className="voter-secret-badge" data-testid="ballot-marks-counter">
+                  {activeMultiSelectedIds.length} de {roundVacancies}
+                </span>
+              ) : (
+                <span className="voter-secret-badge">1 escolha permitida</span>
+              )}
             </div>
             {activeBannerUrl ? (
               <div className="voter-office-banner">
@@ -860,7 +1141,9 @@ function JoinedRoomView({
               <div>
                 <h2>{roundHeading}</h2>
                 <p className="muted">
-                  Selecione um candidato abaixo ou opte por Voto Nulo / Em Branco.
+                  {isMultiVacancyRound
+                    ? `Selecione até ${roundVacancies} candidatos abaixo ou opte por Voto em Branco / Nulo.`
+                    : "Selecione um candidato abaixo ou opte por Voto Nulo / Em Branco."}
                 </p>
               </div>
             </div>
@@ -929,6 +1212,65 @@ function JoinedRoomView({
                 </div>
               ) : null}
             </div>
+          ) : isReviewingBallot ? (
+            <div
+              className="panel voter-review-panel"
+              role="region"
+              aria-label="Revisão do seu voto"
+              data-testid="ballot-review-step"
+            >
+              <h3>Revisão do seu voto</h3>
+              {isBlankSelected || activeMultiSelectedIds.length === 0 ? (
+                <p className="lede">
+                  Você escolheu: <strong>Voto em Branco / Nulo</strong>
+                </p>
+              ) : (
+                <>
+                  <p className="muted">
+                    Confira os nomes selecionados ({activeMultiSelectedIds.length} de{" "}
+                    {roundVacancies}):
+                  </p>
+                  <ul className="voter-review-list">
+                    {multiSelectedNames.map((name) => (
+                      <li key={name}>{name}</li>
+                    ))}
+                  </ul>
+                  {activeMultiSelectedIds.length < roundVacancies ? (
+                    <p className="field-hint">
+                      Você selecionou {activeMultiSelectedIds.length} de {roundVacancies} vagas
+                      disponíveis.
+                    </p>
+                  ) : null}
+                </>
+              )}
+              {voteError ? (
+                <p className="form-error" role="alert">
+                  {voteError}
+                </p>
+              ) : null}
+              <div className="voter-review-actions">
+                <button
+                  type="button"
+                  className="ghost"
+                  data-testid="ballot-review-back-btn"
+                  disabled={isVoting}
+                  onClick={() => {
+                    setReviewRoundKey(null);
+                    setVoteError(null);
+                  }}
+                >
+                  Voltar e alterar
+                </button>
+                <button
+                  type="button"
+                  data-testid="ballot-review-confirm-btn"
+                  disabled={isVoting}
+                  onClick={() => void handleConfirmMultiBallot()}
+                >
+                  {isVoting ? "Enviando…" : "Confirmar e depositar voto"}
+                </button>
+              </div>
+            </div>
           ) : (
             <form className="voter-ballot-form" onSubmit={handleCastVote}>
               <div className="voter-search-bar">
@@ -966,21 +1308,34 @@ function JoinedRoomView({
                 type="button"
                 aria-label="Voto Nulo / Em Branco"
                 className={
-                  activeSelectedCandidateId === NULL_VOTE_CHOICE
+                  (isMultiVacancyRound ? isBlankSelected : activeSelectedCandidateId === NULL_VOTE_CHOICE)
                     ? "choice voter-null-card selected"
                     : "choice voter-null-card"
                 }
-                aria-pressed={activeSelectedCandidateId === NULL_VOTE_CHOICE}
-                onClick={() => setSelectedCandidateId(NULL_VOTE_CHOICE)}
+                aria-pressed={
+                  isMultiVacancyRound
+                    ? isBlankSelected
+                    : activeSelectedCandidateId === NULL_VOTE_CHOICE
+                }
+                onClick={() =>
+                  isMultiVacancyRound
+                    ? handleToggleMultiBlank()
+                    : setSelectedCandidateId(NULL_VOTE_CHOICE)
+                }
               >
                 <span className="voter-null-icon" aria-hidden="true">
                   ⊘
                 </span>
                 <span className="voter-null-copy">
-                  <strong>Voto Nulo / Em Branco</strong>
+                  <strong>
+                    {isMultiVacancyRound ? "Voto em Branco / Nulo" : "Voto Nulo / Em Branco"}
+                  </strong>
                   <small>Nenhum dos candidatos da cédula</small>
                 </span>
-                <span className="voter-radio" aria-hidden="true" />
+                <span
+                  className={isMultiVacancyRound ? "voter-checkbox" : "voter-radio"}
+                  aria-hidden="true"
+                />
               </button>
 
               <fieldset className="choice-field voter-candidates-fieldset">
@@ -995,7 +1350,13 @@ function JoinedRoomView({
                     <>
                       <div className="voter-candidates-grid">
                         {pagedCandidates.items.map((candidate) => {
-                          const isSelected = activeSelectedCandidateId === candidate.id;
+                          const isSelected = isMultiVacancyRound
+                            ? activeMultiSelectedIds.includes(candidate.id)
+                            : activeSelectedCandidateId === candidate.id;
+                          const isLimitReached =
+                            isMultiVacancyRound &&
+                            !isSelected &&
+                            activeMultiSelectedIds.length >= roundVacancies;
                           return (
                             <button
                               key={candidate.id}
@@ -1007,7 +1368,12 @@ function JoinedRoomView({
                                   : "choice voter-candidate-card"
                               }
                               aria-pressed={isSelected}
-                              onClick={() => setSelectedCandidateId(candidate.id)}
+                              disabled={isLimitReached}
+                              onClick={() =>
+                                isMultiVacancyRound
+                                  ? handleToggleMultiCandidate(candidate.id)
+                                  : setSelectedCandidateId(candidate.id)
+                              }
                             >
                               <span className="voter-candidate-top">
                                 <span className="voter-candidate-avatar" aria-hidden="true">
@@ -1021,7 +1387,10 @@ function JoinedRoomView({
                                     initialsFromName(candidate.displayName)
                                   )}
                                 </span>
-                                <span className="voter-radio" aria-hidden="true" />
+                                <span
+                                  className={isMultiVacancyRound ? "voter-checkbox" : "voter-radio"}
+                                  aria-hidden="true"
+                                />
                               </span>
                               <span className="voter-candidate-name">{candidate.displayName}</span>
                             </button>
@@ -1047,11 +1416,23 @@ function JoinedRoomView({
 
               <div className="panel voter-confirm-dock">
                 <div className="voter-confirm-selection">
-                  <span className="voter-confirm-label">Sua escolha</span>
-                  <strong>{selectedCandidateLabel ?? "Nenhum candidato selecionado"}</strong>
+                  <span className="voter-confirm-label">
+                    {isMultiVacancyRound
+                      ? `Sua escolha (${activeMultiSelectedIds.length} de ${roundVacancies})`
+                      : "Sua escolha"}
+                  </span>
+                  <strong>
+                    {isMultiVacancyRound
+                      ? isBlankSelected
+                        ? "Voto em Branco / Nulo"
+                        : multiSelectedNames.length > 0
+                          ? multiSelectedNames.join(", ")
+                          : "Nenhum candidato selecionado"
+                      : (selectedCandidateLabel ?? "Nenhum candidato selecionado")}
+                  </strong>
                 </div>
                 <button type="submit" disabled={isVoting}>
-                  Confirmar voto
+                  {isMultiVacancyRound ? "Revisar voto" : "Confirmar voto"}
                 </button>
               </div>
             </form>
@@ -1085,11 +1466,15 @@ function JoinedRoomView({
                     return winnerCandidate?.photoUrl ? (
                       <img src={winnerCandidate.photoUrl} alt="" className="voter-avatar-img" />
                     ) : (
-                      initialsFromName(round.tally.winnerName)
+                      initialsFromName(
+                        round.tally.winnerNames?.[0] ?? round.tally.winnerName,
+                      )
                     );
                   })()}
                 </div>
-                <span className="voter-winner-badge">Eleito</span>
+                <span className="voter-winner-badge">
+                  {(round.tally.winnerNames?.length ?? 1) > 1 ? "Eleitos" : "Eleito"}
+                </span>
               </div>
               <h2>{round.tally.winnerName}</h2>
               <p className="voter-winner-office">
@@ -1099,7 +1484,11 @@ function JoinedRoomView({
                 {voterRoundStateNotice(round.status, round.restartCount)}
               </p>
               <p className="voter-outcome-status" role="status">
-                {voterTallyOutcome(round.tally.outcome, round.tally.winnerName)}
+                {voterTallyOutcome(
+                  round.tally.outcome,
+                  round.tally.winnerName,
+                  round.tally.winnerNames?.length ?? 1,
+                )}
               </p>
 
               <div className="voter-majority-box">
@@ -1164,7 +1553,9 @@ function JoinedRoomView({
                       totalTallyVotes > 0 ? Math.round((item.votes / totalTallyVotes) * 100) : 0;
                     const isWinner =
                       round.tally?.outcome === "elected" &&
-                      round.tally.winnerName === item.displayName;
+                      (round.tally.winnerIds
+                        ? round.tally.winnerIds.includes(item.candidateId)
+                        : round.tally.winnerName === item.displayName);
                     const matchedCandidate = candidates.find(
                       (candidate) =>
                         candidate.id === item.candidateId ||

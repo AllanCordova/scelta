@@ -250,14 +250,39 @@
 | **T3.2** | Lançar os totais da urna de papel (`validatePaperTally` e soma `online + papel` em `@scelta/domain`, tabela `round_paper_tallies` na migração `0003`, `PUT /v1/admin/rooms/:roomId/rounds/:roundId/paper-tally`, trava `409 paper_tally_required` ou `confirmNoPaperBallots: true` no fechamento, `PaperTallyPanel`) | L | P0 | `hydrogen` / `sonnet` | T3.1 | `done` |
 | **T3.3** | Resultado com origem dos votos (`voteOrigin` e `onlineVotes`/`paperVotes` por candidato em `AdminRoomDetail`, `ShareBoardPaper` e `/ballot`, autoria/horário em `round.paperTally` e `paper_tally_recorded` no log) | S | P1 | `sonnet` | T3.2 | `done` |
 
-### Etapas 4 a 7 — Próximas Etapas
+### Etapa 4 — Entrada por aprovação da mesa (`done`)
 
-| Etapa | Tasks | Foco | Status |
-| --- | --- | --- | --- |
-| **Etapa 4** | `T4.1`–`T4.3` | Entrada por aprovação da mesa | `todo` |
-| **Etapa 5** | `T5.1`–`T5.4` | Eleição de Oficiais (votar em até N nomes) | `todo` |
-| **Etapa 6** | `T6.1`–`T6.3` | Tela da sala em abas (Preparar / Conduzir / Resultado) e Modo Telão | `todo` |
-| **Etapa 7** | `T7.1`–`T7.4` | Qualidade, E2E de assembleia completa, carga, guia da mesa e hospedagem | `todo` |
+| ID | Task | Size | Prioridade | Modelo | Depende de | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| **T4.1** | Configuração do modo de entrada da sala (migração `0004` com colunas `entry_mode` (`codigo` \| `aprovacao`), `entry_open` e `max_participants` em `rooms`, helper `resolveRoomMaxParticipants` em `@scelta/domain`, `POST /v1/admin/rooms` e `PATCH /v1/admin/rooms/:roomId`, botões "Encerrar Entrada" e "Reabrir Entrada" no painel admin com auditoria encadeada) | S | P1 | `hydrogen` / `sonnet` | T2.1 | `done` |
+| **T4.2** | Fluxo do votante: buscar nome e pedir entrada (busca com rate limit `roster-search`, verificação opcional de dia/mês de nascimento `birth_date`, criação de pedido em `room_entry_requests` com status `pending`, detecção de nome já reivindicado com incremento de `disputed_attempt_count`, tela de espera com polling de status, emissão segura de `inviteToken` somente após aprovação e criação/recuperação de sessão do participante com `x-scelta-join-key`) | L | P1 | `neon` / `hydrogen` / `opus` | T4.1, T1.2, T1.5 | `done` |
+| **T4.3** | Fila de aprovação da mesa (`RoomApprovalQueuePanel` em tempo real na aba Conduzir, ações de aprovar individual, aprovar todos, recusar, expulsar participante com liberação do nome no rol e cancelamento de pedidos pendentes, alertas visuais de tentativas disputadas, badge de pendências no cabeçalho e auditoria encadeada de todas as decisões da mesa) | M | P1 | `hydrogen` / `sonnet` | T4.2 | `done` |
+
+### Etapa 5 — Eleição de Oficiais (votar em até N nomes) (`done`)
+
+| ID | Task | Size | Prioridade | Modelo | Depende de | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| **T5.1** | Regras de domínio para N vagas (validador `validateBallotMarks` para 0..N marcas sem duplicatas, apuração `tallyRoundVotes` com base de cédulas e suporte a múltiplos eleitos com estritamente > 50%, desempate na última vaga com `tieBreakRequired` / `lastVacancyTieCandidateIds`, planejador `nextRoundPlan` e progresso `evaluateMultiVacancyProgress` com vagas remanescentes e filtro de não eleitos, validação de `vacancies` na sala) | L | P1 | `neon` / `opus` | T0.4 | `done` |
+| **T5.2** | Banco e API para cédula com várias marcas (migração `0005_multi_vacancy_ballots.sql` com colunas `rooms.vacancies`, `rounds.vacancies`, `rounds.winner_candidate_ids` e tabela `ballot_marks` com índice único `(ballot_id, candidate_id)`, repositório anônimo sem timestamps ou ordem preservada, rotas `POST /v1/join/:token/ballot` com array `candidateIds` e `PUT /v1/admin/rooms/:roomId/rounds/:roundId/paper-tally` com `maxMarksPerBallot`) | L | P1 | `neon` / `opus` | T5.1, T0.5 | `done` |
+| **T5.3** | Cédula com múltipla escolha na tela do votante (interface de votação em `JoinRoom.tsx` com seleção de até N candidatos, contador "X de N selecionados", botão de voto em branco explícito, revisão antes de confirmar com modal de confirmação, layout responsivo testado em viewport mobile `360x640`, fluxo de volta/edição) | M | P1 | `hydrogen` / `sonnet` | T5.2 | `done` |
+| **T5.4** | Lançamento do papel para N vagas (`PaperTallyPanel.tsx` aceitando votos por candidato com validação `totalMarcas <= N * cedulas`, resumo visual em tempo real, bloqueio de envio inválido, apuração somada online + papel e suporte a 2º escrutínio com vagas restantes) | S | P1 | `hydrogen` / `sonnet` | T5.2, T3.2 | `done` |
+
+### Etapa 6 — Tela da sala e modo telão (`done`)
+
+| ID | Task | Size | Prioridade | Modelo | Depende de | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| **T6.1** | Dividir a tela da sala em abas Preparar / Conduzir / Resultado (`AdminRoomDetail.tsx` refatorado em componentes modulares `RoomPrepareTab.tsx`, `RoomConductTab.tsx`, `RoomResultsTab.tsx` e `RoomDetailHeader.tsx` todos abaixo de ~400 linhas, aba inicial derivada do estado via `resolveInitialRoomDetailTab`, convite unificado em `RoomPrepareTab`, painel redundante "Fluxo de Presença" removido) | L | P1 | `hydrogen` / `sonnet` | T2.2, T3.1 | `done` |
+| **T6.2** | Modo telão (rota `/telao/:salaId` protegida por `AdminGate` e sincronizada em tempo real via Socket.IO, entrada com QR code grande e link curto, escrutínio aberto com "Votaram X de Y" e apuração geral de cédulas/brancos/nulos, revelação de resultado após confirmação "Revelar" via `POST /v1/admin/rooms/:roomId/rounds/:roundId/reveal`, preservação estrita do sigilo sem expor votos individuais) | L | P1 | `neon` / `hydrogen` / `sonnet` | T1.2, T6.1 | `done` |
+| **T6.3** | Opção de mostrar apuração por candidato durante o escrutínio (coluna `rooms.show_live_candidate_tally` na migração `0006`, toggle no painel admin durante escrutínio aberto com auditoria encadeada `live_candidate_tally_toggled`, projeção condicional do ranking no telão e atualização instantânea via evento `telao:updated`) | S | P2 | `neon` / `hydrogen` / `sonnet` | T6.2 | `done` |
+
+### Etapa 7 — Qualidade e ensaio geral (`done`)
+
+| ID | Task | Size | Prioridade | Modelo | Depende de | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| **T7.1** | E2E e testes de feature de assembleia completa em múltiplos cenários (planilha CSV `fake-church-members.csv` com dados realistas de membros UPA-only, UMP-only e gerais comungantes/não-comungantes; suíte de testes de feature `apps/api/src/full-assembly-rehearsal.feature.test.ts` e suíte Playwright `apps/web/e2e/full-assembly.spec.ts` cobrindo assembleia UPA com voto em papel, remoção de membro e desempate por idade em 3 rodadas; assembleia UMP com sócios ativos não-comungantes e encerramento com pendentes; assembleia de Oficiais com aprovação da mesa, 5 vagas, 2º escrutínio e revelação no telão) | M | P1 | `neon` / `hydrogen` / `sonnet` | Etapas 1 a 6 | `done` |
+| **T7.2** | Teste de carga realista (`assembly-load.ts` estendido e executado com 200 votantes, 10 votos em papel, 5 vagas de diáconos, download de fotos com 0 erros em 4.371 requisições e 68s; limites operacionais e gargalos de thread única documentados em `docs/load-test-report.md`) | S | P1 | `neon` / `sonnet` | T0.9, T5.2 | `done` |
+| **T7.3** | Guia da mesa para o dia da votação (`docs/guia-da-mesa.md` em português cobrindo passo a passo de preparação, impressão A4 de cartões, ajuda a eleitores e avisos de WebView, liberação de sessão por troca de aparelho, lançamento de urna física, encerramento com pendentes, operação do telão e contingência em caso de queda) | S | P1 | `flash` / `sonnet` | T7.1 | `done` |
+| **T7.4** | Hospedagem e backup (`docs/hospedagem-e-backup.md` em português detalhando deploy local via Docker Compose com túnel HTTPS Cloudflare/ngrok e deploy em nuvem gratuita Render/Neon, comandos de `pg_dump` e `pg_restore` do zero, verificação SHA-256 e checklist completo de véspera e do dia da votação) | S | P2 | `flash` / `sonnet` | T1.1 | `done` |
 
 ---
 

@@ -186,10 +186,13 @@ describe("multi-round and runoff elections", () => {
     expect(closeR3.json().round).toEqual({
       id: round3Id,
       number: 3,
+      vacancies: 1,
       officeLabel: "Presidente",
       officeRoundNumber: 3,
       status: "closed",
       outcome: "elected",
+      resultRevealed: false,
+      winnerCandidateIds: [ana.id],
       tally: {
         totalVotes: 3,
         nullVotes: 0,
@@ -197,6 +200,10 @@ describe("multi-round and runoff elections", () => {
         outcome: "elected",
         winnerId: ana.id,
         winnerName: "Ana",
+        vacancies: 1,
+        winnerIds: [ana.id],
+        winnerNames: ["Ana"],
+        remainingVacancies: 0,
         standings: [
           { candidateId: ana.id, displayName: "Ana", votes: 2 },
           { candidateId: bia.id, displayName: "Bia", votes: 1 },

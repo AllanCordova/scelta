@@ -75,6 +75,7 @@ test("admin manages room roster, revokes removed member code, adds ad-hoc voter,
 
   await page.goto(`/admin/salas/${room.id}`);
   await expect(page.getByRole("heading", { name: roomTitle })).toBeVisible();
+  await page.getByRole("tab", { name: "Preparar" }).click();
 
   const rosterList = page.getByRole("list", { name: "Rol da sala" });
   await expect(rosterList).toBeVisible();
@@ -141,6 +142,7 @@ test("admin manages candidates before 1st scrutiny and candidates lock after rou
 
   await page.goto(`/admin/salas/${room.id}`);
   await expect(page.getByRole("heading", { name: roomTitle })).toBeVisible();
+  await page.getByRole("tab", { name: "Preparar" }).click();
 
   await page.getByTestId("add-candidate-name-input").fill(candidateName);
   await page.getByTestId("add-candidate-btn").click();
@@ -164,6 +166,8 @@ test("admin manages candidates before 1st scrutiny and candidates lock after rou
   expect(joinRes.ok()).toBe(true);
 
   await page.getByRole("button", { name: "Abrir escrutínio" }).click();
+  await expect(page.getByText("1º Escrutínio")).toBeVisible();
+  await page.getByRole("tab", { name: "Preparar" }).click();
   await expect(page.getByTestId("candidates-locked-notice")).toBeVisible();
   await expect(page.getByTestId("add-candidate-name-input")).toHaveCount(0);
   await expect(page.getByTestId("add-candidate-btn")).toHaveCount(0);
