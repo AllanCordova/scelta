@@ -133,13 +133,16 @@ describe("AdminRoomDetail", () => {
     );
     expect(screen.getByText("Votos Computados")).toBeInTheDocument();
     expect(screen.getByText("Faltam Votar")).toBeInTheDocument();
-    expect(screen.getByText("1 Membros Aguardando")).toBeInTheDocument();
+    expect(screen.queryByText("Fluxo de Presença")).not.toBeInTheDocument();
+    expect(screen.getByTestId("open-telao-btn")).toHaveAttribute(
+      "href",
+      `/telao/${sampleRoom.id}`,
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Preparar" }));
     expect(screen.getByText("Regimento da Eleição")).toBeInTheDocument();
     expect(screen.getByText("Secreto / Cédula única")).toBeInTheDocument();
     expect(screen.getByText("50% + 1 (Absoluta)")).toBeInTheDocument();
-    expect(screen.getAllByText("Paulo Apóstolo").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("PA")).toBeInTheDocument();
-    expect(screen.getAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(2);
 
     fireEvent.click(screen.getByRole("button", { name: "QR Code" }));
     expect(await screen.findByTestId("invite-qr")).toBeInTheDocument();
@@ -148,6 +151,8 @@ describe("AdminRoomDetail", () => {
     expect(
       await screen.findByText(/Eleito por maioria absoluta: Paulo Apóstolo/i),
     ).toBeInTheDocument();
+    expect(screen.getAllByText("Paulo Apóstolo").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("PA").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Eleito").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("button", { name: "Minimizar destaque do eleito" })).toBeInTheDocument();
   });
@@ -324,21 +329,18 @@ describe("AdminRoomDetail", () => {
 
     expect(await screen.findByText("0 / 1 (presentes / mínimo)")).toBeInTheDocument();
 
-    // Simulate 2 participants joining
+    // Simulate 2 participants joining from Preparar tab
+    fireEvent.click(screen.getByRole("tab", { name: "Preparar" }));
     fireEvent.change(screen.getByLabelText("Participantes"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "Simular entrada" }));
 
     expect(
       await screen.findByText("2 participantes simulados entraram na sala."),
     ).toBeInTheDocument();
-    expect(await screen.findByText("2 / 1 (presentes / mínimo)")).toBeInTheDocument();
-    expect(screen.getByText("2 Membros Aguardando")).toBeInTheDocument();
 
     // Simulate randomized votes for the 2 waiting participants
     fireEvent.click(screen.getByRole("button", { name: "Simular votos" }));
     expect(await screen.findByText("2 votos aleatórios computados.")).toBeInTheDocument();
-    expect(await screen.findAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(2);
-    expect(screen.getByText("0 Membros Aguardando")).toBeInTheDocument();
 
     // Remove 1 participant from presence
     fireEvent.change(screen.getByLabelText("Participantes"), { target: { value: "1" } });
@@ -346,9 +348,11 @@ describe("AdminRoomDetail", () => {
     const confirmDialog = await screen.findByRole("dialog");
     fireEvent.click(within(confirmDialog).getByRole("button", { name: "Remover participantes" }));
     expect(await screen.findByText("1 participantes removidos da presença.")).toBeInTheDocument();
+
+    // Verify updated KPIs and socket ballot:activity live refresh in Conduzir tab
+    fireEvent.click(screen.getByRole("tab", { name: "Conduzir" }));
     expect(await screen.findByText("1 / 1 (presentes / mínimo)")).toBeInTheDocument();
 
-    // Emit a socket ballot:activity event and verify live refresh
     currentRoom = {
       ...currentRoom,
       votedCount: 3,
@@ -358,7 +362,7 @@ describe("AdminRoomDetail", () => {
       handler({ roomId: sampleRoom.id, roundId: "round-1" });
     }
     await waitFor(() => {
-      expect(screen.getAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(3);
+      expect(screen.getByText("3")).toBeInTheDocument();
     });
   });
 
@@ -474,19 +478,14 @@ describe("AdminRoomDetail", () => {
     });
   });
 
-  it("paginates presence flow receipts 5 per page", async () => {
-    const manyReceiptsRoom: RoomDetail = {
+  it("resolves initial tab from lifecycle state, toggles live candidate tally, and triggers telao reveal", async () => {
+    const patchCalls: unknown[] = [];
+    const revealCalls: string[] = [];
+    let currentRoom: RoomDetail = {
       ...sampleRoom,
-      votedCount: 7,
-      receiptTimestamps: [
-        "2026-04-04T15:01:00.000Z",
-        "2026-04-04T15:02:00.000Z",
-        "2026-04-04T15:03:00.000Z",
-        "2026-04-04T15:04:00.000Z",
-        "2026-04-04T15:05:00.000Z",
-        "2026-04-04T15:06:00.000Z",
-        "2026-04-04T15:07:00.000Z",
-      ],
+      status: "draft",
+      round: null,
+      showLiveCandidateTally: false,
     };
 
     vi.stubGlobal(
@@ -495,23 +494,78 @@ describe("AdminRoomDetail", () => {
         const url = String(input);
         const method = init?.method ?? "GET";
         if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
-          return json({ room: manyReceiptsRoom });
+          return json({ room: currentRoom });
         }
-        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/access-codes`) && method === "GET") {
-          return json({ accessCodes: [] });
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "PATCH") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as {
+            showLiveCandidateTally?: boolean;
+          };
+          patchCalls.push(body);
+          currentRoom = {
+            ...currentRoom,
+            showLiveCandidateTally: Boolean(body.showLiveCandidateTally),
+          };
+          return json({ room: currentRoom });
         }
-        throw new Error(`Unexpected fetch: ${method} ${url}`);
+        if (
+          url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/rounds/round-1/reveal`) &&
+          method === "POST"
+        ) {
+          revealCalls.push("round-1");
+          currentRoom = {
+            ...currentRoom,
+            round: currentRoom.round ? { ...currentRoom.round, resultRevealed: true } : null,
+          };
+          return json({ round: currentRoom.round, alreadyRevealed: false });
+        }
+        return json({ accessCodes: [], entries: [], eligibleCount: 0, members: [] });
       }),
     );
 
+    const { unmount } = render(<AdminRoomDetail roomId={sampleRoom.id} />);
+    expect(await screen.findByRole("tab", { name: "Preparar" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    const liveCheckbox = screen.getByTestId("toggle-live-candidate-tally");
+    expect(liveCheckbox).not.toBeChecked();
+    fireEvent.click(liveCheckbox);
+    await waitFor(() => {
+      expect(patchCalls).toEqual([{ showLiveCandidateTally: true }]);
+    });
+    unmount();
+
+    currentRoom = {
+      ...sampleRoom,
+      status: "open",
+      round: {
+        id: "round-1",
+        number: 1,
+        status: "closed",
+        outcome: "elected",
+        resultRevealed: false,
+        tally: {
+          totalVotes: 2,
+          threshold: 2,
+          outcome: "elected",
+          winnerId: "cand-1",
+          winnerName: "Paulo Apóstolo",
+          standings: [{ candidateId: "cand-1", displayName: "Paulo Apóstolo", votes: 2 }],
+        },
+      },
+    };
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
-
-    expect(await screen.findByText("Página 1 de 2")).toBeInTheDocument();
-    expect(screen.getAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(5);
-
-    fireEvent.click(screen.getByRole("button", { name: "Próxima" }));
-    expect(screen.getByText("Página 2 de 2")).toBeInTheDocument();
-    expect(screen.getAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(2);
+    expect(await screen.findByRole("tab", { name: "Resultado" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    fireEvent.click(await screen.findByTestId("reveal-result-btn"));
+    await waitFor(() => {
+      expect(revealCalls).toEqual(["round-1"]);
+    });
+    expect(await screen.findByTestId("result-revealed-badge")).toHaveTextContent(
+      "Revelado no telão",
+    );
   });
 
   it("shows the share board paper when all offices are elected with photos, initials, ministry, and Bible verse", async () => {
@@ -559,6 +613,7 @@ describe("AdminRoomDetail", () => {
 
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
 
+    fireEvent.click(await screen.findByRole("tab", { name: "Resultado" }));
     const shareButton = await screen.findByRole("button", { name: "Compartilhar resultado" });
     fireEvent.click(shareButton);
 
@@ -793,6 +848,7 @@ describe("AdminRoomDetail", () => {
 
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
 
+    fireEvent.click(await screen.findByRole("tab", { name: "Preparar" }));
     const select = (await screen.findByLabelText("Cargo do banner")) as HTMLSelectElement;
     expect(select.value).toBe("Presidente");
     expect(screen.getByAltText("Banner do cargo Presidente")).toHaveAttribute(
@@ -832,6 +888,7 @@ describe("AdminRoomDetail", () => {
 
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
 
+    fireEvent.click(await screen.findByRole("tab", { name: "Preparar" }));
     const inviteInput = (await screen.findByLabelText("Token Direto para Votantes")) as HTMLInputElement;
     expect(inviteInput.value).toContain("/s/ELD202");
     expect(screen.queryByRole("button", { name: "Rotacionar convite" })).not.toBeInTheDocument();
@@ -874,6 +931,7 @@ describe("AdminRoomDetail", () => {
     );
 
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Resultado" }));
     expect(await screen.findByRole("heading", { name: "Auditoria da sala" })).toBeInTheDocument();
     expect(screen.getByText("Sala criada")).toBeInTheDocument();
     expect(screen.getByText("Quórum alterado")).toBeInTheDocument();
@@ -1140,6 +1198,7 @@ describe("AdminRoomDetail", () => {
 
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
 
+    fireEvent.click(await screen.findByRole("tab", { name: "Preparar" }));
     expect(await screen.findByText("111222")).toBeInTheDocument();
 
     // Add ad-hoc voter
@@ -1318,9 +1377,6 @@ describe("AdminRoomDetail", () => {
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
 
     expect(await screen.findByTestId("room-paper-count")).toHaveTextContent("Papel: 1");
-    expect(screen.getByText("0 Membros Aguardando")).toBeInTheDocument();
-    expect(screen.getByText("Marcado para voto em papel")).toBeInTheDocument();
-    expect(screen.getByText("Totais da urna de papel lançados")).toBeInTheDocument();
     expect(screen.getByTestId("paper-tally-panel")).toBeInTheDocument();
 
     // Try closing without paper tally -> opens confirmation dialog
@@ -1337,7 +1393,7 @@ describe("AdminRoomDetail", () => {
     fireEvent.click(screen.getByTestId("save-paper-tally-btn"));
     await screen.findByTestId("paper-tally-provenance");
 
-    // Close scrutiny -> shows combined origin breakdown
+    // Close scrutiny -> shows combined origin breakdown and audit events on Resultado tab
     fireEvent.click(screen.getByRole("button", { name: "Encerrar escrutínio" }));
     const originSummary = await screen.findByTestId("tally-origin-summary");
     expect(originSummary).toHaveTextContent("Total: 2");
@@ -1345,6 +1401,162 @@ describe("AdminRoomDetail", () => {
     expect(originSummary).toHaveTextContent("Papel: 1");
     expect(screen.getByTestId("tally-paper-recorded-by")).toHaveTextContent("Admin Mesa");
     expect(screen.getByText(/Online: 1 · Papel: 1/)).toBeInTheDocument();
+    expect(screen.getByText("Marcado para voto em papel")).toBeInTheDocument();
+    expect(screen.getByText("Totais da urna de papel lançados")).toBeInTheDocument();
+  });
+
+  it("shows approval mode details, short code below QR, and toggles room entry open/closed", async () => {
+    let currentRoom: RoomDetail = {
+      ...sampleRoom,
+      entryMode: "aprovacao",
+      entryOpen: true,
+      maxParticipants: 10,
+      auditEvents: [
+        {
+          id: "evt-entry-1",
+          actorRole: "admin",
+          action: "entry_request_approved",
+          payload: {},
+          createdAt: "2026-11-13T12:04:00.000Z",
+        },
+      ],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: currentRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "PATCH") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { entryOpen?: boolean };
+          currentRoom = { ...currentRoom, entryOpen: body.entryOpen };
+          return json({ room: currentRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/entry-requests`) && method === "GET") {
+          return json({ requests: [], claimedParticipants: [], disputes: [] });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/participants`) && method === "GET") {
+          return json({ participants: [] });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/roster`) && method === "GET") {
+          return json({ entries: [], eligibleCount: 4 });
+        }
+        if (url.endsWith("/v1/admin/members") && method === "GET") {
+          return json({ members: [] });
+        }
+        if (url.includes("/chat")) {
+          return json({ messages: [], chatMuted: false });
+        }
+        if (url.endsWith("/v1/public-config")) {
+          return json({ publicUrl: null });
+        }
+        return json({ accessCodes: [] });
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    expect(await screen.findByTestId("approval-queue-panel")).toBeInTheDocument();
+    expect(screen.getAllByText("Entrada aberta").length).toBeGreaterThanOrEqual(1);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Resultado" }));
+    expect(screen.getByText("Pedido de entrada aprovado pela mesa")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Preparar" }));
+    expect(screen.getByText("Aprovação da mesa")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "QR Code" }));
+    expect(await screen.findByTestId("room-short-code")).toHaveTextContent("ELD202");
+
+    const toggleBtn = screen.getByTestId("toggle-room-entry-btn");
+    expect(toggleBtn).toHaveTextContent("Encerrar entrada");
+    fireEvent.click(toggleBtn);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toggle-room-entry-btn")).toHaveTextContent("Reabrir entrada");
+    });
+  });
+
+  it("displays multi-vacancy progress, partial election next-round button, and close-with-open-vacancies action", async () => {
+    const multiRoom: RoomDetail = {
+      ...sampleRoom,
+      roomType: "deacon",
+      vacancies: 5,
+      remainingVacancies: 2,
+      hasRounds: true,
+      electedCandidates: [
+        { id: "cand-1", displayName: "Paulo Apóstolo", photoUrl: null },
+        { id: "cand-2", displayName: "Silas", photoUrl: null },
+        { id: "cand-3", displayName: "Timóteo", photoUrl: null },
+      ],
+      round: {
+        id: "round-1",
+        number: 1,
+        vacancies: 5,
+        status: "closed",
+        outcome: "elected",
+        winnerCandidateIds: ["cand-1", "cand-2", "cand-3"],
+        tally: {
+          totalVotes: 10,
+          threshold: 6,
+          outcome: "elected",
+          winnerId: "cand-1",
+          winnerName: "Paulo Apóstolo, Silas, Timóteo",
+          vacancies: 5,
+          winnerIds: ["cand-1", "cand-2", "cand-3"],
+          winnerNames: ["Paulo Apóstolo", "Silas", "Timóteo"],
+          remainingVacancies: 2,
+          partialElection: true,
+          standings: [
+            { candidateId: "cand-1", displayName: "Paulo Apóstolo", votes: 8 },
+            { candidateId: "cand-2", displayName: "Silas", votes: 7 },
+            { candidateId: "cand-3", displayName: "Timóteo", votes: 6 },
+          ],
+        },
+      },
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`)) {
+          return json({ room: multiRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/participants`)) {
+          return json({ participants: [] });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/roster`)) {
+          return json({ entries: [], eligibleCount: 4 });
+        }
+        if (url.endsWith("/v1/admin/members")) {
+          return json({ members: [] });
+        }
+        if (url.includes("/chat")) {
+          return json({ messages: [], chatMuted: false });
+        }
+        if (url.endsWith("/v1/public-config")) {
+          return json({ publicUrl: null });
+        }
+        return json({ accessCodes: [] });
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    expect(await screen.findByTestId("room-vacancies-summary")).toHaveTextContent(
+      "Vagas: 3 eleitos de 5 • Vagas restantes: 2",
+    );
+    expect(screen.getByTestId("open-next-round-btn")).toHaveTextContent(
+      "Abrir próximo escrutínio (2 vagas)",
+    );
+    expect(screen.getByTestId("close-with-open-vacancies-btn")).toBeInTheDocument();
+    expect(
+      screen.getByText("Eleitos por maioria absoluta: Paulo Apóstolo, Silas, Timóteo"),
+    ).toBeInTheDocument();
   });
 });
 

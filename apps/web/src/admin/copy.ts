@@ -1,4 +1,29 @@
-import type { FieldError, RoomStatus, RoomType, RoundTally, RulesPreset } from "./types";
+import type {
+  FieldError,
+  RoomEntryMode,
+  RoomStatus,
+  RoomType,
+  RoundTally,
+  RulesPreset,
+} from "./types";
+
+export const ENTRY_MODE_OPTIONS: { value: RoomEntryMode; label: string; hint: string }[] = [
+  {
+    value: "codigo",
+    label: "Cartão com código",
+    hint: "Cada eleitor entra com seu código pessoal do cartão impresso ou link individual.",
+  },
+  {
+    value: "aprovacao",
+    label: "Aprovação da mesa",
+    hint: "Os eleitores escaneiam o QR ou digitam o código da sala, buscam seu nome no rol e aguardam aprovação da mesa.",
+  },
+];
+
+export const ENTRY_MODE_LABELS: Record<RoomEntryMode, string> = {
+  codigo: "Cartão com código",
+  aprovacao: "Aprovação da mesa",
+};
 
 export const ROOM_TYPE_OPTIONS: { value: RoomType; label: string }[] = [
   { value: "pastor", label: "Pastor" },
@@ -86,6 +111,10 @@ export function tallySummaryLabel(tally: RoundTally): string {
     if (tally.tieBreakReason === "admin_tiebreak") {
       return `Eleito por desempate de idade (decisão da mesa): ${tally.winnerName}`;
     }
+    const winnerNames = tally.winnerNames ?? [];
+    if (winnerNames.length > 1) {
+      return `Eleitos por maioria absoluta: ${winnerNames.join(", ")}`;
+    }
     return `Eleito por maioria absoluta: ${tally.winnerName}`;
   }
   if (tally.tieBreakRequired) {
@@ -119,6 +148,10 @@ const FIELD_MESSAGES: Record<FieldError["field"], string> = {
   eligibleCount: "Número de aptos inválido.",
   status: "Situação inválida.",
   candidates: "Cadastre ou importe ao menos um membro comungante antes de criar a sala.",
+  entryMode: "Modo de entrada inválido.",
+  entryOpen: "Configuração de abertura da entrada inválida.",
+  maxParticipants: "Informe um limite válido de participantes (entre 1 e 100.000).",
+  vacancies: "Informe um número de vagas válido (entre 1 e 50).",
 };
 
 export function roomErrorMessage(errorCode: string, field?: FieldError["field"]): string {
@@ -188,6 +221,16 @@ export function roundErrorMessage(errorCode: string): string {
       return "Salas com entradas ou votos simulados não podem ser mudadas para Aberta.";
     case "logs_are_immutable":
       return "Os logs de integridade são inapagáveis e não podem ser alterados.";
+    case "room_closed":
+      return "Esta sala já foi encerrada e não aceita alterações.";
+    case "room_capacity_reached":
+      return "O limite de participantes da sala foi atingido.";
+    case "entry_closed":
+      return "A entrada nesta sala está encerrada.";
+    case "vacancies_locked_after_round":
+      return "Não é possível alterar o número de vagas após iniciar um escrutínio.";
+    case "paper_marks_exceed_ballots":
+      return "O total de marcações excede o limite permitido pelas cédulas de papel.";
     default:
       return "Não foi possível atualizar o escrutínio.";
   }

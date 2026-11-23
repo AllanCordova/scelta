@@ -468,9 +468,9 @@ Resolve "não consegui adicionar ou remover pessoas depois de criar a sala".
 | 1 | T1.1–T1.6 | QR, cartão, sessão | `done` |
 | 2 | T2.1–T2.4 | Rol da sala | `done` |
 | 3 | T3.1–T3.3 | Voto em papel | `done` |
-| 4 | T4.1–T4.3 | Entrada por aprovação | `todo` |
-| 5 | T5.1–T5.4 | Oficiais com N vagas | `todo` |
-| 6 | T6.1–T6.3 | Tela da sala e telão | `todo` |
-| 7 | T7.1–T7.4 | Ensaio, carga, guia e hospedagem | `todo` |
+| 4 | T4.1–T4.3 | Entrada por aprovação | `done` |
+| 5 | T5.1–T5.4 | Oficiais com N vagas | `done` |
+| 6 | T6.1–T6.3 | Tela da sala e telão | `done` |
+| 7 | T7.1–T7.4 | Ensaio, carga, guia e hospedagem | `done` |
 
 Modelos: `opus` para T0.1, T0.3, T0.4, T1.5, T2.1, T3.2, T4.2, T5.1 e T5.2; `haiku` para T0.10 e T0.11; `sonnet` para as demais.

@@ -114,8 +114,10 @@ describe("anonymous single ballot and automatic tally", () => {
     expect(midRoundBallotState.json().round).toEqual({
       id: roundId,
       number: 1,
+      vacancies: 1,
       status: "open",
       outcome: null,
+      resultRevealed: false,
     });
     expect(midRoundBallotState.json().round.tally).toBeUndefined();
 
@@ -155,8 +157,11 @@ describe("anonymous single ballot and automatic tally", () => {
       round: {
         id: roundId,
         number: 1,
+        vacancies: 1,
         status: "closed",
         outcome: "elected",
+        resultRevealed: false,
+        winnerCandidateIds: [paulo.id],
         tally: {
           totalVotes: 3,
           nullVotes: 0,
@@ -164,6 +169,10 @@ describe("anonymous single ballot and automatic tally", () => {
           outcome: "elected",
           winnerId: paulo.id,
           winnerName: "Paulo",
+          vacancies: 1,
+          winnerIds: [paulo.id],
+          winnerNames: ["Paulo"],
+          remainingVacancies: 0,
           standings: [
             { candidateId: paulo.id, displayName: "Paulo", votes: 2 },
             { candidateId: silas.id, displayName: "Silas", votes: 1 },
@@ -220,8 +229,10 @@ describe("anonymous single ballot and automatic tally", () => {
     expect(closed.json().round).toEqual({
       id: roundId,
       number: 1,
+      vacancies: 1,
       status: "closed",
       outcome: "no_majority",
+      resultRevealed: false,
       tally: {
         totalVotes: 2,
         nullVotes: 0,
@@ -229,6 +240,10 @@ describe("anonymous single ballot and automatic tally", () => {
         outcome: "no_majority",
         winnerId: null,
         winnerName: null,
+        vacancies: 1,
+        winnerIds: [],
+        winnerNames: [],
+        remainingVacancies: 1,
         standings: [
           { candidateId: barnabe.id, displayName: "Barnabé", votes: 1 },
           { candidateId: paulo.id, displayName: "Paulo", votes: 1 },
@@ -336,8 +351,10 @@ describe("anonymous single ballot and automatic tally", () => {
     expect(validClose.json().round).toEqual({
       id: roundId,
       number: 1,
+      vacancies: 1,
       status: "closed",
       outcome: "no_majority",
+      resultRevealed: false,
       tally: {
         totalVotes: 3,
         nullVotes: 1,
@@ -345,6 +362,10 @@ describe("anonymous single ballot and automatic tally", () => {
         outcome: "no_majority",
         winnerId: null,
         winnerName: null,
+        vacancies: 1,
+        winnerIds: [],
+        winnerNames: [],
+        remainingVacancies: 1,
         standings: [
           { candidateId: barnabe.id, displayName: "Barnabé", votes: 1 },
           { candidateId: paulo.id, displayName: "Paulo", votes: 1 },
@@ -369,8 +390,11 @@ describe("anonymous single ballot and automatic tally", () => {
     expect(confirmedPendingClose.json().round).toEqual({
       id: round2Id,
       number: 2,
+      vacancies: 1,
       status: "closed",
       outcome: "elected",
+      resultRevealed: false,
+      winnerCandidateIds: [paulo.id],
       tally: {
         totalVotes: 2,
         nullVotes: 0,
@@ -378,6 +402,10 @@ describe("anonymous single ballot and automatic tally", () => {
         outcome: "elected",
         winnerId: paulo.id,
         winnerName: "Paulo",
+        vacancies: 1,
+        winnerIds: [paulo.id],
+        winnerNames: ["Paulo"],
+        remainingVacancies: 0,
         didNotVoteCount: 1,
         standings: [
           { candidateId: paulo.id, displayName: "Paulo", votes: 2 },

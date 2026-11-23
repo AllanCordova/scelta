@@ -56,15 +56,30 @@ export function canDeclineRound(
 }
 
 export type RoundOutcome =
-  | { kind: "winners"; winnerIds: string[] }
-  | { kind: "next_round"; candidateIds: string[]; reason: string }
-  | { kind: "inconclusive"; reason: string };
+  | { kind: "winners"; winnerIds: string[]; remainingVacancies: number }
+  | {
+      kind: "next_round";
+      candidateIds: string[];
+      reason: string;
+      remainingVacancies: number;
+      electedCandidateIds?: string[];
+      isLastVacancyTieRunoff?: boolean;
+    }
+  | {
+      kind: "inconclusive";
+      reason: string;
+      remainingVacancies: number;
+      electedCandidateIds?: string[];
+    };
 
 export type NextRoundPlan = {
   roundNumber: number;
-  tallies: TallyEntry[];
+  tallies: readonly TallyEntry[];
   preset: RulesPreset;
   vacancies?: number;
+  blankVotes?: number;
+  totalBallots?: number;
+  alreadyElectedCandidateIds?: readonly string[];
 };
 
 export type ResolveNextRoundInput = {
@@ -75,6 +90,11 @@ export type ResolveNextRoundInput = {
   previousTallies: readonly TallyEntry[];
   requestedCandidateIds?: readonly string[];
   vacancies?: number;
+  remainingVacancies?: number;
+  lastVacancyTieCandidateIds?: readonly string[];
+  alreadyElectedCandidateIds?: readonly string[];
+  previousTotalBallots?: number;
+  previousBlankVotes?: number;
 };
 
 export type NextRoundRejectionReason =
@@ -86,22 +106,127 @@ export type ResolveNextRoundResult =
   | { ok: true; candidateIds: string[] }
   | { ok: false; reason: NextRoundRejectionReason };
 
+export type MultiVacancyRoundSnapshot = {
+  status: string;
+  outcome: RoundResult | null;
+  winnerCandidateId?: string | null;
+  winnerCandidateIds?: readonly string[];
+};
+
+export type MultiVacancyProgress = {
+  totalVacancies: number;
+  electedCandidateIds: string[];
+  remainingVacancies: number;
+  isComplete: boolean;
+};
+
+function normalizeVacancies(vacancies: number | undefined): number {
+  return typeof vacancies === "number" && Number.isInteger(vacancies) && vacancies >= 1
+    ? vacancies
+    : 1;
+}
+
 /**
- * Decide winners or next-round candidate subset from IPB-oriented presets.
+ * Computes cumulative multi-vacancy election progress across closed elected rounds.
+ * Annulled, restarted, and declined rounds are excluded automatically.
+ */
+export function evaluateMultiVacancyProgress(
+  totalVacancies: number,
+  rounds: readonly MultiVacancyRoundSnapshot[],
+): MultiVacancyProgress {
+  const safeTotal = normalizeVacancies(totalVacancies);
+  const electedSet = new Set<string>();
+
+  for (const round of rounds) {
+    if (round.status !== "closed" || round.outcome !== "elected") {
+      continue;
+    }
+    const ids =
+      round.winnerCandidateIds && round.winnerCandidateIds.length > 0
+        ? round.winnerCandidateIds
+        : round.winnerCandidateId
+          ? [round.winnerCandidateId]
+          : [];
+    for (const id of ids) {
+      electedSet.add(id);
+    }
+  }
+
+  const electedCandidateIds = [...electedSet];
+  const remainingVacancies = Math.max(0, safeTotal - electedCandidateIds.length);
+  return {
+    totalVacancies: safeTotal,
+    electedCandidateIds,
+    remainingVacancies,
+    isComplete: remainingVacancies === 0,
+  };
+}
+
+/**
+ * Decide winners or next-round candidate subset from IPB-oriented presets,
+ * supporting both single-vacancy and N-vacancy officer elections.
  * Round numbers are 1-based.
  */
 export function nextRoundPlan(input: NextRoundPlan): RoundOutcome {
-  const vacancies = input.vacancies ?? 1;
-  const majority = hasAbsoluteMajority(input.tallies, vacancies);
+  const vacancies = normalizeVacancies(input.vacancies);
+  const alreadyElectedSet = new Set(input.alreadyElectedCandidateIds ?? []);
+  const majority = hasAbsoluteMajority(
+    input.tallies,
+    vacancies,
+    input.blankVotes ?? 0,
+    input.totalBallots,
+  );
 
-  if (majority.winnerIds.length >= vacancies) {
-    return { kind: "winners", winnerIds: majority.winnerIds.slice(0, vacancies) };
+  const newlyElectedIds = majority.winnerIds;
+  const remainingVacancies = majority.remainingVacancies;
+
+  if (remainingVacancies === 0 && majority.lastVacancyTieCandidateIds.length === 0) {
+    return {
+      kind: "winners",
+      winnerIds: newlyElectedIds,
+      remainingVacancies: 0,
+    };
+  }
+
+  if (majority.lastVacancyTieCandidateIds.length > 0) {
+    return {
+      kind: "next_round",
+      candidateIds: majority.lastVacancyTieCandidateIds,
+      ...(newlyElectedIds.length > 0 ? { electedCandidateIds: newlyElectedIds } : {}),
+      remainingVacancies,
+      isLastVacancyTieRunoff: true,
+      reason: "Tie on the last vacancy; runoff among tied candidates",
+    };
+  }
+
+  const excludedIds = new Set([...alreadyElectedSet, ...newlyElectedIds]);
+  const unelectedTallies = input.tallies.filter((entry) => !excludedIds.has(entry.candidateId));
+  const unelectedCandidateIds = unelectedTallies.map((entry) => entry.candidateId);
+
+  if (unelectedCandidateIds.length === 0) {
+    return {
+      kind: "inconclusive",
+      ...(newlyElectedIds.length > 0 ? { electedCandidateIds: newlyElectedIds } : {}),
+      remainingVacancies,
+      reason: "No unelected candidates remain for the open vacancies",
+    };
+  }
+
+  if (newlyElectedIds.length > 0) {
+    return {
+      kind: "next_round",
+      candidateIds: unelectedCandidateIds,
+      electedCandidateIds: newlyElectedIds,
+      remainingVacancies,
+      reason: "Partial election; open another ballot for remaining vacancies with unelected candidates",
+    };
   }
 
   if (input.preset === "ipb_society_board") {
     if (input.roundNumber >= 3) {
       return {
         kind: "inconclusive",
+        remainingVacancies,
         reason: "Maximum of 3 ballots reached; tie-break by age required",
       };
     }
@@ -109,31 +234,35 @@ export function nextRoundPlan(input: NextRoundPlan): RoundOutcome {
     if (input.roundNumber >= 2) {
       return {
         kind: "next_round",
-        candidateIds: selectTopCandidates(input.tallies, 2),
+        candidateIds: selectTopCandidates(unelectedTallies, 2),
+        remainingVacancies,
         reason: "No absolute majority after two ballots; runoff of top 2",
       };
     }
 
     return {
       kind: "next_round",
-      candidateIds: input.tallies.map((entry) => entry.candidateId),
+      candidateIds: unelectedCandidateIds,
+      remainingVacancies,
       reason: "No absolute majority; open another ballot",
     };
   }
 
   if (input.preset === "ipb_local_officers") {
-    if (input.roundNumber >= 3) {
+    if (vacancies === 1 && input.roundNumber >= 3) {
       return {
         kind: "inconclusive",
+        remainingVacancies,
         reason: "Maximum of 3 ballots reached; tie-break by age required",
       };
     }
 
     if (input.roundNumber >= 2) {
-      const limit = Math.max(vacancies * 2, vacancies + 1);
+      const limit = Math.max(remainingVacancies * 2, remainingVacancies + 1);
       return {
         kind: "next_round",
-        candidateIds: selectTopCandidates(input.tallies, limit),
+        candidateIds: selectTopCandidates(unelectedTallies, limit),
+        remainingVacancies,
         reason:
           "No majority after second ballot; limit further ballots to most voted",
       };
@@ -141,13 +270,15 @@ export function nextRoundPlan(input: NextRoundPlan): RoundOutcome {
 
     return {
       kind: "next_round",
-      candidateIds: input.tallies.map((entry) => entry.candidateId),
+      candidateIds: unelectedCandidateIds,
+      remainingVacancies,
       reason: "No majority; open another ballot",
     };
   }
 
   return {
     kind: "inconclusive",
+    remainingVacancies,
     reason: "Custom preset requires explicit runoff configuration",
   };
 }
@@ -158,11 +289,30 @@ export function nextRoundPlan(input: NextRoundPlan): RoundOutcome {
 export function resolveNextRoundCandidateIds(
   input: ResolveNextRoundInput,
 ): ResolveNextRoundResult {
-  if (input.previousOutcome === "elected") {
+  const remainingVacancies =
+    input.remainingVacancies !== undefined
+      ? input.remainingVacancies
+      : input.previousOutcome === "elected"
+        ? 0
+        : normalizeVacancies(input.vacancies);
+
+  if (remainingVacancies <= 0) {
     return { ok: false, reason: "winner_already_elected" };
   }
 
+  const alreadyElectedSet = new Set(input.alreadyElectedCandidateIds ?? []);
+  const availableCandidateIds = input.eligibleCandidateIds.filter(
+    (id) => !alreadyElectedSet.has(id),
+  );
+  const availableSet = new Set(availableCandidateIds);
+
+  const isMultiVacancyFlow =
+    (input.vacancies !== undefined && input.vacancies > 1) ||
+    (input.alreadyElectedCandidateIds !== undefined && input.alreadyElectedCandidateIds.length > 0) ||
+    (input.lastVacancyTieCandidateIds !== undefined && input.lastVacancyTieCandidateIds.length > 0);
+
   if (
+    !isMultiVacancyFlow &&
     input.previousRoundNumber !== null &&
     input.previousRoundNumber >= 3 &&
     input.previousOutcome === "no_majority"
@@ -170,7 +320,31 @@ export function resolveNextRoundCandidateIds(
     return { ok: false, reason: "max_rounds_reached" };
   }
 
-  const eligibleSet = new Set(input.eligibleCandidateIds);
+  if (input.lastVacancyTieCandidateIds && input.lastVacancyTieCandidateIds.length > 0) {
+    const tiedEligible = input.lastVacancyTieCandidateIds.filter((id) => availableSet.has(id));
+    if (tiedEligible.length === 0) {
+      return { ok: false, reason: "invalid_candidate_subset" };
+    }
+
+    if (input.requestedCandidateIds !== undefined) {
+      const seen = new Set<string>();
+      for (const candidateId of input.requestedCandidateIds) {
+        if (!availableSet.has(candidateId) || seen.has(candidateId)) {
+          return { ok: false, reason: "invalid_candidate_subset" };
+        }
+        seen.add(candidateId);
+      }
+      if (
+        tiedEligible.length !== input.requestedCandidateIds.length ||
+        !tiedEligible.every((id) => seen.has(id))
+      ) {
+        return { ok: false, reason: "invalid_candidate_subset" };
+      }
+      return { ok: true, candidateIds: [...input.requestedCandidateIds] };
+    }
+
+    return { ok: true, candidateIds: tiedEligible };
+  }
 
   if (input.requestedCandidateIds !== undefined) {
     if (input.requestedCandidateIds.length === 0) {
@@ -179,7 +353,7 @@ export function resolveNextRoundCandidateIds(
 
     const seen = new Set<string>();
     for (const candidateId of input.requestedCandidateIds) {
-      if (!eligibleSet.has(candidateId) || seen.has(candidateId)) {
+      if (!availableSet.has(candidateId) || seen.has(candidateId)) {
         return { ok: false, reason: "invalid_candidate_subset" };
       }
       seen.add(candidateId);
@@ -206,16 +380,24 @@ export function resolveNextRoundCandidateIds(
   if (
     input.eligibleCandidateIds.length === 0 ||
     input.previousRoundNumber === null ||
+    input.previousOutcome === "elected" ||
     input.previousOutcome !== "no_majority"
   ) {
-    return { ok: true, candidateIds: [...input.eligibleCandidateIds] };
+    return { ok: true, candidateIds: [...availableCandidateIds] };
   }
 
   const plan = nextRoundPlan({
     roundNumber: input.previousRoundNumber,
     tallies: [...input.previousTallies],
     preset: input.preset,
-    ...(input.vacancies === undefined ? {} : { vacancies: input.vacancies }),
+    vacancies: remainingVacancies,
+    ...(input.previousTotalBallots === undefined
+      ? {}
+      : { totalBallots: input.previousTotalBallots }),
+    ...(input.previousBlankVotes === undefined ? {} : { blankVotes: input.previousBlankVotes }),
+    ...(input.alreadyElectedCandidateIds === undefined
+      ? {}
+      : { alreadyElectedCandidateIds: input.alreadyElectedCandidateIds }),
   });
 
   if (plan.kind === "winners") {
@@ -223,8 +405,11 @@ export function resolveNextRoundCandidateIds(
   }
 
   if (plan.kind === "next_round") {
-    return { ok: true, candidateIds: plan.candidateIds };
+    return {
+      ok: true,
+      candidateIds: plan.candidateIds.filter((id) => availableSet.has(id)),
+    };
   }
 
-  return { ok: true, candidateIds: [...input.eligibleCandidateIds] };
+  return { ok: true, candidateIds: [...availableCandidateIds] };
 }

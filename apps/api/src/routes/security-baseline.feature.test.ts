@@ -1,4 +1,5 @@
 import {
+  ballotMarks,
   ballots,
   candidates,
   createPgliteDatabase,
@@ -259,6 +260,14 @@ describe("B4.2 security baseline for voting", () => {
     expect(ballotRows).toHaveLength(2);
     for (const row of ballotRows) {
       expect(Object.keys(row)).not.toContain("participantId");
+      expect(Object.keys(row)).not.toContain("castAt");
+      expect(Object.keys(row)).not.toContain("createdAt");
+    }
+
+    const markRows = await db.select().from(ballotMarks);
+    expect(markRows).toHaveLength(2);
+    for (const row of markRows) {
+      expect(Object.keys(row).sort()).toEqual(["ballotId", "candidateId", "id"]);
     }
 
     await app.close();

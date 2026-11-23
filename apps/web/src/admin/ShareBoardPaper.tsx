@@ -43,9 +43,6 @@ const ROOM_TYPE_MINISTRY_LABELS: Record<string, string> = {
 /**
  * Maps a roomType key to its human-readable ministry/office label.
  */
-/**
- * Maps a roomType key to its human-readable ministry/office label.
- */
 export function ministryLabelForRoomType(roomType?: string): string {
   return (roomType && ROOM_TYPE_MINISTRY_LABELS[roomType]) || "Diretoria";
 }
@@ -78,8 +75,11 @@ export function ShareBoardSheet({
       </header>
 
       <ol className="share-paper-members">
-        {entries.map((entry) => (
-          <li key={`${entry.officeLabel}-${entry.winnerName}`} className="share-paper-member">
+        {entries.map((entry, index) => (
+          <li
+            key={`${entry.officeLabel}-${entry.winnerName}-${index}`}
+            className="share-paper-member"
+          >
             <span className="share-paper-office">{entry.officeLabel}</span>
             <div className="share-paper-avatar" aria-hidden="true">
               {entry.winnerPhotoUrl ? (

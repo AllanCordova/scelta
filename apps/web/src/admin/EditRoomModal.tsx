@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { RoomRequestError, updateRoom } from "./rooms-api";
-import type { QuorumUnit, RoomSummary } from "./types";
+import type { QuorumUnit, RoomDetail, RoomEntryMode, RoomSummary } from "./types";
 
 type EditRoomModalProps = {
   apiBase: string;
@@ -19,6 +19,9 @@ const editRoomSchema = z
     quorumUnit: z.enum(["absolute", "percent"]),
     quorumValue: z.number().int().min(1, "Informe um quórum mínimo válido."),
     status: z.enum(["draft", "open", "test", "closed"]),
+    entryMode: z.enum(["codigo", "aprovacao"]),
+    maxParticipants: z.number().int().min(1).max(100000).nullable(),
+    vacancies: z.number().int().min(1).max(50).optional(),
   })
   .superRefine((data, ctx) => {
     if (data.quorumUnit === "percent" && data.quorumValue > 100) {
@@ -72,17 +75,47 @@ function EditRoomForm({
   );
   const [quorumUnit, setQuorumUnit] = useState<QuorumUnit>(room.quorumUnit);
   const [quorumValue, setQuorumValue] = useState(String(room.quorumValue));
+  const [entryMode, setEntryMode] = useState<RoomEntryMode>(room.entryMode ?? "codigo");
+  const [maxParticipantsInput, setMaxParticipantsInput] = useState(
+    typeof room.maxParticipants === "number" && room.maxParticipants > 0
+      ? String(room.maxParticipants)
+      : "",
+  );
+  const canConfigureVacancies =
+    room.roomType === "elder" || room.roomType === "deacon" || room.roomType === "custom";
+  const hasRounds = Boolean((room as Partial<RoomDetail>).hasRounds || room.round);
+  const [vacanciesInput, setVacanciesInput] = useState(String(room.vacancies ?? 1));
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    const trimmedMax = maxParticipantsInput.trim();
+    if (trimmedMax.length > 0 && !/^\d+$/.test(trimmedMax)) {
+      setError("Informe um limite válido de participantes (número inteiro).");
+      return;
+    }
+    const maxParticipants = trimmedMax.length > 0 ? Number(trimmedMax) : null;
+
+    let vacancies: number | undefined;
+    if (canConfigureVacancies && !hasRounds) {
+      const trimmedVacancies = vacanciesInput.trim();
+      if (!/^\d+$/.test(trimmedVacancies)) {
+        setError("Informe um número de vagas válido (entre 1 e 50).");
+        return;
+      }
+      vacancies = Number(trimmedVacancies);
+    }
+
     const parsed = editRoomSchema.safeParse({
       title,
       quorumUnit,
       quorumValue: Number(quorumValue),
       status,
+      entryMode,
+      maxParticipants,
+      ...(vacancies !== undefined ? { vacancies } : {}),
     });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Revise os dados da sala.");
@@ -101,6 +134,13 @@ function EditRoomForm({
         setError("Quórum inválido para a unidade selecionada.");
       } else if (err instanceof RoomRequestError && err.errorCode === "cannot_open_test_room") {
         setError("Salas com entradas ou votos simulados não podem ser mudadas para Aberta.");
+      } else if (err instanceof RoomRequestError && err.errorCode === "room_closed") {
+        setError("Esta sala já foi encerrada e não aceita alterações.");
+      } else if (
+        err instanceof RoomRequestError &&
+        err.errorCode === "vacancies_locked_after_round"
+      ) {
+        setError("Não é possível alterar o número de vagas após iniciar um escrutínio.");
       } else {
         setError("Não foi possível atualizar a sala.");
       }
@@ -173,6 +213,44 @@ function EditRoomForm({
                 onChange={(event) => setQuorumValue(event.target.value)}
               />
             </div>
+            <div>
+              <label htmlFor="edit-room-entry-mode">Modo de entrada</label>
+              <select
+                id="edit-room-entry-mode"
+                value={entryMode}
+                onChange={(event) => setEntryMode(event.target.value as RoomEntryMode)}
+              >
+                <option value="codigo">Cartão com código</option>
+                <option value="aprovacao">Aprovação da mesa</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="edit-room-max-participants">Limite de participantes</label>
+              <input
+                id="edit-room-max-participants"
+                type="number"
+                min={1}
+                max={100000}
+                value={maxParticipantsInput}
+                onChange={(event) => setMaxParticipantsInput(event.target.value)}
+                placeholder="Padrão: tamanho do rol"
+              />
+            </div>
+            {canConfigureVacancies ? (
+              <div>
+                <label htmlFor="edit-room-vacancies">Número de vagas</label>
+                <input
+                  id="edit-room-vacancies"
+                  data-testid="edit-room-vacancies-input"
+                  type="number"
+                  min={1}
+                  max={50}
+                  disabled={hasRounds}
+                  value={vacanciesInput}
+                  onChange={(event) => setVacanciesInput(event.target.value)}
+                />
+              </div>
+            ) : null}
             <div>
               <p className="field-hint">
                 Eleitores aptos (calculado pelo rol): {room.eligibleCount}

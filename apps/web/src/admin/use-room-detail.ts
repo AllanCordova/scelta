@@ -87,6 +87,8 @@ export function useRoomDetail(roomId: string, refreshTick: number) {
     socket.on("presence", handlePresence);
     socket.on("round:state", handleRoomActivity);
     socket.on("ballot:activity", handleRoomActivity);
+    socket.on("entry-requests:updated", handleRoomActivity);
+    socket.on("telao:updated", handleRoomActivity);
 
     return () => {
       cancelled = true;
@@ -97,6 +99,8 @@ export function useRoomDetail(roomId: string, refreshTick: number) {
       socket.off("presence", handlePresence);
       socket.off("round:state", handleRoomActivity);
       socket.off("ballot:activity", handleRoomActivity);
+      socket.off("entry-requests:updated", handleRoomActivity);
+      socket.off("telao:updated", handleRoomActivity);
       socket.disconnect();
     };
   }, [roomId, refreshTick, isRoomActive]);

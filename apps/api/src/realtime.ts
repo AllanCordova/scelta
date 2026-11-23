@@ -51,6 +51,8 @@ export type PresencePublisher = {
   publishChatMessage?(roomId: string, message: ChatMessageBroadcast): void;
   publishChatConfig?(roomId: string, config: Omit<ChatConfigBroadcast, "roomId">): void;
   publishChatMessageDeleted?(roomId: string, messageId: string): void;
+  publishEntryRequestsUpdated?(roomId: string): void;
+  publishTelaoUpdated?(roomId: string): void;
 };
 
 export type PresenceUpdate = PresenceSnapshot & {
@@ -92,6 +94,12 @@ export function createSocketPresencePublisher(io: Server): PresencePublisher {
     },
     publishChatMessageDeleted(roomId, messageId) {
       io.to(`room:${roomId}`).emit("chat:deleted", { roomId, messageId });
+    },
+    publishEntryRequestsUpdated(roomId) {
+      io.to(`room:${roomId}`).emit("entry-requests:updated", { roomId });
+    },
+    publishTelaoUpdated(roomId) {
+      io.to(`room:${roomId}`).emit("telao:updated", { roomId });
     },
   };
 }

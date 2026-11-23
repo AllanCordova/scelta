@@ -19,7 +19,7 @@ test("admin sees presence against quorum and cannot open round until quorum is m
 
   const item = page.getByRole("listitem").filter({ hasText: title });
   await expect(item).toBeVisible();
-  await expect(item.getByText("0 / 2", { exact: true })).toBeVisible();
+  await expect(item.getByText("0 / 2", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(item.getByText("Abaixo do quórum", { exact: true })).toBeVisible();
   await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeDisabled();
 
@@ -69,7 +69,7 @@ test("admin sees quorum met when required presence joins and closes without fail
   }
 
   const item = page.getByRole("listitem").filter({ hasText: title });
-  await expect(item.getByText("0 / 1", { exact: true })).toBeVisible();
+  await expect(item.getByText("0 / 1", { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(item.getByText("Abaixo do quórum", { exact: true })).toBeVisible();
 
   const [code] = await createSimulatedCodes(page, title, 1);

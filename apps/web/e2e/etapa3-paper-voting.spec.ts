@@ -70,6 +70,7 @@ test("etapa 3: paper voter mode, paper tally form, close guard, and combined onl
 
   await page.goto(`/admin/salas/${room.id}`);
   await expect(page.getByRole("heading", { name: roomTitle })).toBeVisible();
+  await page.getByRole("tab", { name: "Preparar" }).click();
 
   const rosterList = page.getByRole("list", { name: "Rol da sala" });
   await expect(rosterList).toBeVisible();
@@ -91,7 +92,6 @@ test("etapa 3: paper voter mode, paper tally form, close guard, and combined onl
   await paperConfirmDialog.getByRole("button", { name: "Confirmar voto em papel" }).click();
 
   await expect(page.getByTestId("roster-paper-count")).toHaveText("Papel: 1");
-  await expect(page.getByTestId("room-paper-count")).toHaveText("Papel: 1");
   await expect(paperRow.getByTestId("paper-voter-badge")).toHaveText("Papel");
 
   // Old code of paper voter must be rejected (403)
@@ -107,8 +107,9 @@ test("etapa 3: paper voter mode, paper tally form, close guard, and combined onl
   });
   expect(onlineJoinRes.ok()).toBe(true);
 
-  // Open scrutiny
+  // Open scrutiny -> transitions to Conduzir tab
   await page.getByRole("button", { name: "Abrir escrutínio" }).click();
+  await expect(page.getByTestId("room-paper-count")).toHaveText("Papel: 1");
   await expect(page.getByRole("button", { name: "Encerrar escrutínio" })).toBeVisible();
   await expect(page.getByTestId("paper-tally-panel")).toBeVisible();
 
@@ -126,8 +127,9 @@ test("etapa 3: paper voter mode, paper tally form, close guard, and combined onl
   });
   expect(ballotRes.ok()).toBe(true);
 
-  // Paper voter is NOT counted as pending online -> 0 Membros Aguardando
-  await expect(page.getByText("0 Membros Aguardando")).toBeVisible();
+  // Paper voter is NOT counted as pending online -> Faltam Votar KPI shows 0
+  const pendingKpi = page.locator(".detail-kpi-card").filter({ hasText: "Faltam Votar" });
+  await expect(pendingKpi.locator(".detail-kpi-number")).toHaveText("0");
 
   // Try closing without paper tally -> verify "Urna de papel sem lançamento" dialog appears, cancel it
   await page.getByRole("button", { name: "Encerrar escrutínio" }).click();

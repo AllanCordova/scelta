@@ -18,14 +18,15 @@ export type PaperTallyFormValue = {
 export type PaperTallyPanelProps = {
   candidates: readonly PaperTallyCandidate[];
   paperVotersCount: number;
+  vacancies?: number;
   initialTally?: RoundPaperTally | null;
   disabled?: boolean;
   onSave: (payload: PaperTallyFormValue) => Promise<void>;
 };
 
 type PaperTallyValidation =
-  | { valid: true; totalMarks: number }
-  | { valid: false; totalMarks: number; message: string };
+  | { valid: true; totalMarks: number; candidateSum: number; validBallots: number }
+  | { valid: false; totalMarks: number; candidateSum: number; validBallots: number; message: string };
 
 function parseCountInput(raw: string): number {
   if (raw.trim() === "") {
@@ -39,12 +40,14 @@ function validatePaperTallyForm(
   value: PaperTallyFormValue,
   paperVotersCount: number,
   eligibleCandidateIds: readonly string[],
+  vacancies = 1,
 ): PaperTallyValidation {
   const candidateSum = eligibleCandidateIds.reduce(
     (sum, id) => sum + (value.candidateVotes[id] ?? 0),
     0,
   );
   const totalMarks = candidateSum + value.blankVotes + value.nullVotes;
+  const validBallots = Math.max(0, value.ballotCount - value.blankVotes - value.nullVotes);
 
   if (
     value.ballotCount < 0 ||
@@ -55,6 +58,8 @@ function validatePaperTallyForm(
     return {
       valid: false,
       totalMarks,
+      candidateSum,
+      validBallots,
       message: "Todos os campos devem ser números inteiros não negativos.",
     };
   }
@@ -63,6 +68,8 @@ function validatePaperTallyForm(
     return {
       valid: false,
       totalMarks,
+      candidateSum,
+      validBallots,
       message: `O total de cédulas de papel (${value.ballotCount}) excede os eleitores em papel (${paperVotersCount}).`,
     };
   }
@@ -71,19 +78,46 @@ function validatePaperTallyForm(
     return {
       valid: false,
       totalMarks,
+      candidateSum,
+      validBallots,
       message: "A soma de votos em branco e nulos excede o total de cédulas de papel.",
     };
+  }
+
+  if (vacancies > 1) {
+    if (eligibleCandidateIds.some((id) => (value.candidateVotes[id] ?? 0) > validBallots)) {
+      return {
+        valid: false,
+        totalMarks,
+        candidateSum,
+        validBallots,
+        message: `Nenhum candidato pode receber mais votos do que as cédulas válidas (${validBallots}).`,
+      };
+    }
+    const maxAllowedMarks = vacancies * validBallots;
+    if (candidateSum > maxAllowedMarks) {
+      return {
+        valid: false,
+        totalMarks,
+        candidateSum,
+        validBallots,
+        message: `O total de marcações (${candidateSum}) excede o máximo permitido (${maxAllowedMarks} para ${validBallots} cédulas válidas × ${vacancies} vagas).`,
+      };
+    }
+    return { valid: true, totalMarks, candidateSum, validBallots };
   }
 
   if (candidateSum !== value.ballotCount - value.blankVotes - value.nullVotes) {
     return {
       valid: false,
       totalMarks,
+      candidateSum,
+      validBallots,
       message: `A soma dos votos (${totalMarks}) deve ser igual ao total de cédulas (${value.ballotCount}).`,
     };
   }
 
-  return { valid: true, totalMarks };
+  return { valid: true, totalMarks, candidateSum, validBallots };
 }
 
 function formatRecordedAt(iso: string): string {
@@ -112,6 +146,7 @@ function buildInitialCandidateInputs(
 export function PaperTallyPanel({
   candidates,
   paperVotersCount,
+  vacancies = 1,
   initialTally,
   disabled = false,
   onSave,
@@ -153,6 +188,7 @@ export function PaperTallyPanel({
     formValue,
     paperVotersCount,
     eligibleCandidates.map((candidate) => candidate.id),
+    vacancies,
   );
 
   async function handleSubmit(event: React.FormEvent) {
@@ -273,7 +309,9 @@ export function PaperTallyPanel({
           data-testid="paper-tally-validation"
         >
           {validation.valid
-            ? `Soma conferida: ${validation.totalMarks} de ${formValue.ballotCount} cédulas (máximo ${paperVotersCount} eleitores em papel).`
+            ? vacancies > 1
+              ? `Marcações nos candidatos: ${validation.candidateSum} (máx. ${vacancies * validation.validBallots} para ${validation.validBallots} cédulas válidas × ${vacancies} vagas).`
+              : `Soma conferida: ${validation.totalMarks} de ${formValue.ballotCount} cédulas (máximo ${paperVotersCount} eleitores em papel).`
             : validation.message}
         </p>
 

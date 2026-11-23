@@ -1,11 +1,13 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   auditEvents,
+  ballotMarks,
   ballots,
   candidates,
   members,
   participants,
   roomChatMessages,
+  roomEntryRequests,
   roomMemberCodes,
   roomRoster,
   rooms,
@@ -16,6 +18,7 @@ import {
 } from "@scelta/db";
 import {
   canCastBallot,
+  canEnterRoom,
   canJoinRoom,
   canManageRoomCandidates,
   canOpenRound,
@@ -31,9 +34,11 @@ import {
   normalizeRoomShortCode,
   ROUND_RESULTS,
   tallyRoundVotes,
+  validateBallotMarks,
   validatePaperTally,
   type MemberSocietyFlags,
   type QuorumUnit,
+  type RoomEntryMode,
   type RoomStatus,
   type RoomType,
   type RoundResult,
@@ -43,6 +48,7 @@ import {
 import { and, asc, count, desc, eq, gte, inArray, isNull, ne, or } from "drizzle-orm";
 import { findChurchByName, getOrCreateChurch, isUniqueViolation } from "../churches/church-store.js";
 import { generateAccessCode } from "./access-code.js";
+import { countRoomTotalPresent, createApprovalEntryStore } from "./approval-entry-store.js";
 import { createInviteToken } from "./invite-token.js";
 import { quorumStatus } from "./quorum-status.js";
 import type {
@@ -63,7 +69,15 @@ import type {
 const INVITE_TOKEN_ATTEMPTS = 8;
 
 export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRepository {
+  const approvalEntryStore = createApprovalEntryStore({
+    db,
+    churchName,
+    insertAuditEvent,
+  });
+
   return {
+    ...approvalEntryStore,
+
     async createRoom(room) {
       const churchId = await getOrCreateChurch(db, churchName);
 
@@ -105,6 +119,11 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
                 inviteToken,
                 shortCode,
                 status: room.status,
+                vacancies: room.vacancies ?? 1,
+                entryMode: room.entryMode ?? "codigo",
+                entryOpen: room.entryOpen ?? true,
+                maxParticipants: room.maxParticipants ?? null,
+                showLiveCandidateTally: room.showLiveCandidateTally ?? false,
               })
               .returning();
 
@@ -160,6 +179,11 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
                 quorumUnit: row.quorumUnit,
                 eligibleCount: row.eligibleCount,
                 status: row.status,
+                vacancies: row.vacancies,
+                entryMode: row.entryMode,
+                entryOpen: row.entryOpen,
+                maxParticipants: row.maxParticipants,
+                showLiveCandidateTally: row.showLiveCandidateTally,
               },
               { churchId, roomTitle: row.title },
             );
@@ -253,6 +277,21 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       if (input.status !== undefined) {
         patch.status = input.status;
       }
+      if (input.vacancies !== undefined) {
+        patch.vacancies = input.vacancies;
+      }
+      if (input.entryMode !== undefined) {
+        patch.entryMode = input.entryMode;
+      }
+      if (input.entryOpen !== undefined) {
+        patch.entryOpen = input.entryOpen;
+      }
+      if (input.maxParticipants !== undefined) {
+        patch.maxParticipants = input.maxParticipants;
+      }
+      if (input.showLiveCandidateTally !== undefined) {
+        patch.showLiveCandidateTally = input.showLiveCandidateTally;
+      }
       if (input.reactionsEnabled !== undefined) {
         patch.reactionsEnabled = input.reactionsEnabled;
       }
@@ -317,6 +356,53 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             {
               previous: existing.status,
               next: updated.status,
+            },
+            { churchId: church.id, roomTitle: updated.title },
+          );
+        }
+
+        if (existing.entryOpen !== updated.entryOpen) {
+          await insertAuditEvent(
+            tx,
+            updated.id,
+            updated.entryOpen ? "entry_opened" : "entry_closed",
+            {
+              entryOpen: updated.entryOpen,
+            },
+            { churchId: church.id, roomTitle: updated.title },
+          );
+        }
+
+        if (
+          existing.entryMode !== updated.entryMode ||
+          existing.maxParticipants !== updated.maxParticipants
+        ) {
+          await insertAuditEvent(
+            tx,
+            updated.id,
+            "entry_config_changed",
+            {
+              previous: {
+                entryMode: existing.entryMode,
+                maxParticipants: existing.maxParticipants,
+              },
+              next: {
+                entryMode: updated.entryMode,
+                maxParticipants: updated.maxParticipants,
+              },
+            },
+            { churchId: church.id, roomTitle: updated.title },
+          );
+        }
+
+        if (existing.showLiveCandidateTally !== updated.showLiveCandidateTally) {
+          await insertAuditEvent(
+            tx,
+            updated.id,
+            "live_candidate_tally_toggled",
+            {
+              previous: existing.showLiveCandidateTally,
+              next: updated.showLiveCandidateTally,
             },
             { churchId: church.id, roomTitle: updated.title },
           );
@@ -423,12 +509,21 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .where(eq(rounds.roomId, roomId));
         const roundIds = roomRoundRows.map((round) => round.id);
         if (roundIds.length > 0) {
+          const roomBallots = await tx
+            .select({ id: ballots.id })
+            .from(ballots)
+            .where(inArray(ballots.roundId, roundIds));
+          const ballotIds = roomBallots.map((b) => b.id);
+          if (ballotIds.length > 0) {
+            await tx.delete(ballotMarks).where(inArray(ballotMarks.ballotId, ballotIds));
+          }
           await tx.delete(roundPaperTallies).where(inArray(roundPaperTallies.roundId, roundIds));
           await tx.delete(ballots).where(inArray(ballots.roundId, roundIds));
           await tx.delete(voteReceipts).where(inArray(voteReceipts.roundId, roundIds));
         }
 
         await tx.delete(roomChatMessages).where(eq(roomChatMessages.roomId, roomId));
+        await tx.delete(roomEntryRequests).where(eq(roomEntryRequests.roomId, roomId));
         await tx.delete(rounds).where(eq(rounds.roomId, roomId));
         await tx.delete(candidates).where(eq(candidates.roomId, roomId));
         await tx.delete(participants).where(eq(participants.roomId, roomId));
@@ -452,9 +547,14 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
                 title: rooms.title,
                 status: rooms.status,
                 churchId: rooms.churchId,
+                entryMode: rooms.entryMode,
+                entryOpen: rooms.entryOpen,
+                maxParticipants: rooms.maxParticipants,
+                eligibleCount: rooms.eligibleCount,
               })
               .from(rooms)
               .where(eq(rooms.id, roomId))
+              .for("update")
               .limit(1);
             const room = roomRows[0];
             return joinParticipantInTransaction(tx, roomId, room, rawCode, joinKeyHash);
@@ -481,6 +581,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
               .select()
               .from(rooms)
               .where(eq(rooms.shortCode, normalized))
+              .for("update")
               .limit(1);
             const room = roomRows[0];
             if (!room) {
@@ -493,7 +594,16 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             const result = await joinParticipantInTransaction(
               tx,
               room.id,
-              { id: room.id, title: room.title, status: room.status, churchId: room.churchId },
+              {
+                id: room.id,
+                title: room.title,
+                status: room.status,
+                churchId: room.churchId,
+                entryMode: room.entryMode,
+                entryOpen: room.entryOpen,
+                maxParticipants: room.maxParticipants,
+                eligibleCount: room.eligibleCount,
+              },
               rawCode,
               joinKeyHash,
             );
@@ -865,35 +975,62 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
     },
 
     async expelParticipants(roomId, participantId) {
-      const presentOnly = and(eq(participants.roomId, roomId), eq(participants.isPresent, true));
-      const updated = await db
-        .update(participants)
-        .set({ isPresent: false })
-        .where(participantId ? and(presentOnly, eq(participants.id, participantId)) : presentOnly)
-        .returning({ id: participants.id });
-      if (updated.length > 0) {
-        const roomRows = await db
-          .select({ churchId: rooms.churchId, title: rooms.title })
+      return db.transaction(async (tx) => {
+        const roomRows = await tx
+          .select({ churchId: rooms.churchId, title: rooms.title, entryMode: rooms.entryMode })
           .from(rooms)
           .where(eq(rooms.id, roomId))
           .limit(1);
         const room = roomRows[0];
-        await insertAuditEvent(
-          db,
-          roomId,
-          "participant_expelled",
-          {
-            expelledCount: updated.length,
-            allPresent: participantId === undefined,
-          },
-          {
-            churchId: room?.churchId ?? null,
-            roomTitle: room?.title ?? null,
-            actorRole: "admin",
-          },
-        );
-      }
-      return updated.length;
+        const isApprovalMode = room?.entryMode === "aprovacao";
+
+        const presentOnly = and(eq(participants.roomId, roomId), eq(participants.isPresent, true));
+        const updated = await tx
+          .update(participants)
+          .set(isApprovalMode ? { isPresent: false, joinKeyHash: null } : { isPresent: false })
+          .where(participantId ? and(presentOnly, eq(participants.id, participantId)) : presentOnly)
+          .returning({ id: participants.id, rosterEntryId: participants.rosterEntryId });
+
+        if (isApprovalMode && updated.length > 0) {
+          const releasedRosterIds = updated
+            .map((row) => row.rosterEntryId)
+            .filter((id): id is string => id !== null);
+          if (releasedRosterIds.length > 0) {
+            await tx
+              .update(roomEntryRequests)
+              .set({
+                status: "cancelled",
+                disputedAttemptCount: 0,
+                decidedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(roomEntryRequests.roomId, roomId),
+                  inArray(roomEntryRequests.rosterEntryId, releasedRosterIds),
+                  inArray(roomEntryRequests.status, ["pending", "approved"]),
+                ),
+              );
+          }
+        }
+
+        if (updated.length > 0) {
+          await insertAuditEvent(
+            tx,
+            roomId,
+            "participant_expelled",
+            {
+              expelledCount: updated.length,
+              allPresent: participantId === undefined,
+            },
+            {
+              churchId: room?.churchId ?? null,
+              roomTitle: room?.title ?? null,
+              actorRole: "admin",
+            },
+          );
+        }
+        return updated.length;
+      });
     },
 
     async releaseParticipantSession(roomId, participantId, actorAdminId) {
@@ -916,6 +1053,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         const participantRows = await tx
           .select({
             id: participants.id,
+            rosterEntryId: participants.rosterEntryId,
             displayName: participants.displayName,
           })
           .from(participants)
@@ -939,6 +1077,24 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         const updated = updatedRows[0];
         if (!updated) {
           return { ok: false as const, reason: "participant_not_found" as const };
+        }
+
+        if (participant.rosterEntryId) {
+          await tx
+            .update(roomEntryRequests)
+            .set({
+              status: "cancelled",
+              disputedAttemptCount: 0,
+              decidedByAdminId: actorAdminId,
+              decidedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(roomEntryRequests.roomId, roomId),
+                eq(roomEntryRequests.rosterEntryId, participant.rosterEntryId),
+                inArray(roomEntryRequests.status, ["pending", "approved"]),
+              ),
+            );
         }
 
         await insertAuditEvent(
@@ -1192,13 +1348,22 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           isCommunicant = member.isCommunicant;
           isMale = member.isMale;
           societyFlags = member.societyFlags ?? {};
-          isEligibleVoter = member.isCommunicant;
+          isEligibleVoter = isMemberEligibleVoter(
+            {
+              isCommunicant: member.isCommunicant,
+              societyFlags: (member.societyFlags ?? {}) as MemberSocietyFlags,
+            },
+            roomRow.roomType as RoomType,
+          );
         } else {
           fullName = input.fullName.trim();
           birthDate = input.birthDate ? new Date(`${input.birthDate}T00:00:00.000Z`) : null;
           isCommunicant = input.isCommunicant ?? true;
           isMale = input.isMale ?? null;
-          isEligibleVoter = isCommunicant;
+          isEligibleVoter =
+            roomRow.roomType === "upa_board" || roomRow.roomType === "ump_board"
+              ? true
+              : isCommunicant;
         }
 
         const [insertedEntry] = await tx
@@ -1357,6 +1522,17 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .set({ isPresent: false, joinKeyHash: null })
           .where(and(eq(participants.roomId, roomId), or(...participantMatchers)));
 
+        await tx
+          .update(roomEntryRequests)
+          .set({ status: "cancelled", disputedAttemptCount: 0, decidedAt: now })
+          .where(
+            and(
+              eq(roomEntryRequests.roomId, roomId),
+              eq(roomEntryRequests.rosterEntryId, entry.id),
+              inArray(roomEntryRequests.status, ["pending", "approved"]),
+            ),
+          );
+
         const eligibleCount = await recalculateRoomEligibleCount(tx, roomId);
 
         await insertAuditEvent(
@@ -1508,6 +1684,17 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             .update(participants)
             .set({ isPresent: false, joinKeyHash: null })
             .where(and(eq(participants.roomId, roomId), or(...participantMatchers)));
+
+          await tx
+            .update(roomEntryRequests)
+            .set({ status: "cancelled", disputedAttemptCount: 0, decidedAt: now })
+            .where(
+              and(
+                eq(roomEntryRequests.roomId, roomId),
+                eq(roomEntryRequests.rosterEntryId, entry.id),
+                inArray(roomEntryRequests.status, ["pending", "approved"]),
+              ),
+            );
 
           const latestCodes = await tx
             .select({
@@ -1845,12 +2032,19 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           return { ok: false as const, reason: "candidates_locked_after_round" as const };
         }
 
-        const ballotRefs = await tx
-          .select({ id: ballots.id })
-          .from(ballots)
-          .where(eq(ballots.candidateId, candidateId))
-          .limit(1);
-        if (ballotRefs.length > 0) {
+        const [ballotRefs, markRefs] = await Promise.all([
+          tx
+            .select({ id: ballots.id })
+            .from(ballots)
+            .where(eq(ballots.candidateId, candidateId))
+            .limit(1),
+          tx
+            .select({ id: ballotMarks.id })
+            .from(ballotMarks)
+            .where(eq(ballotMarks.candidateId, candidateId))
+            .limit(1),
+        ]);
+        if (ballotRefs.length > 0 || markRefs.length > 0) {
           return { ok: false as const, reason: "candidates_locked_after_round" as const };
         }
 
@@ -1887,7 +2081,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
       });
     },
 
-    async openRound(roomId, eligibleCandidateIds, officeLabel) {
+    async openRound(roomId, eligibleCandidateIds, officeLabel, vacancies) {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const existing = await db.select().from(rounds).where(eq(rounds.roomId, roomId));
         if (existing.some((row) => row.status === "open")) {
@@ -1903,6 +2097,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
                 roomId,
                 number,
                 officeLabel: officeLabel ?? null,
+                vacancies: vacancies ?? 1,
                 status: "open",
                 openedAt: new Date(),
               })
@@ -1952,6 +2147,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           {
             roundId: row.id,
             roundNumber: row.number,
+            vacancies: row.vacancies,
             ...(row.officeLabel !== null ? { officeLabel: row.officeLabel } : {}),
           },
           {
@@ -1986,12 +2182,17 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           return null;
         }
 
+        const winnerIds =
+          closeOptions?.winnerCandidateIds ??
+          (closeOptions?.winnerCandidateId ? [closeOptions.winnerCandidateId] : []);
+
         const updated = await tx
           .update(rounds)
           .set({
             status: "closed",
             outcome,
-            winnerCandidateId: closeOptions?.winnerCandidateId ?? null,
+            winnerCandidateId: winnerIds[0] ?? null,
+            winnerCandidateIds: winnerIds,
             tieBreakReason: closeOptions?.tieBreakReason ?? null,
             didNotVoteCount: closeOptions?.didNotVoteCount ?? null,
             closedAt: new Date(),
@@ -2104,13 +2305,8 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         let didNotVoteCount = 0;
 
         if (quorum.quorumMet) {
-          const ballotRows = await tx
-            .select({ candidateId: ballots.candidateId })
-            .from(ballots)
-            .where(eq(ballots.roundId, roundId))
-            .orderBy(asc(ballots.candidateId));
-          const ballotCandidateIds = ballotRows.map((item) => item.candidateId);
-          const onlineVotedCount = ballotCandidateIds.length;
+          const ballotMarksList = await loadRoundBallotMarks(tx, roundId);
+          const onlineVotedCount = ballotMarksList.length;
 
           if (onlineVotedCount < onlinePresentCount && !closeOptions?.confirmPending) {
             return {
@@ -2155,8 +2351,9 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           const eligibleCandidates = candidateRows.map(toStoredCandidate);
 
           if (eligibleCandidates.length > 0) {
-            tally = tallyRoundVotes(eligibleCandidates, ballotCandidateIds, {
+            tally = tallyRoundVotes(eligibleCandidates, ballotMarksList, {
               roundNumber: officeRoundNumber,
+              vacancies: roundRow.vacancies,
               ...(didNotVoteCount > 0 ? { didNotVoteCount } : {}),
               ...(paperTallyRow
                 ? {
@@ -2179,6 +2376,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             status: "closed",
             outcome,
             winnerCandidateId: tally?.winnerId ?? null,
+            winnerCandidateIds: tally?.winnerIds ?? [],
             tieBreakReason: tally?.tieBreakReason ?? null,
             didNotVoteCount: quorum.quorumMet ? didNotVoteCount : null,
             closedAt: new Date(),
@@ -2197,12 +2395,17 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           {
             roundId: closedRow.id,
             roundNumber: closedRow.number,
+            vacancies: closedRow.vacancies,
             outcome: closedRow.outcome,
             didNotVoteCount,
             ...(closedRow.officeLabel !== null ? { officeLabel: closedRow.officeLabel } : {}),
             ...(closedRow.tieBreakReason ? { tieBreakReason: closedRow.tieBreakReason } : {}),
             ...(closedRow.winnerCandidateId
               ? { winnerCandidateId: closedRow.winnerCandidateId }
+              : {}),
+            ...(Array.isArray(closedRow.winnerCandidateIds) &&
+            closedRow.winnerCandidateIds.length > 0
+              ? { winnerCandidateIds: closedRow.winnerCandidateIds }
               : {}),
           },
           {
@@ -2274,6 +2477,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         const validation = validatePaperTally(paperTally, {
           paperVotersCount,
           validCandidateIds: eligibleCandidateRows.map((item) => item.id),
+          maxMarksPerBallot: roundRow.vacancies,
         });
         if (!validation.valid) {
           return {
@@ -2366,6 +2570,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           .set({
             outcome: "elected",
             winnerCandidateId,
+            winnerCandidateIds: [winnerCandidateId],
             tieBreakReason: "admin_tiebreak",
           })
           .where(
@@ -2425,22 +2630,21 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           return null;
         }
 
-        const ballotRows = await tx
-          .select({ candidateId: ballots.candidateId })
-          .from(ballots)
-          .where(eq(ballots.roundId, roundId));
+        const ballotMarksList = await loadRoundBallotMarks(tx, roundId);
 
         let blankVotes = 0;
         const byCandidate: Record<string, number> = {};
-        for (const row of ballotRows) {
-          if (row.candidateId === null) {
+        for (const marks of ballotMarksList) {
+          if (marks.length === 0) {
             blankVotes += 1;
           } else {
-            byCandidate[row.candidateId] = (byCandidate[row.candidateId] ?? 0) + 1;
+            for (const candidateId of marks) {
+              byCandidate[candidateId] = (byCandidate[candidateId] ?? 0) + 1;
+            }
           }
         }
         const annulledTotals = {
-          totalBallots: ballotRows.length,
+          totalBallots: ballotMarksList.length,
           blankVotes,
           byCandidate,
         };
@@ -2467,6 +2671,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
             roomId,
             number: nextNumber,
             officeLabel: existing.officeLabel ?? null,
+            vacancies: existing.vacancies ?? 1,
             status: "open",
             outcome: null,
             openedAt: now,
@@ -2555,6 +2760,77 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         );
 
         return toStoredRound(row);
+      });
+    },
+
+    async revealRoundResult(roomId, roundId) {
+      const church = await findChurchByName(db, churchName);
+      if (!church) {
+        return { ok: false as const, reason: "room_not_found" as const };
+      }
+
+      return db.transaction(async (tx) => {
+        const [roomMeta] = await tx
+          .select({ id: rooms.id, churchId: rooms.churchId, title: rooms.title })
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.churchId, church.id)))
+          .limit(1);
+        if (!roomMeta) {
+          return { ok: false as const, reason: "room_not_found" as const };
+        }
+
+        const [existing] = await tx
+          .select()
+          .from(rounds)
+          .where(and(eq(rounds.id, roundId), eq(rounds.roomId, roomId)))
+          .for("update")
+          .limit(1);
+        if (!existing) {
+          return { ok: false as const, reason: "round_not_found" as const };
+        }
+        if (existing.status !== "closed") {
+          return { ok: false as const, reason: "round_not_closed" as const };
+        }
+
+        const restartCounts = await loadRestartCountsByRoom(tx, [roomId]);
+        if (existing.resultRevealed) {
+          return {
+            ok: true as const,
+            round: toStoredRound(existing, restartCounts.get(existing.id) ?? 0),
+            alreadyRevealed: true,
+          };
+        }
+
+        const [updated] = await tx
+          .update(rounds)
+          .set({ resultRevealed: true })
+          .where(eq(rounds.id, existing.id))
+          .returning();
+        if (!updated) {
+          throw new Error("Reveal round update returned no row");
+        }
+
+        await insertAuditEvent(
+          tx,
+          roomId,
+          "round_result_revealed",
+          {
+            roundId: updated.id,
+            roundNumber: updated.number,
+            ...(updated.officeLabel !== null ? { officeLabel: updated.officeLabel } : {}),
+          },
+          {
+            churchId: roomMeta.churchId,
+            roomTitle: roomMeta.title,
+            actorRole: "admin",
+          },
+        );
+
+        return {
+          ok: true as const,
+          round: toStoredRound(updated, restartCounts.get(updated.id) ?? 0),
+          alreadyRevealed: false,
+        };
       });
     },
 
@@ -2792,20 +3068,29 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           }
         }
 
-        let isCandidateEligible = true;
-        if (input.candidateId !== null) {
-          const candidateRows = await tx
-            .select()
-            .from(candidates)
-            .where(
-              and(
-                eq(candidates.id, input.candidateId),
-                eq(candidates.roomId, input.roomId),
-                eq(candidates.isEligible, true),
-              ),
-            )
-            .limit(1);
-          isCandidateEligible = Boolean(candidateRows[0]);
+        const requestedMarks: readonly string[] =
+          input.candidateIds !== undefined
+            ? input.candidateIds
+            : input.candidateId !== undefined && input.candidateId !== null
+              ? [input.candidateId]
+              : [];
+
+        const eligibleCandidateRows = await tx
+          .select({ id: candidates.id })
+          .from(candidates)
+          .where(and(eq(candidates.roomId, input.roomId), eq(candidates.isEligible, true)));
+
+        const marksValidation = validateBallotMarks({
+          candidateIds: requestedMarks,
+          vacancies: round.vacancies ?? 1,
+          eligibleCandidateIds: eligibleCandidateRows.map((row) => row.id),
+        });
+        if (!marksValidation.ok) {
+          const reason =
+            marksValidation.reason === "invalid_vacancies"
+              ? "invalid_candidate"
+              : marksValidation.reason;
+          return { ok: false as const, reason };
         }
 
         const eligibility = canCastBallot({
@@ -2813,7 +3098,7 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           roundStatus: round.status,
           isParticipantPresent: Boolean(participant?.isPresent),
           hasAlreadyVoted: false,
-          isCandidateEligible,
+          isCandidateEligible: true,
         });
         if (!eligibility.ok) {
           return { ok: false as const, reason: eligibility.reason };
@@ -2831,10 +3116,28 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
           return { ok: false as const, reason: "already_voted" as const };
         }
 
-        await tx.insert(ballots).values({
-          roundId: input.roundId,
-          candidateId: input.candidateId,
-        });
+        const [insertedBallot] = await tx
+          .insert(ballots)
+          .values({
+            roundId: input.roundId,
+            candidateId:
+              marksValidation.candidateIds.length === 1
+                ? marksValidation.candidateIds[0]!
+                : null,
+          })
+          .returning({ id: ballots.id });
+        if (!insertedBallot) {
+          throw new Error("Ballot insert returned no row");
+        }
+
+        if (marksValidation.candidateIds.length > 0) {
+          await tx.insert(ballotMarks).values(
+            marksValidation.candidateIds.map((candidateId) => ({
+              ballotId: insertedBallot.id,
+              candidateId,
+            })),
+          );
+        }
 
         await insertAuditEvent(
           tx,
@@ -2887,6 +3190,10 @@ export function createDrizzleRoomRepository(db: Db, churchName: string): RoomRep
         .where(eq(ballots.roundId, roundId))
         .orderBy(asc(ballots.candidateId));
       return rows.map((row) => row.candidateId);
+    },
+
+    async listRoundBallotMarks(roundId) {
+      return loadRoundBallotMarks(db, roundId);
     },
 
     async listRoundReceiptTimestamps(roundId) {
@@ -3525,7 +3832,18 @@ type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 async function joinParticipantInTransaction(
   tx: DbTransaction,
   roomId: string,
-  room: { id: string; title: string; status: string; churchId: string } | undefined,
+  room:
+    | {
+        id: string;
+        title: string;
+        status: string;
+        churchId: string;
+        entryMode: string;
+        entryOpen: boolean;
+        maxParticipants: number | null;
+        eligibleCount: number;
+      }
+    | undefined,
   rawCode: string,
   joinKeyHash: string,
 ): Promise<JoinWithCodeResult> {
@@ -3538,7 +3856,13 @@ async function joinParticipantInTransaction(
     .for("update");
   const codeRow = codeRows[0];
   if (!codeRow) {
+    if (room && room.entryMode === "aprovacao") {
+      return { ok: false, reason: "approval_entry_required" };
+    }
     return { ok: false, reason: "invalid_access_code" };
+  }
+  if (room && room.entryMode === "aprovacao" && !codeRow.isSimulated) {
+    return { ok: false, reason: "approval_entry_required" };
   }
   if (codeRow.revokedAt !== null) {
     return { ok: false, reason: "revoked_access_code" };
@@ -3562,7 +3886,21 @@ async function joinParticipantInTransaction(
           .for("update")
           .limit(1)
       : [];
-  const existing = existingByCode[0] ?? existingByMember[0];
+  const existingByRosterEntry =
+    !existingByCode[0] && !existingByMember[0] && codeRow.rosterEntryId
+      ? await tx
+          .select()
+          .from(participants)
+          .where(
+            and(
+              eq(participants.roomId, roomId),
+              eq(participants.rosterEntryId, codeRow.rosterEntryId),
+            ),
+          )
+          .for("update")
+          .limit(1)
+      : [];
+  const existing = existingByCode[0] ?? existingByMember[0] ?? existingByRosterEntry[0];
 
   if (existing) {
     if (existing.joinKeyHash !== null && existing.joinKeyHash !== joinKeyHash) {
@@ -3575,6 +3913,28 @@ async function joinParticipantInTransaction(
     }
 
     const isSameSession = existing.joinKeyHash === joinKeyHash;
+    const isReentry = isSameSession && existing.isPresent;
+
+    if (room && !isReentry) {
+      const { totalPresent } = await countRoomTotalPresent(tx, roomId);
+      const entryCheck = canEnterRoom({
+        status: room.status,
+        entryOpen: room.entryOpen,
+        presentCount: totalPresent,
+        maxParticipants: room.maxParticipants,
+        eligibleCount: room.eligibleCount,
+        isReentry: false,
+      });
+      if (!entryCheck.allowed) {
+        if (entryCheck.reason === "entry_closed") {
+          return { ok: false, reason: "entry_closed" };
+        }
+        if (entryCheck.reason === "room_full") {
+          return { ok: false, reason: "room_capacity_reached" };
+        }
+      }
+    }
+
     const updated = await tx
       .update(participants)
       .set({
@@ -3620,6 +3980,26 @@ async function joinParticipantInTransaction(
   const existingByJoinKey = await findParticipantByJoinKey(tx, roomId, joinKeyHash);
   if (existingByJoinKey) {
     return { ok: false, reason: "access_code_in_use" };
+  }
+
+  if (room) {
+    const { totalPresent } = await countRoomTotalPresent(tx, roomId);
+    const entryCheck = canEnterRoom({
+      status: room.status,
+      entryOpen: room.entryOpen,
+      presentCount: totalPresent,
+      maxParticipants: room.maxParticipants,
+      eligibleCount: room.eligibleCount,
+      isReentry: false,
+    });
+    if (!entryCheck.allowed) {
+      if (entryCheck.reason === "entry_closed") {
+        return { ok: false, reason: "entry_closed" };
+      }
+      if (entryCheck.reason === "room_full") {
+        return { ok: false, reason: "room_capacity_reached" };
+      }
+    }
   }
 
   const inserted = await tx
@@ -3680,6 +4060,11 @@ function toStoredRoom(row: {
   inviteToken: string;
   shortCode: string;
   status: string;
+  vacancies?: number;
+  entryMode?: string;
+  entryOpen?: boolean;
+  maxParticipants?: number | null;
+  showLiveCandidateTally?: boolean;
   reactionsEnabled: boolean;
   chatMuted?: boolean;
   createdAt: Date;
@@ -3696,6 +4081,11 @@ function toStoredRoom(row: {
     inviteToken: row.inviteToken,
     shortCode: row.shortCode,
     status: row.status as RoomStatus,
+    vacancies: row.vacancies ?? 1,
+    entryMode: (row.entryMode ?? "codigo") as RoomEntryMode,
+    entryOpen: row.entryOpen ?? true,
+    maxParticipants: row.maxParticipants ?? null,
+    showLiveCandidateTally: row.showLiveCandidateTally ?? false,
     reactionsEnabled: row.reactionsEnabled,
     chatMuted: row.chatMuted ?? false,
     createdAt: row.createdAt,
@@ -3708,26 +4098,37 @@ function toStoredRound(
     roomId: string;
     number: number;
     officeLabel: string | null;
+    vacancies?: number;
     status: StoredRoundStatus;
     outcome: string | null;
     declinedCandidateId?: string | null;
     winnerCandidateId?: string | null;
+    winnerCandidateIds?: string[] | null;
     tieBreakReason?: string | null;
     didNotVoteCount?: number | null;
+    resultRevealed?: boolean;
     openedAt: Date | null;
     closedAt: Date | null;
   },
   restartCount = 0,
 ): StoredRound {
+  const winnerCandidateIds =
+    Array.isArray(row.winnerCandidateIds) && row.winnerCandidateIds.length > 0
+      ? row.winnerCandidateIds
+      : row.winnerCandidateId
+        ? [row.winnerCandidateId]
+        : [];
   return {
     id: row.id,
     roomId: row.roomId,
     number: row.number,
     officeLabel: row.officeLabel ?? null,
+    vacancies: row.vacancies ?? 1,
     status: row.status,
     outcome: toRoundResult(row.outcome),
     declinedCandidateId: row.declinedCandidateId ?? null,
-    winnerCandidateId: row.winnerCandidateId ?? null,
+    winnerCandidateId: row.winnerCandidateId ?? winnerCandidateIds[0] ?? null,
+    winnerCandidateIds,
     tieBreakReason:
       row.tieBreakReason === "age" || row.tieBreakReason === "admin_tiebreak"
         ? row.tieBreakReason
@@ -3735,10 +4136,54 @@ function toStoredRound(
     ...(row.didNotVoteCount !== undefined && row.didNotVoteCount !== null
       ? { didNotVoteCount: row.didNotVoteCount }
       : {}),
+    resultRevealed: row.resultRevealed ?? false,
     openedAt: row.openedAt,
     closedAt: row.closedAt,
     ...(restartCount > 0 ? { restartCount } : {}),
   };
+}
+
+/**
+ * Loads all cast ballots for a round as sorted candidate-id arrays without leaking insertion order.
+ */
+async function loadRoundBallotMarks(
+  executor: Pick<Db, "select">,
+  roundId: string,
+): Promise<string[][]> {
+  const ballotRows = await executor
+    .select({ id: ballots.id, candidateId: ballots.candidateId })
+    .from(ballots)
+    .where(eq(ballots.roundId, roundId));
+
+  if (ballotRows.length === 0) {
+    return [];
+  }
+
+  const ballotIds = ballotRows.map((row) => row.id);
+  const markRows = await executor
+    .select({ ballotId: ballotMarks.ballotId, candidateId: ballotMarks.candidateId })
+    .from(ballotMarks)
+    .where(inArray(ballotMarks.ballotId, ballotIds))
+    .orderBy(asc(ballotMarks.candidateId));
+
+  const marksByBallot = new Map<string, string[]>();
+  for (const mark of markRows) {
+    const list = marksByBallot.get(mark.ballotId) ?? [];
+    list.push(mark.candidateId);
+    marksByBallot.set(mark.ballotId, list);
+  }
+
+  const result: string[][] = ballotRows.map((ballot) => {
+    const marks = marksByBallot.get(ballot.id);
+    if (marks && marks.length > 0) {
+      return marks;
+    }
+    return ballot.candidateId !== null ? [ballot.candidateId] : [];
+  });
+
+  // Sort deterministically by choice combination so insertion order is never exposed.
+  result.sort((a, b) => a.join(",").localeCompare(b.join(",")));
+  return result;
 }
 
 function toStoredAuditEvent(row: {

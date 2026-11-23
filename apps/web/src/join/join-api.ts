@@ -6,6 +6,36 @@ export type JoinPreview = {
   status: string;
   canJoin: boolean;
   shortCode?: string;
+  inviteToken?: string;
+  entryMode?: "codigo" | "aprovacao";
+  entryOpen?: boolean;
+  maxParticipants?: number | null;
+  presentCount?: number;
+};
+
+export type RosterSearchEntry = {
+  rosterEntryId: string;
+  fullName: string;
+  requiresBirthDate: boolean;
+  isClaimed: boolean;
+};
+
+export type EntryRequestSubmitResult = {
+  status: "pending" | "approved";
+  requestId: string | null;
+  displayName: string;
+  inviteToken?: string;
+  shortCode?: string;
+};
+
+export type EntryRequestStatusResult = {
+  requestId: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  displayName: string;
+  title: string;
+  roomStatus: string;
+  inviteToken?: string;
+  shortCode?: string;
 };
 
 export type JoinResult = {
@@ -32,6 +62,12 @@ export type BallotTally = {
   outcome: "elected" | "no_majority";
   winnerId: string | null;
   winnerName: string | null;
+  vacancies?: number;
+  winnerIds?: string[];
+  winnerNames?: string[];
+  remainingVacancies?: number;
+  partialElection?: boolean;
+  lastVacancyTieCandidateIds?: string[];
   standings: {
     candidateId: string;
     displayName: string;
@@ -44,6 +80,8 @@ export type BallotRoundState = {
   number: number;
   officeLabel?: string | null;
   officeRoundNumber?: number;
+  vacancies?: number;
+  winnerCandidateIds?: string[];
   status: string;
   outcome: string | null;
   restartCount?: number;
@@ -63,6 +101,9 @@ export type BallotState = {
   roomId?: string;
   roomStatus: string;
   roomType?: string;
+  vacancies?: number;
+  remainingVacancies?: number;
+  electedCandidates?: { id: string; displayName: string; photoUrl?: string | null }[];
   officeBanners?: Record<string, string>;
   activeBannerUrl?: string | null;
   reactionsEnabled?: boolean;
@@ -113,6 +154,105 @@ export async function fetchJoinPreview(
     title: body.title,
     status: body.status,
     canJoin: body.canJoin,
+    ...(typeof body.shortCode === "string" ? { shortCode: body.shortCode } : {}),
+    ...(typeof body.inviteToken === "string" ? { inviteToken: body.inviteToken } : {}),
+    ...(body.entryMode === "codigo" || body.entryMode === "aprovacao"
+      ? { entryMode: body.entryMode }
+      : {}),
+    ...(typeof body.entryOpen === "boolean" ? { entryOpen: body.entryOpen } : {}),
+    ...(typeof body.maxParticipants === "number" || body.maxParticipants === null
+      ? { maxParticipants: body.maxParticipants }
+      : {}),
+    ...(typeof body.presentCount === "number" ? { presentCount: body.presentCount } : {}),
+  };
+}
+
+export async function searchJoinRoster(
+  apiBase: string,
+  target: string | JoinRouteTarget,
+  query: string,
+): Promise<RosterSearchEntry[]> {
+  const resolved = normalizeJoinTarget(target);
+  const response = await fetch(
+    `${apiBase}${joinEndpointPath(resolved)}/roster-search?q=${encodeURIComponent(query)}`,
+  );
+  if (!response.ok) {
+    throw await readError(response);
+  }
+  const body = (await response.json().catch(() => ({}))) as {
+    entries?: RosterSearchEntry[];
+  };
+  return Array.isArray(body.entries) ? body.entries : [];
+}
+
+export async function submitEntryRequest(
+  apiBase: string,
+  target: string | JoinRouteTarget,
+  payload: {
+    rosterEntryId: string;
+    joinKey: string;
+    birthDay?: number;
+    birthMonth?: number;
+  },
+): Promise<EntryRequestSubmitResult> {
+  const resolved = normalizeJoinTarget(target);
+  const response = await fetch(`${apiBase}${joinEndpointPath(resolved)}/entry-requests`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw await readError(response);
+  }
+  const body = (await response.json()) as Partial<EntryRequestSubmitResult>;
+  if (
+    (body.status !== "pending" && body.status !== "approved") ||
+    typeof body.displayName !== "string"
+  ) {
+    throw new JoinRequestError(response.status, "invalid_entry_request");
+  }
+  return {
+    status: body.status,
+    requestId: typeof body.requestId === "string" ? body.requestId : null,
+    displayName: body.displayName,
+    ...(typeof body.inviteToken === "string" ? { inviteToken: body.inviteToken } : {}),
+    ...(typeof body.shortCode === "string" ? { shortCode: body.shortCode } : {}),
+  };
+}
+
+export async function fetchEntryRequestStatus(
+  apiBase: string,
+  target: string | JoinRouteTarget,
+  requestId: string,
+  joinKey: string,
+): Promise<EntryRequestStatusResult> {
+  const resolved = normalizeJoinTarget(target);
+  const response = await fetch(
+    `${apiBase}${joinEndpointPath(resolved)}/entry-requests/${encodeURIComponent(requestId)}`,
+    {
+      headers: { "x-scelta-join-key": joinKey },
+    },
+  );
+  if (!response.ok) {
+    throw await readError(response);
+  }
+  const body = (await response.json()) as Partial<EntryRequestStatusResult>;
+  if (
+    typeof body.status !== "string" ||
+    (body.status !== "pending" &&
+      body.status !== "approved" &&
+      body.status !== "rejected" &&
+      body.status !== "cancelled")
+  ) {
+    throw new JoinRequestError(response.status, "invalid_entry_request");
+  }
+  return {
+    requestId: typeof body.requestId === "string" ? body.requestId : requestId,
+    status: body.status,
+    displayName: typeof body.displayName === "string" ? body.displayName : "",
+    title: typeof body.title === "string" ? body.title : "",
+    roomStatus: typeof body.roomStatus === "string" ? body.roomStatus : "open",
+    ...(typeof body.inviteToken === "string" ? { inviteToken: body.inviteToken } : {}),
     ...(typeof body.shortCode === "string" ? { shortCode: body.shortCode } : {}),
   };
 }
@@ -192,6 +332,12 @@ export async function fetchBallotState(
       roomId: typeof body.roomId === "string" ? body.roomId : undefined,
       roomStatus: typeof body.roomStatus === "string" ? body.roomStatus : "open",
       roomType: typeof body.roomType === "string" ? body.roomType : undefined,
+      vacancies: typeof body.vacancies === "number" ? body.vacancies : undefined,
+      remainingVacancies:
+        typeof body.remainingVacancies === "number" ? body.remainingVacancies : undefined,
+      electedCandidates: Array.isArray(body.electedCandidates)
+        ? body.electedCandidates
+        : undefined,
       officeBanners:
         body.officeBanners && typeof body.officeBanners === "object"
           ? body.officeBanners
@@ -263,12 +409,16 @@ export async function fetchVoteReceipt(
 export async function submitBallot(
   apiBase: string,
   token: string,
-  payload: { joinKey: string; candidateId: string | null },
+  payload: { joinKey: string; candidateId?: string | null; candidateIds?: string[] },
 ): Promise<BallotReceipt> {
+  const requestBody =
+    payload.candidateIds !== undefined
+      ? { joinKey: payload.joinKey, candidateIds: payload.candidateIds }
+      : { joinKey: payload.joinKey, candidateId: payload.candidateId ?? null };
   const response = await fetch(`${apiBase}/v1/join/${encodeURIComponent(token)}/ballot`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(requestBody),
   });
   if (!response.ok) {
     throw await readError(response);

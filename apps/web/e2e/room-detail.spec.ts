@@ -32,10 +32,13 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await expect(page.getByText("Votos Computados")).toBeVisible();
   await expect(page.getByText("Faltam Votar")).toBeVisible();
   await expect(page.getByText("Quórum Mínimo")).toBeVisible();
+  await expect(page.getByText("Fluxo de Presença")).toHaveCount(0);
+
+  await page.getByRole("tab", { name: "Preparar" }).click();
   await expect(page.getByText("Regimento da Eleição")).toBeVisible();
-  await expect(page.getByText("Fluxo de Presença")).toBeVisible();
-  await expect(page.locator(".candidate-name", { hasText: "Paulo Apóstolo" })).toBeVisible();
-  await expect(page.locator(".candidate-name").getByText("Silas", { exact: true })).toBeVisible();
+  const candidatesList = page.getByRole("list", { name: "Candidatos da sala" });
+  await expect(candidatesList.getByText("Paulo Apóstolo")).toBeVisible();
+  await expect(candidatesList.getByText("Silas", { exact: true })).toBeVisible();
 
   const initialInviteUrl = await page.getByLabel("Token Direto para Votantes").inputValue();
   expect(initialInviteUrl).toMatch(/\/s\//);
@@ -85,6 +88,7 @@ test("admin clicks a room card to open the room detail view and manages the scru
   await expect(page.locator(".access-code-pin", { hasText: lastPin })).toHaveCount(0);
 
   await page.goto(roomDetailUrl);
+  await page.getByRole("tab", { name: "Preparar" }).click();
   const inviteUrlValue = await page.getByLabel("Token Direto para Votantes").inputValue();
   expect(inviteUrlValue).toMatch(/\/s\//);
   // T1.2: rotating the long invite token preserves the room's short code URL
@@ -121,15 +125,23 @@ test("admin clicks a room card to open the room detail view and manages the scru
   ).toBeVisible();
 
   // Live reactivity: admin detail page updates automatically without reloading
-  await expect(page.getByText("Cédula recebida e assinada digitalmente")).toBeVisible();
+  const votedKpi = page.locator(".detail-kpi-card").filter({ hasText: "Votos Computados" });
+  await expect(votedKpi.locator(".detail-kpi-number")).toHaveText("1");
 
-  // Simulator: admin can simulate additional participants joining and casting random votes
+  // Simulator: admin can simulate additional participants joining and casting random votes from Preparar tab
+  await page.getByRole("tab", { name: "Preparar" }).click();
   await page.getByLabel("Participantes").fill("2");
   await page.getByRole("button", { name: "Simular votos" }).click();
   await expect(page.getByText("2 votos aleatórios computados.")).toBeVisible();
-  await expect(page.getByText("Cédula recebida e assinada digitalmente")).toHaveCount(3);
+
+  await page.getByRole("tab", { name: "Conduzir" }).click();
+  await expect(votedKpi.locator(".detail-kpi-number")).toHaveText("3");
 
   await page.getByRole("button", { name: "Encerrar escrutínio" }).click();
+  const pendingDialog = page.getByRole("dialog", { name: "Encerrar com votantes pendentes" });
+  if (await pendingDialog.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false)) {
+    await pendingDialog.getByRole("button", { name: "Encerrar escrutínio" }).click();
+  }
   await expect(
     page.getByText(/Eleito por maioria absoluta:|Sem maioria absoluta neste escrutínio\./i),
   ).toBeVisible();

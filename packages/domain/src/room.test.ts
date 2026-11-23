@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  canConfigureRoomVacancies,
   canManageRoomCandidates,
   canOpenRound,
   canSimulateInRoom,
   canTransitionRoomStatus,
   canUpdateRoomQuorum,
   findPreset,
+  isMultiVacancyRoomType,
+  resolveInitialRoomDetailTab,
   validateCreateRoom,
 } from "./room.js";
 
@@ -27,6 +30,10 @@ describe("validateCreateRoom", () => {
         quorumUnit: "percent",
         eligibleCount: 0,
         status: "draft",
+        entryMode: "codigo",
+        entryOpen: true,
+        maxParticipants: null,
+        vacancies: 1,
         majorityRule: "absolute_majority",
         roundBehavior: findPreset("ipb_local_officers").roundBehavior,
       },
@@ -338,5 +345,168 @@ describe("validateCreateRoom", () => {
       allowed: false,
       reason: "candidates_locked_after_round",
     });
+  });
+
+  it("validates entryMode, entryOpen, and maxParticipants on room creation", () => {
+    const validApproval = validateCreateRoom({
+      title: "Assembleia Extraordinária",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      entryMode: "aprovacao",
+      entryOpen: false,
+      maxParticipants: 45,
+    });
+
+    expect(validApproval.ok).toBe(true);
+    if (validApproval.ok) {
+      expect(validApproval.value.entryMode).toBe("aprovacao");
+      expect(validApproval.value.entryOpen).toBe(false);
+      expect(validApproval.value.maxParticipants).toBe(45);
+    }
+
+    const explicitNullMax = validateCreateRoom({
+      title: "Assembleia",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      maxParticipants: null,
+    });
+    expect(explicitNullMax.ok).toBe(true);
+    if (explicitNullMax.ok) {
+      expect(explicitNullMax.value.maxParticipants).toBeNull();
+    }
+
+    const invalidEntry = validateCreateRoom({
+      title: "Assembleia",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      entryMode: "invalid_mode",
+      entryOpen: "yes" as unknown as boolean,
+      maxParticipants: 0,
+    });
+
+    expect(invalidEntry).toEqual({
+      ok: false,
+      errors: [
+        { field: "entryMode", code: "invalid" },
+        { field: "entryOpen", code: "invalid" },
+        { field: "maxParticipants", code: "out_of_range" },
+      ],
+    });
+
+    const outOfRangeMax = validateCreateRoom({
+      title: "Assembleia",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      maxParticipants: 100_001,
+    });
+    expect(outOfRangeMax).toEqual({
+      ok: false,
+      errors: [{ field: "maxParticipants", code: "out_of_range" }],
+    });
+
+    const fractionalMax = validateCreateRoom({
+      title: "Assembleia",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      maxParticipants: 12.5,
+    });
+    expect(fractionalMax).toEqual({
+      ok: false,
+      errors: [{ field: "maxParticipants", code: "out_of_range" }],
+    });
+  });
+
+  it("validates vacancies for officer/custom rooms and restricts single-office rooms to 1 vacancy", () => {
+    expect(isMultiVacancyRoomType("elder")).toBe(true);
+    expect(isMultiVacancyRoomType("deacon")).toBe(true);
+    expect(isMultiVacancyRoomType("custom")).toBe(false);
+    expect(isMultiVacancyRoomType("upa_board")).toBe(false);
+
+    expect(canConfigureRoomVacancies("elder")).toBe(true);
+    expect(canConfigureRoomVacancies("deacon")).toBe(true);
+    expect(canConfigureRoomVacancies("custom")).toBe(true);
+    expect(canConfigureRoomVacancies("upa_board")).toBe(false);
+    expect(canConfigureRoomVacancies("ump_board")).toBe(false);
+    expect(canConfigureRoomVacancies("session_board")).toBe(false);
+    expect(canConfigureRoomVacancies("pastor")).toBe(false);
+
+    const deaconFive = validateCreateRoom({
+      title: "Eleição de Diáconos",
+      roomType: "deacon",
+      rulesPreset: "ipb_local_officers",
+      vacancies: 5,
+    });
+    expect(deaconFive.ok).toBe(true);
+    if (deaconFive.ok) {
+      expect(deaconFive.value.vacancies).toBe(5);
+    }
+
+    const upaSingle = validateCreateRoom({
+      title: "Diretoria UPA",
+      roomType: "upa_board",
+      rulesPreset: "ipb_society_board",
+      vacancies: 1,
+    });
+    expect(upaSingle.ok).toBe(true);
+
+    const upaMultiple = validateCreateRoom({
+      title: "Diretoria UPA",
+      roomType: "upa_board",
+      rulesPreset: "ipb_society_board",
+      vacancies: 3,
+    });
+    expect(upaMultiple).toEqual({
+      ok: false,
+      errors: [{ field: "vacancies", code: "invalid" }],
+    });
+
+    const outOfRangeVacancies = validateCreateRoom({
+      title: "Eleição de Presbíteros",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      vacancies: 51,
+    });
+    expect(outOfRangeVacancies).toEqual({
+      ok: false,
+      errors: [{ field: "vacancies", code: "out_of_range" }],
+    });
+
+    const zeroVacancies = validateCreateRoom({
+      title: "Eleição de Presbíteros",
+      roomType: "elder",
+      rulesPreset: "ipb_local_officers",
+      vacancies: 0,
+    });
+    expect(zeroVacancies).toEqual({
+      ok: false,
+      errors: [{ field: "vacancies", code: "out_of_range" }],
+    });
+  });
+
+  it("resolves the initial room detail tab from room and round state", () => {
+    expect(resolveInitialRoomDetailTab({ roomStatus: "draft" })).toBe("preparar");
+    expect(resolveInitialRoomDetailTab({ roomStatus: "draft", roundStatus: null })).toBe("preparar");
+
+    expect(resolveInitialRoomDetailTab({ roomStatus: "open" })).toBe("conduzir");
+    expect(resolveInitialRoomDetailTab({ roomStatus: "open", roundStatus: "open" })).toBe("conduzir");
+    expect(resolveInitialRoomDetailTab({ roomStatus: "open", roundStatus: "restarted" })).toBe("conduzir");
+    expect(resolveInitialRoomDetailTab({ roomStatus: "test", roundStatus: "open" })).toBe("conduzir");
+
+    expect(
+      resolveInitialRoomDetailTab({
+        roomStatus: "open",
+        roundStatus: "closed",
+        roundOutcome: "elected",
+      }),
+    ).toBe("resultado");
+    expect(
+      resolveInitialRoomDetailTab({
+        roomStatus: "test",
+        roundStatus: "closed",
+        roundOutcome: "no_majority",
+      }),
+    ).toBe("resultado");
+    expect(resolveInitialRoomDetailTab({ roomStatus: "closed" })).toBe("resultado");
+    expect(resolveInitialRoomDetailTab({ roomStatus: "closed", roundStatus: null })).toBe("resultado");
   });
 });

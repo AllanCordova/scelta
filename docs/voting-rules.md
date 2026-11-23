@@ -32,10 +32,28 @@ Convocation must be at least **7 days** in advance.
 ### Majority and rounds (Modelo de Estatuto art. 21)
 
 - Decisions require a majority representing **more than 50%** of the votes of communicant members **present** (absolute majority of votes cast among those present — commonly described in practice as “half + 1”).
-- In Scelta's domain calculation (`packages/domain/src/majority.ts`), blank ballots (`candidate_id = null`) are included in the total ballots denominator (`totalVotes = sum(candidateVotes) + nullVotes`) when calculating absolute majority (`threshold = floor(totalVotes / 2) + 1`).
+- In Scelta's domain calculation (`packages/domain/src/majority.ts`), blank ballots (`candidate_id = null` or 0 marks) are included in the total ballots denominator (`totalVotes = sum(candidateVotes) + nullVotes`) when calculating absolute majority (`threshold = floor(totalVotes / 2) + 1`).
 - **§1** — More than one ballot (*escrutínio*) may be held to reach that majority.
 - **§2** — In elections for Pastor / Elder / Deacon, when there are **more candidates than vacancies** and the majority is **not** reached on the **second** ballot, the assembly **may** finish by limiting further ballots to the **most voted** candidates.
 - **§3** — Electronic or hybrid assemblies are allowed, **provided vote secrecy is ensured** (CE-2021).
+
+### Multi-vacancy officer elections (Elders & Deacons — `T5.1`–`T5.4`)
+
+For offices where multiple seats are elected simultaneously (e.g., electing 3 or 5 elders or deacons):
+
+- **Vacancies ($N$)**: The Church Council sets the number of vacancies ($N \ge 1$) to fill in the room (`rooms.vacancies`).
+- **Ballot marks**: Each eligible voter receives a single ballot where they may select **up to $N$ candidates** ($0 \le \text{marks} \le N$; $0$ marks indicates a blank ballot). Marking the same candidate multiple times on the same ballot is rejected (`duplicate_candidate_mark`).
+- **Majority base**: The absolute majority base is the count of **ballots cast** (online ballots + physical paper ballots, including blank ballots), **not** the sum of individual marks.
+- **Win condition**: A candidate is elected if and only if they receive **strictly > 50%** of the ballots base ($\text{votes} > \lfloor\text{totalBallots} / 2\rfloor$).
+- **Vacancy allocation**:
+  - If between 1 and $N$ candidates achieve > 50%, all of them are elected.
+  - If more than $N$ candidates achieve > 50%, the top $N$ most-voted candidates are elected.
+  - **Tie on the last vacancy**: If there is a tie for the $N$-th (final open) vacancy among candidates with > 50%, those tied candidates advance to a runoff round specifically for the remaining vacancy.
+- **Subsequent rounds for remaining vacancies**:
+  - If fewer than $N$ candidates reach > 50%, the qualified candidates are elected (`winnerCandidateIds`), and the remaining open seats ($N_{\text{next}} = N - \text{electedCount}$) can be contested in a new round.
+  - Only candidates who were **not yet elected** in prior rounds are eligible in subsequent rounds.
+  - The presiding table/assembly may also conclude the election with open seats if decided.
+- **Physical paper tallies with $N$ vacancies**: Paper tally submissions require the count of physical ballots and marks per candidate, validating that the total marks do not exceed $N \times \text{physicalBallots}$.
 
 ### Secrecy
 
@@ -49,7 +67,7 @@ Convocation must be at least **7 days** in advance.
 | Quorum | Configurable; preset **34% of eligible roll** (1st call, representing > 1/3 in integer percentage) |
 | Win threshold | Absolute majority (**> 50%** of total ballots cast in the round, including blank ballots) |
 | Rounds | Up to 2 open rounds; then optional runoff limited to top N (N = vacancies or admin choice) |
-| Ballot | Secret; one vote per eligible voter per round |
+| Ballot | Secret; up to N marks per eligible voter per round |
 | Candidate pool | Communicant members; filter men ≥ 18 for elder/deacon |
 
 ---

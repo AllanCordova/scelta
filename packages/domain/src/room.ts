@@ -18,6 +18,12 @@ export type CreateRoomStatus = (typeof CREATE_ROOM_STATUSES)[number];
 export const ROOM_STATUSES = ["draft", "open", "test", "closed"] as const;
 export type RoomStatus = (typeof ROOM_STATUSES)[number];
 
+export const ROOM_ENTRY_MODES = ["codigo", "aprovacao"] as const;
+export type RoomEntryMode = (typeof ROOM_ENTRY_MODES)[number];
+
+export const ROOM_DETAIL_TABS = ["preparar", "conduzir", "resultado"] as const;
+export type RoomDetailTab = (typeof ROOM_DETAIL_TABS)[number];
+
 export type RoomStatusTransitionRejectionReason =
   | "room_already_closed"
   | "round_currently_open"
@@ -71,6 +77,8 @@ const RULES_PRESETS: readonly RulesPreset[] = [
 
 const ABSOLUTE_QUORUM_MAX = 100_000;
 const ELIGIBLE_COUNT_MAX = 100_000;
+const MAX_PARTICIPANTS_MAX = 100_000;
+export const MAX_ROOM_VACANCIES = 50;
 const TITLE_MAX_LENGTH = 200;
 
 export type CreateRoomDraft = {
@@ -81,6 +89,10 @@ export type CreateRoomDraft = {
   quorumUnit?: string;
   eligibleCount?: number;
   status?: string;
+  entryMode?: string;
+  entryOpen?: boolean;
+  maxParticipants?: number | null;
+  vacancies?: number;
 };
 
 export type ValidRoomConfig = {
@@ -91,6 +103,10 @@ export type ValidRoomConfig = {
   quorumUnit: QuorumUnit;
   eligibleCount: number;
   status: CreateRoomStatus;
+  entryMode: RoomEntryMode;
+  entryOpen: boolean;
+  maxParticipants: number | null;
+  vacancies: number;
   majorityRule: MajorityRule;
   roundBehavior: string;
 };
@@ -103,13 +119,30 @@ export type RoomFieldError = {
     | "quorumValue"
     | "quorumUnit"
     | "eligibleCount"
-    | "status";
+    | "status"
+    | "entryMode"
+    | "entryOpen"
+    | "maxParticipants"
+    | "vacancies";
   code:
     | "required"
     | "invalid"
     | "out_of_range"
     | "incomplete";
 };
+
+/** Returns true for officer election room types that natively support multiple vacancies (elders/deacons). */
+export function isMultiVacancyRoomType(roomType: RoomType): boolean {
+  return roomType === "elder" || roomType === "deacon";
+}
+
+/**
+ * Returns true for room types that allow configuring vacancies > 1.
+ * Board offices (UPA, UMP, Session) and Pastor elections always have 1 vacancy per scrutiny.
+ */
+export function canConfigureRoomVacancies(roomType: RoomType): boolean {
+  return roomType === "elder" || roomType === "deacon" || roomType === "custom";
+}
 
 export function findPreset(preset: RulesPreset): PresetDefinition {
   const definition = PRESET_DEFINITIONS.find((item) => item.preset === preset);
@@ -147,6 +180,24 @@ export function validateCreateRoom(
     errors.push({ field: "status", code: "invalid" });
   }
 
+  const requestedEntryMode = draft.entryMode ?? "codigo";
+  const entryMode = isRoomEntryMode(requestedEntryMode) ? requestedEntryMode : undefined;
+  if (!entryMode) {
+    errors.push({ field: "entryMode", code: "invalid" });
+  }
+
+  const requestedEntryOpen = draft.entryOpen ?? true;
+  const entryOpen = typeof requestedEntryOpen === "boolean" ? requestedEntryOpen : undefined;
+  if (entryOpen === undefined) {
+    errors.push({ field: "entryOpen", code: "invalid" });
+  }
+
+  const maxParticipants = resolveMaxParticipants(draft);
+  errors.push(...maxParticipants.errors);
+
+  const vacancies = resolveVacancies(draft, roomType);
+  errors.push(...vacancies.errors);
+
   const quorum = resolveQuorum(draft);
   errors.push(...quorum.errors);
 
@@ -158,6 +209,10 @@ export function validateCreateRoom(
     !roomType ||
     !rulesPreset ||
     !status ||
+    !entryMode ||
+    entryOpen === undefined ||
+    maxParticipants.value === undefined ||
+    vacancies.value === undefined ||
     !quorum.value ||
     eligible.value === undefined
   ) {
@@ -176,6 +231,10 @@ export function validateCreateRoom(
       quorumUnit: quorum.value.quorumUnit,
       eligibleCount: eligible.value,
       status,
+      entryMode,
+      entryOpen,
+      maxParticipants: maxParticipants.value,
+      vacancies: vacancies.value,
       majorityRule: preset.majorityRule,
       roundBehavior: preset.roundBehavior,
     },
@@ -246,6 +305,72 @@ export function canManageRoomCandidates(
   }
 
   return { allowed: true };
+}
+
+/**
+ * Resolves the initial admin room detail tab based on room and current round state.
+ */
+export function resolveInitialRoomDetailTab(input: {
+  roomStatus: RoomStatus;
+  roundStatus?: string | null;
+  roundOutcome?: string | null;
+}): RoomDetailTab {
+  if (input.roomStatus === "closed" || input.roundStatus === "closed") {
+    return "resultado";
+  }
+
+  if (input.roomStatus === "draft") {
+    return "preparar";
+  }
+
+  return "conduzir";
+}
+
+function resolveMaxParticipants(draft: CreateRoomDraft): {
+  value?: number | null;
+  errors: RoomFieldError[];
+} {
+  if (draft.maxParticipants === undefined || draft.maxParticipants === null) {
+    return { value: null, errors: [] };
+  }
+
+  if (
+    typeof draft.maxParticipants !== "number" ||
+    !Number.isInteger(draft.maxParticipants) ||
+    draft.maxParticipants < 1 ||
+    draft.maxParticipants > MAX_PARTICIPANTS_MAX
+  ) {
+    return { errors: [{ field: "maxParticipants", code: "out_of_range" }] };
+  }
+
+  return { value: draft.maxParticipants, errors: [] };
+}
+
+function resolveVacancies(
+  draft: CreateRoomDraft,
+  roomType: RoomType | undefined,
+): {
+  value?: number;
+  errors: RoomFieldError[];
+} {
+  if (draft.vacancies === undefined) {
+    return { value: 1, errors: [] };
+  }
+
+  if (
+    typeof draft.vacancies !== "number" ||
+    !Number.isInteger(draft.vacancies) ||
+    draft.vacancies < 1 ||
+    draft.vacancies > MAX_ROOM_VACANCIES
+  ) {
+    return { errors: [{ field: "vacancies", code: "out_of_range" }] };
+  }
+
+  if (roomType !== undefined && !canConfigureRoomVacancies(roomType) && draft.vacancies > 1) {
+    return { errors: [{ field: "vacancies", code: "invalid" }] };
+  }
+
+  return { value: draft.vacancies, errors: [] };
 }
 
 function resolveEligibleCount(draft: CreateRoomDraft): {
@@ -336,6 +461,10 @@ function isRulesPreset(value: string): value is RulesPreset {
 
 function isCreateRoomStatus(value: string): value is CreateRoomStatus {
   return (CREATE_ROOM_STATUSES as readonly string[]).includes(value);
+}
+
+function isRoomEntryMode(value: string): value is RoomEntryMode {
+  return (ROOM_ENTRY_MODES as readonly string[]).includes(value);
 }
 
 function isQuorumUnit(value: string | undefined): value is QuorumUnit {
