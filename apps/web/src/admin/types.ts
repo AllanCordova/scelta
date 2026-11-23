@@ -21,8 +21,30 @@ export type PresetDefinition = {
 
 export type CandidateOption = {
   id: string;
+  memberId?: string | null;
   displayName: string;
   photoUrl?: string | null;
+  birthDate?: string | null;
+  isEligible?: boolean;
+};
+
+export type RoomRosterEntryItem = {
+  id: string;
+  roomId: string;
+  memberId: string | null;
+  fullName: string;
+  birthDate: string | null;
+  isCommunicant: boolean;
+  isMale: boolean | null;
+  isEligibleVoter: boolean;
+  createdAt: string;
+  accessCode: {
+    id: string;
+    code: string;
+    revokedAt: string | null;
+  } | null;
+  isPresent: boolean;
+  votesOnPaper?: boolean;
 };
 
 export type SuggestedCandidate = {
@@ -73,6 +95,35 @@ export type CandidateStanding = {
   candidateId: string;
   displayName: string;
   votes: number;
+  onlineVotes?: number;
+  paperVotes?: number;
+};
+
+export type VoteOriginBreakdown = {
+  online: {
+    ballots: number;
+    candidateVotes: number;
+    blankVotes: number;
+  };
+  paper: {
+    ballots: number;
+    candidateVotes: number;
+    blankVotes: number;
+    nullVotes: number;
+  };
+};
+
+export type RoundPaperTally = {
+  id: string;
+  roundId: string;
+  ballotCount: number;
+  blankVotes: number;
+  nullVotes: number;
+  candidateVotes: Record<string, number>;
+  recordedByAdminId: string | null;
+  recordedByName: string | null;
+  recordedAt: string;
+  updatedAt: string;
 };
 
 export type TieBreakReason = "age" | "admin_tiebreak";
@@ -95,6 +146,7 @@ export type RoundTally = {
   tieBreakReason?: TieBreakReason;
   tieBreakRequired?: boolean;
   tiedCandidates?: TiedCandidateOption[];
+  voteOrigin?: VoteOriginBreakdown;
 };
 
 export type RoomSummary = {
@@ -111,6 +163,8 @@ export type RoomSummary = {
   round: RoomRound | null;
   inviteToken: string;
   invitePath: string;
+  shortCode: string;
+  shortPath?: string;
   majorityRule: string;
   roundBehavior: string;
   createdAt: string;
@@ -175,8 +229,12 @@ export type IntegrityLogsResponse = {
 export type RoomDetail = RoomSummary & {
   reactionsEnabled?: boolean;
   chatMuted?: boolean;
+  hasRounds?: boolean;
+  lockedOffices?: string[];
   presence: {
     presentCount: number;
+    onlinePresentCount?: number;
+    paperVotersCount?: number;
     eligibleCount: number;
     requiredCount: number;
     quorumMet: boolean;
@@ -203,6 +261,7 @@ export type RoomRound = {
   restartCount?: number;
   didNotVoteCount?: number;
   tally?: RoundTally;
+  paperTally?: RoundPaperTally | null;
 };
 
 export type FieldError = {

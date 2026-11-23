@@ -11,6 +11,11 @@ export type ShareBoardEntry = {
   officeLabel: string;
   winnerName: string;
   winnerPhotoUrl?: string | null;
+  originSummary?: {
+    total: number;
+    online: number;
+    paper: number;
+  };
 };
 
 type ShareBoardSheetProps = {
@@ -38,8 +43,18 @@ const ROOM_TYPE_MINISTRY_LABELS: Record<string, string> = {
 /**
  * Maps a roomType key to its human-readable ministry/office label.
  */
+/**
+ * Maps a roomType key to its human-readable ministry/office label.
+ */
 export function ministryLabelForRoomType(roomType?: string): string {
   return (roomType && ROOM_TYPE_MINISTRY_LABELS[roomType]) || "Diretoria";
+}
+
+function formatOriginSuffix(originSummary?: ShareBoardEntry["originSummary"]): string {
+  if (!originSummary || originSummary.paper <= 0) {
+    return "";
+  }
+  return ` (Total: ${originSummary.total} — Online: ${originSummary.online} · Papel: ${originSummary.paper})`;
 }
 
 /**
@@ -74,6 +89,11 @@ export function ShareBoardSheet({
               )}
             </div>
             <strong className="share-paper-name">{entry.winnerName}</strong>
+            {entry.originSummary && entry.originSummary.paper > 0 ? (
+              <span className="share-paper-origin muted" data-testid="share-paper-origin">
+                {formatOriginSuffix(entry.originSummary).trim()}
+              </span>
+            ) : null}
           </li>
         ))}
       </ol>
@@ -99,7 +119,10 @@ export function formatShareBoardText(
   const lines = [
     `${roomTitle} — ${ministryLabel}`,
     "Nova Diretoria Eleita:",
-    ...entries.map((entry) => `• ${entry.officeLabel}: ${entry.winnerName}`),
+    ...entries.map(
+      (entry) =>
+        `• ${entry.officeLabel}: ${entry.winnerName}${formatOriginSuffix(entry.originSummary)}`,
+    ),
     "",
     `“${SHARE_BOARD_VERSE.text}” (${SHARE_BOARD_VERSE.reference})`,
   ];

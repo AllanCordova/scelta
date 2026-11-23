@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import QRCode from "qrcode";
 import { toast } from "sonner";
 import { z } from "zod";
 import { apiUrl } from "../api-url";
+import {
+  fetchPublicConfig,
+  hasOriginMismatch,
+  resolvePublicOrigin,
+  type PublicConfig,
+} from "../config-api";
 import { validateWithZod } from "../forms/validation";
 import { submitBallot, submitJoin } from "../join/join-api";
 import { createJoinKey } from "../join/join-identity";
@@ -13,8 +18,12 @@ import { OfficeProgressGrid } from "../shell/OfficeProgressGrid";
 import { PaginationBar, paginateItems } from "../shell/PaginationBar";
 import { RoomChatPanel } from "../shell/RoomChatPanel";
 import { EditRoomModal } from "./EditRoomModal";
+import { PaperTallyPanel, type PaperTallyFormValue } from "./PaperTallyPanel";
+import { RoomCandidatesPanel } from "./RoomCandidatesPanel";
 import { RoomPresencePanel } from "./RoomPresencePanel";
+import { RoomRosterPanel, type RosterEntryView } from "./RoomRosterPanel";
 import { ShareBoardPaper, type ShareBoardEntry } from "./ShareBoardPaper";
+import { paginateCardsForPrint } from "./card-pagination";
 import {
   CLOSE_ROUND_LABEL,
   DECLINE_ROUND_LABEL,
@@ -32,20 +41,30 @@ import {
   standingLabel,
   tallySummaryLabel,
 } from "./copy";
-import { inviteUrl } from "./room-draft";
+import { generateQrSvg } from "./qr-svg";
+import { displayShortRoomUrl, shortRoomUrl } from "./room-draft";
 import {
   RoomRequestError,
+  addRoomCandidate,
+  addRoomRosterMember,
   closeRound,
   createSimulatedAccessCodes,
   declineRound,
   deleteRoom,
+  fetchRoomRoster,
+  listMembers,
   openRound,
   removeParticipants,
+  removeRoomCandidate,
+  removeRoomRosterEntry,
   resolveRoundTie,
   restartRound,
+  savePaperTally,
   setRoomOfficeBanner,
+  setRosterPaperMode,
   updateRoom,
 } from "./rooms-api";
+import type { RoomRosterEntryItem, StoredMemberItem } from "./types";
 import { useRoomDetail } from "./use-room-detail";
 
 const apiBase = apiUrl("");
@@ -61,7 +80,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   const [isBusy, setIsBusy] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [isQrVisible, setIsQrVisible] = useState(false);
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [qrSvg, setQrSvg] = useState<string | null>(null);
+  const [publicConfig, setPublicConfig] = useState<PublicConfig>({ publicUrl: null });
   const [refreshTick, setRefreshTick] = useState(0);
   const [simCountInput, setSimCountInput] = useState("5");
   const [simCountError, setSimCountError] = useState<string | null>(null);
@@ -76,14 +96,64 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   const [dismissedWinnerRoundId, setDismissedWinnerRoundId] = useState<string | null>(null);
   const [isSharePaperOpen, setIsSharePaperOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [rosterEntries, setRosterEntries] = useState<RoomRosterEntryItem[]>([]);
+  const [directoryMembers, setDirectoryMembers] = useState<StoredMemberItem[]>([]);
+  const [singlePrintCard, setSinglePrintCard] = useState<{
+    id: string;
+    displayName: string;
+    code: string;
+    qrSvg: string;
+    displayUrl: string;
+  } | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<
-    "delete-room" | "close-room" | "remove-participants" | "close-pending-round" | null
+    | "delete-room"
+    | "close-room"
+    | "remove-participants"
+    | "close-pending-round"
+    | "close-no-paper-ballots"
+    | null
   >(null);
+  const [pendingCloseOptions, setPendingCloseOptions] = useState<{
+    confirmPending?: boolean;
+  }>({});
 
   const { room, loadError, lastSyncedAt } = useRoomDetail(roomId, refreshTick);
 
-  const invitePath = room ? (room.invitePath ?? `/join/${room.inviteToken}`) : null;
-  const fullInviteUrl = invitePath ? inviteUrl(window.location.origin, invitePath) : null;
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPublicConfig()
+      .then((config) => {
+        if (!cancelled) {
+          setPublicConfig(config);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all([
+      fetchRoomRoster(apiBase, roomId).catch(() => ({ entries: [], eligibleCount: 0 })),
+      listMembers(apiBase).catch(() => []),
+    ]).then(([rosterResult, members]) => {
+      if (!cancelled) {
+        setRosterEntries(rosterResult.entries);
+        setDirectoryMembers(members);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId, refreshTick]);
+
+  const publicOrigin = resolvePublicOrigin(publicConfig.publicUrl, window.location.origin);
+  const originMismatch = hasOriginMismatch(publicConfig.publicUrl, window.location.origin);
+  const fullInviteUrl = room?.shortCode ? shortRoomUrl(publicOrigin, room.shortCode) : null;
 
   const isQrVisibleRef = useRef(isQrVisible);
   void isQrVisibleRef;
@@ -106,15 +176,15 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       return;
     }
     let cancelled = false;
-    void QRCode.toDataURL(fullInviteUrl, { margin: 1, width: 180 })
-      .then((url) => {
+    void generateQrSvg(fullInviteUrl)
+      .then((svg) => {
         if (!cancelled) {
-          setQrDataUrl(url);
+          setQrSvg(svg);
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setQrDataUrl(null);
+          setQrSvg(null);
         }
       });
 
@@ -154,24 +224,30 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
-  async function handleCloseRound(roundId: string, confirmPending?: boolean) {
+
+
+  async function handleCloseRound(
+    roundId: string,
+    options?: { confirmPending?: boolean; confirmNoPaperBallots?: boolean },
+  ) {
     if (!room) {
       return;
     }
     setActionError(null);
     setIsBusy(true);
     try {
-      await closeRound(
-        apiBase,
-        room.id,
-        roundId,
-        confirmPending ? { confirmPending: true } : undefined,
-      );
+      await closeRound(apiBase, room.id, roundId, options);
+      setPendingCloseOptions({});
       setRefreshTick((current) => current + 1);
       toast.success("Escrutínio encerrado.");
     } catch (error) {
       if (error instanceof RoomRequestError && error.errorCode === "voting_incomplete") {
         setPendingConfirm("close-pending-round");
+        return;
+      }
+      if (error instanceof RoomRequestError && error.errorCode === "paper_tally_required") {
+        setPendingCloseOptions({ confirmPending: options?.confirmPending });
+        setPendingConfirm("close-no-paper-ballots");
         return;
       }
       const msg = messageFromRoundError(error);
@@ -181,6 +257,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       setIsBusy(false);
     }
   }
+
+
 
   async function handleRestartRound(roundId: string) {
     if (!room) {
@@ -201,6 +279,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
+
+
   async function handleDeclineRound(roundId: string) {
     if (!room) {
       return;
@@ -219,6 +299,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       setIsBusy(false);
     }
   }
+
+
 
   async function handleResolveTie(
     targetRoundId: string,
@@ -243,6 +325,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
+
+
   async function handleCloseRoomStatus() {
     if (!room) {
       return;
@@ -261,6 +345,8 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
       setIsBusy(false);
     }
   }
+
+
 
   async function handleDeleteRoom() {
     if (!room) {
@@ -473,7 +559,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     };
   });
   const roomTypeLabel = ROOM_TYPE_LABELS[room.roomType] ?? "Sessão";
-  const roomCode = `SALA-${room.id.slice(0, 6).toUpperCase()}`;
+  const roomCode = room.shortCode;
   const effectiveBannerOffice =
     offices.length > 0
       ? offices.some((item) => item.officeLabel === bannerOfficeLabel)
@@ -507,6 +593,158 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     }
   }
 
+  async function handleAddRosterMember(memberId: string) {
+    if (!room) {
+      return;
+    }
+    const result = await addRoomRosterMember(apiBase, room.id, { memberId });
+    setRefreshTick((tick) => tick + 1);
+    toast.success(
+      result.accessCode
+        ? `Membro adicionado ao rol. Código: ${result.accessCode.code}`
+        : "Membro adicionado ao rol.",
+    );
+  }
+
+  async function handleAddRosterAdHoc(input: { fullName: string; birthDate?: string | null }) {
+    if (!room) {
+      return;
+    }
+    const result = await addRoomRosterMember(apiBase, room.id, input);
+    setRefreshTick((tick) => tick + 1);
+    toast.success(
+      result.accessCode
+        ? `Participante adicionado ao rol. Código: ${result.accessCode.code}`
+        : "Participante adicionado ao rol.",
+    );
+  }
+
+  async function handleRemoveRosterEntry(entryId: string) {
+    if (!room) {
+      return;
+    }
+    await removeRoomRosterEntry(apiBase, room.id, entryId);
+    setRefreshTick((tick) => tick + 1);
+    toast.success("Participante removido do rol.");
+  }
+
+  async function handleToggleRosterPaperMode(entryId: string, votesOnPaper: boolean) {
+    if (!room) {
+      return;
+    }
+    await setRosterPaperMode(apiBase, room.id, entryId, votesOnPaper);
+    setRefreshTick((tick) => tick + 1);
+    toast.success(
+      votesOnPaper
+        ? "Eleitor marcado para voto em papel."
+        : "Eleitor retornado para voto online.",
+    );
+  }
+
+  async function handleSavePaperTally(payload: PaperTallyFormValue) {
+    if (!room || !room.round) {
+      return;
+    }
+    await savePaperTally(apiBase, room.id, room.round.id, payload);
+    setRefreshTick((tick) => tick + 1);
+  }
+
+  async function handlePrintSingleCard(entry: RosterEntryView) {
+    if (!room || !entry.accessCode || entry.accessCode.revokedAt !== null) {
+      return;
+    }
+    try {
+      const urlWithCode = shortRoomUrl(publicOrigin, room.shortCode, entry.accessCode.code);
+      const displayUrl = displayShortRoomUrl(publicOrigin, room.shortCode);
+      const cardQrSvg = await generateQrSvg(urlWithCode);
+      setSinglePrintCard({
+        id: entry.accessCode.id,
+        displayName: entry.fullName,
+        code: entry.accessCode.code,
+        qrSvg: cardQrSvg,
+        displayUrl,
+      });
+    } catch {
+      toast.error("Não foi possível preparar o cartão para impressão.");
+    }
+  }
+
+  async function handleAddRoomCandidate(input: { memberId?: string; displayName?: string }) {
+    if (!room) {
+      return;
+    }
+    await addRoomCandidate(apiBase, room.id, {
+      ...input,
+      ...(offices.length > 0 && effectiveSelectedOffice
+        ? { officeLabel: effectiveSelectedOffice }
+        : {}),
+    });
+    setRefreshTick((tick) => tick + 1);
+    toast.success("Candidato adicionado.");
+  }
+
+  async function handleRemoveRoomCandidate(candidateId: string) {
+    if (!room) {
+      return;
+    }
+    await removeRoomCandidate(
+      apiBase,
+      room.id,
+      candidateId,
+      offices.length > 0 && effectiveSelectedOffice ? effectiveSelectedOffice : undefined,
+    );
+    setRefreshTick((tick) => tick + 1);
+    toast.success("Candidato removido.");
+  }
+
+  const rosterMemberIds = new Set(
+    rosterEntries.map((entry) => entry.memberId).filter((id): id is string => Boolean(id)),
+  );
+  const availableRosterMembers = directoryMembers
+    .filter((member) => !rosterMemberIds.has(member.id))
+    .map((member) => ({
+      id: member.id,
+      fullName: member.fullName,
+      birthDate: member.birthDate,
+    }));
+
+  const isCandidatesLocked =
+    room.status === "closed" ||
+    (offices.length > 0 && effectiveSelectedOffice
+      ? Boolean(room.lockedOffices?.includes(effectiveSelectedOffice))
+      : Boolean(room.hasRounds));
+  const candidateLockReason =
+    room.status === "closed"
+      ? "Sala encerrada."
+      : isCandidatesLocked
+        ? "Candidatos bloqueados após o início do escrutínio."
+        : undefined;
+  const candidateMemberIds = new Set(
+    (room.candidates ?? [])
+      .map((candidate) => candidate.memberId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const availableCandidateMembers = directoryMembers
+    .filter((member) => !candidateMemberIds.has(member.id))
+    .map((member) => ({
+      id: member.id,
+      fullName: member.fullName,
+      birthDate: member.birthDate,
+    }));
+  const roomCandidateViews = (room.candidates ?? []).map((candidate) => ({
+    id: candidate.id,
+    memberId: candidate.memberId ?? null,
+    displayName: candidate.displayName,
+    isEligible: candidate.isEligible ?? true,
+  }));
+
+
+
+  const paperVotersCount = room.presence.paperVotersCount ?? 0;
+  const onlinePresentCount =
+    room.presence.onlinePresentCount ??
+    Math.max(0, room.presence.presentCount - paperVotersCount);
+
   const voterDenominator =
     room.eligibleCount > 0
       ? room.eligibleCount
@@ -515,7 +753,9 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
     voterDenominator > 0 ? Math.min(100, Math.round((room.votedCount / voterDenominator) * 100)) : 0;
 
   const activeVoterPool =
-    room.presence.presentCount > 0 ? room.presence.presentCount : room.eligibleCount;
+    onlinePresentCount > 0
+      ? onlinePresentCount
+      : Math.max(0, room.eligibleCount - paperVotersCount);
   const pendingVoters = Math.max(0, activeVoterPool - room.votedCount);
   const pendingPercent =
     activeVoterPool > 0 ? Math.min(100, Math.round((pendingVoters / activeVoterPool) * 100)) : 0;
@@ -524,6 +764,9 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
   const totalValidVotes = tally ? tally.totalVotes : room.votedCount;
   const standingsByCandidate = new Map(
     (tally?.standings ?? []).map((item) => [item.candidateId, item.votes]),
+  );
+  const standingDetailsByCandidate = new Map(
+    (tally?.standings ?? []).map((item) => [item.candidateId, item]),
   );
   const rawCandidates = room.candidates ?? [];
   const candidatesList = tally
@@ -568,6 +811,20 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             : "Sincronizando…"}
         </span>
       </div>
+
+      {originMismatch ? (
+        <div
+          className="tiebreak-admin-box no-print"
+          role="status"
+          data-testid="public-url-mismatch-warning"
+        >
+          <p>
+            Você está acessando o painel por <strong>{window.location.origin}</strong>, mas a URL
+            pública configurada é <strong>{publicOrigin}</strong>. Os links e QR Codes estão usando
+            a URL pública configurada.
+          </p>
+        </div>
+      ) : null}
 
       <section className="room-header-card panel" aria-label="Cabeçalho da sala">
         <div className="room-header-top">
@@ -728,7 +985,14 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
               </button>
             </div>
             <a href={fullInviteUrl}>{fullInviteUrl}</a>
-            {qrDataUrl ? <img data-testid="invite-qr" alt="QR do convite" src={qrDataUrl} /> : null}
+            {qrSvg ? (
+              <div
+                data-testid="invite-qr"
+                role="img"
+                aria-label="QR do convite"
+                dangerouslySetInnerHTML={{ __html: qrSvg }}
+              />
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -858,6 +1122,11 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             <span className="detail-kpi-status-title">
               {quorumStateLabel(room.presence.quorumMet)}
             </span>
+            {paperVotersCount > 0 ? (
+              <span className="detail-kpi-pill" data-testid="room-paper-count">
+                Papel: {paperVotersCount}
+              </span>
+            ) : null}
           </div>
           <p className="detail-kpi-footnote">
             {quorumLabel(room.presence.presentCount, room.presence.requiredCount)} (presentes /
@@ -894,6 +1163,17 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
           roomId={room.id}
           refreshKey={refreshTick}
           onChanged={() => setRefreshTick((current) => current + 1)}
+        />
+      ) : null}
+
+      {room.round?.status === "open" && paperVotersCount > 0 ? (
+        <PaperTallyPanel
+          key={room.round.paperTally?.updatedAt ?? "none"}
+          candidates={roomCandidateViews}
+          paperVotersCount={paperVotersCount}
+          initialTally={room.round.paperTally ?? null}
+          disabled={isBusy}
+          onSave={handleSavePaperTally}
         />
       ) : null}
 
@@ -1004,6 +1284,26 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
           {tally ? (
             <div className="round-tally" role="status">
               <p className="tally-outcome">{tallySummaryLabel(tally)}</p>
+              {tally.voteOrigin ? (
+                <div className="tally-origin-summary" data-testid="tally-origin-summary">
+                  <span>
+                    <strong>Total:</strong> {tally.totalVotes}
+                  </span>
+                  <span>
+                    <strong>Online:</strong> {tally.voteOrigin.online.ballots} (brancos:{" "}
+                    {tally.voteOrigin.online.blankVotes})
+                  </span>
+                  <span>
+                    <strong>Papel:</strong> {tally.voteOrigin.paper.ballots} (brancos:{" "}
+                    {tally.voteOrigin.paper.blankVotes}, nulos: {tally.voteOrigin.paper.nullVotes})
+                  </span>
+                </div>
+              ) : null}
+              {room.round?.paperTally?.recordedByName ? (
+                <p className="muted" data-testid="tally-paper-recorded-by">
+                  Urna de papel lançada por <strong>{room.round.paperTally.recordedByName}</strong>.
+                </p>
+              ) : null}
               <ul className="tally-standings sr-only" aria-label="Apuração">
                 {tally.standings.map((item) => (
                   <li key={item.candidateId}>{standingLabel(item.displayName, item.votes)}</li>
@@ -1057,7 +1357,12 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
               <>
                 <div className="candidate-cards-list">
                   {pagedCandidates.items.map((candidate) => {
-                const votes = standingsByCandidate.get(candidate.id) ?? 0;
+                const standingDetail = standingDetailsByCandidate.get(candidate.id);
+                const votes = standingDetail?.votes ?? 0;
+                const hasOriginBreakdown =
+                  Boolean(tally?.voteOrigin) &&
+                  typeof standingDetail?.onlineVotes === "number" &&
+                  typeof standingDetail?.paperVotes === "number";
                 const percent =
                   tally && tally.totalVotes > 0
                     ? Number(((votes / tally.totalVotes) * 100).toFixed(1))
@@ -1093,7 +1398,9 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                           </div>
                           <span className="candidate-sub">
                             {tally
-                              ? standingLabel(candidate.displayName, votes)
+                              ? hasOriginBreakdown
+                                ? `${standingLabel(candidate.displayName, votes)} · Online: ${standingDetail?.onlineVotes ?? 0} · Papel: ${standingDetail?.paperVotes ?? 0}`
+                                : standingLabel(candidate.displayName, votes)
                               : room.round?.status === "open"
                                 ? "Em votação secreta"
                                 : "Candidato elegível"}
@@ -1281,7 +1588,7 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
                 <div className="audit-feed-header">
                   <h2 id="presence-flow-heading">Fluxo de Presença</h2>
                   <span className="detail-kpi-pill">
-                    {room.votedCount} de {Math.max(room.presence.presentCount, room.votedCount)}
+                    {room.votedCount} de {Math.max(onlinePresentCount, room.votedCount)}
                   </span>
                 </div>
 
@@ -1368,6 +1675,75 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
         </div>
       </div>
 
+      <RoomCandidatesPanel
+        candidates={roomCandidateViews}
+        availableMembers={availableCandidateMembers}
+        isLocked={isCandidatesLocked}
+        lockReason={candidateLockReason}
+        onAddCandidate={handleAddRoomCandidate}
+        onRemoveCandidate={handleRemoveRoomCandidate}
+      />
+
+      <RoomRosterPanel
+        entries={rosterEntries}
+        availableMembers={availableRosterMembers}
+        isRoomClosed={room.status === "closed"}
+        onAddMember={handleAddRosterMember}
+        onAddAdHoc={handleAddRosterAdHoc}
+        onRemoveEntry={handleRemoveRosterEntry}
+        onPrintSingleCard={(entry) => void handlePrintSingleCard(entry)}
+        onTogglePaperMode={handleToggleRosterPaperMode}
+      />
+
+      {singlePrintCard ? (
+        <div
+          className="print-cards-overlay"
+          role="dialog"
+          aria-label="Cartões de acesso para impressão"
+          data-testid="single-card-print-dialog"
+        >
+          <div className="print-cards-toolbar no-print">
+            <div>
+              <h2>Cartão de Acesso — {room.title}</h2>
+              <p className="muted">1 cartão ativo pronto para impressão em A4.</p>
+            </div>
+            <div className="print-cards-toolbar-actions">
+              <button type="button" className="round-action" onClick={() => window.print()}>
+                Imprimir
+              </button>
+              <button
+                type="button"
+                className="ghost round-action"
+                onClick={() => setSinglePrintCard(null)}
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+          {paginateCardsForPrint([singlePrintCard]).map((sheetCards, sheetIndex) => (
+            <div key={sheetIndex} className="print-sheet">
+              {sheetCards.map((card) => (
+                <article key={card.id} className="print-card-item">
+                  <div
+                    className="print-card-qr"
+                    role="img"
+                    aria-label={`QR Code de ${card.displayName}`}
+                    dangerouslySetInnerHTML={{ __html: card.qrSvg }}
+                  />
+                  <div className="print-card-details">
+                    <span className="print-card-room">{room.title}</span>
+                    <strong className="print-card-name">{card.displayName}</strong>
+                    <span className="print-card-code-label">Código de acesso:</span>
+                    <code className="print-card-code">{card.code}</code>
+                    <span className="print-card-short-url">{card.displayUrl}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       <ShareBoardPaper
         open={isSharePaperOpen}
         roomTitle={room.title}
@@ -1378,6 +1754,32 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
           roomTypeLabel,
           isElectedWinner ? (room.round?.tally?.winnerName ?? null) : null,
           winnerCandidate?.photoUrl ?? null,
+          tally?.voteOrigin && tally.voteOrigin.paper.ballots > 0
+            ? {
+                officeLabel: room.round?.officeLabel ?? roomTypeLabel,
+                originSummary: (() => {
+                  const winnerStanding = tally.winnerId
+                    ? tally.standings.find((item) => item.candidateId === tally.winnerId)
+                    : undefined;
+                  if (
+                    winnerStanding &&
+                    typeof winnerStanding.onlineVotes === "number" &&
+                    typeof winnerStanding.paperVotes === "number"
+                  ) {
+                    return {
+                      total: winnerStanding.votes,
+                      online: winnerStanding.onlineVotes,
+                      paper: winnerStanding.paperVotes,
+                    };
+                  }
+                  return {
+                    total: tally.totalVotes,
+                    online: tally.voteOrigin.online.ballots,
+                    paper: tally.voteOrigin.paper.ballots,
+                  };
+                })(),
+              }
+            : undefined,
         )}
         onClose={() => setIsSharePaperOpen(false)}
       />
@@ -1398,7 +1800,9 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
               ? "Fechar sala"
               : pendingConfirm === "close-pending-round"
                 ? "Encerrar com votantes pendentes"
-                : "Remover participantes"
+                : pendingConfirm === "close-no-paper-ballots"
+                  ? "Urna de papel sem lançamento"
+                  : "Remover participantes"
         }
         description={
           pendingConfirm === "delete-room"
@@ -1407,7 +1811,9 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
               ? `Deseja fechar a sala "${room.title}" e marcá-la como Completa para histórico?`
               : pendingConfirm === "close-pending-round"
                 ? "Nem todos os membros presentes votaram. Deseja encerrar o escrutínio assim mesmo? Os membros pendentes serão registrados como 'não votaram'."
-                : "Tem certeza que deseja remover os participantes presentes da sala?"
+                : pendingConfirm === "close-no-paper-ballots"
+                  ? "Há eleitores marcados para voto em papel nesta sala, mas nenhum total da urna de papel foi lançado neste escrutínio. Deseja encerrar mesmo assim sem cédulas de papel?"
+                  : "Tem certeza que deseja remover os participantes presentes da sala?"
         }
         confirmLabel={
           pendingConfirm === "delete-room"
@@ -1416,9 +1822,17 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
               ? "Fechar sala"
               : pendingConfirm === "close-pending-round"
                 ? "Encerrar escrutínio"
-                : "Remover participantes"
+                : pendingConfirm === "close-no-paper-ballots"
+                  ? "Encerrar sem cédulas de papel"
+                  : "Remover participantes"
         }
-        tone={pendingConfirm === "close-room" || pendingConfirm === "close-pending-round" ? "default" : "danger"}
+        tone={
+          pendingConfirm === "close-room" ||
+          pendingConfirm === "close-pending-round" ||
+          pendingConfirm === "close-no-paper-ballots"
+            ? "default"
+            : "danger"
+        }
         busy={isBusy || isSimulating}
         onCancel={() => setPendingConfirm(null)}
         onConfirm={() => {
@@ -1430,7 +1844,14 @@ export function AdminRoomDetail({ roomId }: { roomId: string }) {
             void handleCloseRoomStatus();
           } else if (target === "close-pending-round") {
             if (openRoundId) {
-              void handleCloseRound(openRoundId, true);
+              void handleCloseRound(openRoundId, { confirmPending: true });
+            }
+          } else if (target === "close-no-paper-ballots") {
+            if (openRoundId) {
+              void handleCloseRound(openRoundId, {
+                ...pendingCloseOptions,
+                confirmNoPaperBallots: true,
+              });
             }
           } else if (target === "remove-participants") {
             void handleSimulateRemove();
@@ -1456,6 +1877,10 @@ function buildShareBoardEntries(
   roomTypeLabel: string,
   singleWinnerName: string | null,
   singleWinnerPhotoUrl: string | null,
+  paperOrigin?: {
+    officeLabel: string;
+    originSummary: { total: number; online: number; paper: number };
+  },
 ): ShareBoardEntry[] {
   if (resolvedOffices.length > 0) {
     return resolvedOffices
@@ -1464,6 +1889,9 @@ function buildShareBoardEntries(
         officeLabel: office.officeLabel,
         winnerName: office.winnerName ?? "",
         winnerPhotoUrl: office.winnerPhotoUrl,
+        ...(paperOrigin && paperOrigin.officeLabel === office.officeLabel
+          ? { originSummary: paperOrigin.originSummary }
+          : {}),
       }));
   }
   if (singleWinnerName) {
@@ -1472,6 +1900,7 @@ function buildShareBoardEntries(
         officeLabel: roomTypeLabel,
         winnerName: singleWinnerName,
         winnerPhotoUrl: singleWinnerPhotoUrl,
+        ...(paperOrigin ? { originSummary: paperOrigin.originSummary } : {}),
       },
     ];
   }
@@ -1547,6 +1976,13 @@ const AUDIT_ACTION_LABELS: Record<string, string> = {
   office_declined: "Cargo declinado",
   tie_break_resolved: "Desempate decidido pela mesa (mais velho)",
   result_published: "Resultado publicado",
+  roster_member_added: "Membro adicionado ao rol",
+  roster_member_removed: "Membro removido do rol",
+  candidate_added: "Candidato adicionado",
+  candidate_removed: "Candidato removido",
+  roster_paper_mode_enabled: "Marcado para voto em papel",
+  roster_paper_mode_disabled: "Retornado para voto online",
+  paper_tally_recorded: "Totais da urna de papel lançados",
 };
 
 function formatAuditActionLabel(action: string): string {

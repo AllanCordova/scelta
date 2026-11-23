@@ -15,6 +15,20 @@ export function quorumDraftFromPreset(preset: PresetDefinition): {
 }
 
 export function inviteUrl(origin: string, invitePath: string): string {
-  const base = origin.endsWith("/") ? origin.slice(0, -1) : origin;
+  const base = origin.replace(/\/+$/, "");
   return `${base}${invitePath}`;
+}
+
+export function shortRoomUrl(origin: string, shortCode: string, accessCode?: string): string {
+  const base = origin.replace(/\/+$/, "");
+  const encodedShortCode = encodeURIComponent(shortCode.trim());
+  const normalizedAccessCode = accessCode?.trim();
+  if (normalizedAccessCode) {
+    return `${base}/s/${encodedShortCode}?c=${encodeURIComponent(normalizedAccessCode)}`;
+  }
+  return `${base}/s/${encodedShortCode}`;
+}
+
+export function displayShortRoomUrl(origin: string, shortCode: string, accessCode?: string): string {
+  return shortRoomUrl(origin, shortCode, accessCode).replace(/^https?:\/\//i, "");
 }

@@ -1,4 +1,13 @@
-import { candidates, createPgliteDatabase, participants, roomMemberCodes, rooms, type Db } from "@scelta/db";
+import {
+  candidates,
+  createPgliteDatabase,
+  members,
+  participants,
+  roomMemberCodes,
+  roomRoster,
+  rooms,
+  type Db,
+} from "@scelta/db";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetAuthAttempts } from "../auth/auth-attempts.js";
@@ -61,8 +70,10 @@ describe("join room", () => {
     await db.delete(candidates);
     await db.delete(participants);
     await db.delete(roomMemberCodes);
+    await db.delete(roomRoster);
     await clearAuditEvents(db);
     await db.delete(rooms);
+    await db.delete(members);
   });
 
   it("joins an open room, dedups the same key, and publishes the present count", async () => {
@@ -84,6 +95,7 @@ describe("join room", () => {
     });
     const room = await createRoom(app, "Assembleia", "open");
     const codes = await createSimCodes(app, room.id, 2, adminCookie);
+    events.length = 0;
     const anaCode = codes[0]!;
     const biaCode = codes[1]!;
 
@@ -128,9 +140,9 @@ describe("join room", () => {
     expect(presence.statusCode).toBe(200);
     expect(presence.json()).toEqual({
       presentCount: 2,
-      eligibleCount: 0,
-      requiredCount: 0,
-      quorumMet: false,
+      eligibleCount: 2,
+      requiredCount: 1,
+      quorumMet: true,
     });
 
     const stored = await db.select().from(participants);
@@ -139,14 +151,14 @@ describe("join room", () => {
       [hashJoinKey(anaKey), hashJoinKey(biaKey)].sort(),
     );
     expect(stored.every((row) => row.isPresent)).toBe(true);
-    const unmet = (presentCount: number) => ({
+    const met = (presentCount: number) => ({
       roomId: room.id,
       presentCount,
-      eligibleCount: 0,
-      requiredCount: 0,
-      quorumMet: false,
+      eligibleCount: 2,
+      requiredCount: 1,
+      quorumMet: true,
     });
-    expect(events).toEqual([unmet(1), unmet(1), unmet(2)]);
+    expect(events).toEqual([met(1), met(1), met(2)]);
 
     await app.close();
   });
@@ -168,8 +180,8 @@ describe("join room", () => {
     });
     expect(absent.json()).toEqual({
       presentCount: 0,
-      eligibleCount: 0,
-      requiredCount: 0,
+      eligibleCount: 1,
+      requiredCount: 1,
       quorumMet: false,
     });
 
@@ -418,7 +430,6 @@ describe("join room", () => {
 
   it("issues one access code without replacing the others and expels presence without revoking codes", async () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
-    const room = await createRoom(app, "Credenciamento", "open");
 
     const ana = await app.inject({
       method: "POST",
@@ -446,6 +457,8 @@ describe("join room", () => {
     expect(bia.statusCode).toBe(201);
     const anaId = (ana.json().member as { id: string }).id;
     const biaId = (bia.json().member as { id: string }).id;
+
+    const room = await createRoom(app, "Credenciamento", "open");
 
     const issued = await app.inject({
       method: "POST",
@@ -565,17 +578,30 @@ describe("join room", () => {
   it("keeps a single presence row when the same code joins twice at once", async () => {
     const app = await buildApp({ roomRepository: repository, userRepository });
     const room = await createRoom(app, "Concorrência", "open");
-    const [codeItem] = await createSimCodes(app, room.id, 1, adminCookie);
+    const [sameKeyCode, distinctKeyCode] = await createSimCodes(app, room.id, 2, adminCookie);
 
-    const [first, second] = await Promise.all([
-      join(app, room.inviteToken, codeItem!.code, anaKey),
-      join(app, room.inviteToken, codeItem!.code, biaKey),
+    const [sameFirst, sameSecond] = await Promise.all([
+      join(app, room.inviteToken, sameKeyCode!.code, anaKey),
+      join(app, room.inviteToken, sameKeyCode!.code, anaKey),
     ]);
-    expect(first.statusCode).toBe(200);
-    expect(second.statusCode).toBe(200);
+    expect(sameFirst.statusCode).toBe(200);
+    expect(sameSecond.statusCode).toBe(200);
+
+    const [diffFirst, diffSecond] = await Promise.all([
+      join(app, room.inviteToken, distinctKeyCode!.code, `${anaKey}-other`),
+      join(app, room.inviteToken, distinctKeyCode!.code, biaKey),
+    ]);
+    const statuses = [diffFirst.statusCode, diffSecond.statusCode].sort((a, b) => a - b);
+    expect(statuses).toEqual([200, 409]);
+    const conflict = diffFirst.statusCode === 409 ? diffFirst : diffSecond;
+    expect(conflict.json()).toEqual({
+      error: "access_code_in_use",
+      message: "Este código já está em uso. Procure a mesa.",
+    });
+
     const stored = await db.select().from(participants);
-    expect(stored).toHaveLength(1);
-    expect(stored[0]?.isPresent).toBe(true);
+    expect(stored).toHaveLength(2);
+    expect(stored.every((row) => row.isPresent)).toBe(true);
 
     await app.close();
   });
@@ -623,7 +649,7 @@ async function createSimCodes(
   cookie: string,
 ) {
   for (let i = 0; i < count; i += 1) {
-    await app.inject({
+    const memberRes = await app.inject({
       method: "POST",
       url: "/v1/admin/members",
       headers: { cookie },
@@ -633,6 +659,13 @@ async function createSimCodes(
         isMale: true,
         birthDate: "1990-01-01",
       },
+    });
+    const memberId = (memberRes.json().member as { id: string }).id;
+    await app.inject({
+      method: "POST",
+      url: `/v1/admin/rooms/${roomId}/roster`,
+      headers: { cookie },
+      payload: { memberId },
     });
   }
   const response = await app.inject({

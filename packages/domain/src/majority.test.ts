@@ -153,6 +153,51 @@ describe("tallyRoundVotes", () => {
       tieBreakReason: "admin_tiebreak",
     });
   });
+
+  it("combines online ballots and paper tally with voteOrigin breakdown and paper-adjusted majority", () => {
+    const tally = tallyRoundVotes(candidates, ["cand-1", "cand-2", null], {
+      paperTally: {
+        ballotCount: 5,
+        blankVotes: 1,
+        nullVotes: 1,
+        candidateVotes: { "cand-1": 3, "cand-2": 0 },
+      },
+    });
+
+    // Majority base = 3 online ballots + 3 paper valid + 1 paper blank = 7 -> threshold = 4
+    expect(tally).toEqual({
+      totalVotes: 7,
+      nullVotes: 3,
+      threshold: 4,
+      outcome: "elected",
+      winnerId: "cand-1",
+      winnerName: "Paulo",
+      standings: [
+        { candidateId: "cand-1", displayName: "Paulo", votes: 4, onlineVotes: 1, paperVotes: 3 },
+        { candidateId: "cand-2", displayName: "Silas", votes: 1, onlineVotes: 1, paperVotes: 0 },
+      ],
+      voteOrigin: {
+        online: { ballots: 3, candidateVotes: 2, blankVotes: 1 },
+        paper: { ballots: 5, candidateVotes: 3, blankVotes: 1, nullVotes: 1 },
+      },
+    });
+  });
+
+  it("elects a winner from paper votes even when online ballots are split or empty", () => {
+    const tally = tallyRoundVotes(candidates, ["cand-1", "cand-2"], {
+      paperTally: {
+        ballotCount: 2,
+        blankVotes: 0,
+        nullVotes: 0,
+        candidateVotes: { "cand-2": 2 },
+      },
+    });
+
+    expect(tally.outcome).toBe("elected");
+    expect(tally.winnerId).toBe("cand-2");
+    expect(tally.totalVotes).toBe(4);
+    expect(tally.threshold).toBe(3);
+  });
 });
 
 describe("selectTopCandidates", () => {

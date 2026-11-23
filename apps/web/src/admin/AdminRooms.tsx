@@ -1,8 +1,13 @@
 import { useEffect, useState, type FormEvent, type MouseEvent } from "react";
-import QRCode from "qrcode";
 import { toast } from "sonner";
 import { z } from "zod";
 import { apiUrl } from "../api-url";
+import {
+  fetchPublicConfig,
+  hasOriginMismatch,
+  resolvePublicOrigin,
+  type PublicConfig,
+} from "../config-api";
 import { validateWithZod, type FieldErrors } from "../forms/validation";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { EditRoomModal } from "./EditRoomModal";
@@ -23,7 +28,8 @@ import {
   roundErrorMessage,
   showsPresence,
 } from "./copy";
-import { inviteUrl, quorumDraftFromPreset } from "./room-draft";
+import { generateQrSvg } from "./qr-svg";
+import { quorumDraftFromPreset, shortRoomUrl } from "./room-draft";
 import {
   RoomRequestError,
   closeRound,
@@ -58,11 +64,8 @@ export function AdminRooms() {
     quorumValue: string;
     quorumUnit: QuorumUnit;
   } | null>(null);
-  const [eligibleCount, setEligibleCount] = useState("");
   const [status, setStatus] = useState<CreatableRoomStatus>("draft");
-  const [fieldErrors, setFieldErrors] = useState<
-    FieldErrors<"title" | "quorumValue" | "eligibleCount">
-  >({});
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors<"title" | "quorumValue">>({});
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [roundError, setRoundError] = useState<{ roomId: string; message: string } | null>(null);
   const [busyRoomId, setBusyRoomId] = useState<string | null>(null);
@@ -74,11 +77,27 @@ export function AdminRooms() {
   } | null>(null);
   const [editingRoom, setEditingRoom] = useState<RoomSummary | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  const [publicConfig, setPublicConfig] = useState<PublicConfig>({ publicUrl: null });
   const [inviteLink, setInviteLink] = useState<string | null>(null);
-  const [qr, setQr] = useState<{ link: string; dataUrl: string } | null>(null);
+  const [qr, setQr] = useState<{ link: string; svg: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [listVersion, setListVersion] = useState(0);
   const presence = useRoomPresence(rooms);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPublicConfig()
+      .then((config) => {
+        if (!cancelled) {
+          setPublicConfig(config);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,10 +145,10 @@ export function AdminRooms() {
     }
 
     let cancelled = false;
-    void QRCode.toDataURL(inviteLink, { margin: 1, width: 180 })
-      .then((dataUrl) => {
+    void generateQrSvg(inviteLink)
+      .then((svg) => {
         if (!cancelled) {
-          setQr({ link: inviteLink, dataUrl });
+          setQr({ link: inviteLink, svg });
         }
       })
       .catch(() => {
@@ -143,6 +162,8 @@ export function AdminRooms() {
     };
   }, [inviteLink]);
 
+  const publicOrigin = resolvePublicOrigin(publicConfig.publicUrl, window.location.origin);
+  const originMismatch = hasOriginMismatch(publicConfig.publicUrl, window.location.origin);
   const selectedPreset = presets.find((item) => item.preset === rulesPreset);
   const presetDraft = selectedPreset
     ? quorumDraftFromPreset(selectedPreset)
@@ -157,7 +178,7 @@ export function AdminRooms() {
       };
   const quorumValue = quorumOverride?.quorumValue ?? presetDraft.quorumValue;
   const quorumUnit = quorumOverride?.quorumUnit ?? presetDraft.quorumUnit;
-  const qrDataUrl = inviteLink && qr?.link === inviteLink ? qr.dataUrl : null;
+  const qrSvg = inviteLink && qr?.link === inviteLink ? qr.svg : null;
   const behavior = describePreset(rulesPreset, selectedPreset?.majorityRule);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -168,7 +189,6 @@ export function AdminRooms() {
       title,
       quorumValue,
       quorumUnit,
-      eligibleCount,
     });
     if (!validation.ok) {
       setFieldErrors(validation.fieldErrors);
@@ -177,11 +197,6 @@ export function AdminRooms() {
     }
 
     setFieldErrors({});
-    const eligible = eligiblePayload(eligibleCount);
-    if ("error" in eligible) {
-      return;
-    }
-
     setIsSubmitting(true);
 
     const payload = {
@@ -190,12 +205,11 @@ export function AdminRooms() {
       rulesPreset,
       status,
       ...quorumPayload(quorumValue, quorumUnit),
-      ...eligible,
     };
 
     try {
       const room = await createRoom(apiBase, payload);
-      const link = inviteUrl(window.location.origin, room.invitePath);
+      const link = shortRoomUrl(publicOrigin, room.shortCode);
       setInviteLink(link);
       setTitle("");
       setListVersion((current) => current + 1);
@@ -203,13 +217,9 @@ export function AdminRooms() {
     } catch (error) {
       setInviteLink(null);
       if (error instanceof RoomRequestError && error.details.length > 0) {
-        const nextFieldErrors: FieldErrors<"title" | "quorumValue" | "eligibleCount"> = {};
+        const nextFieldErrors: FieldErrors<"title" | "quorumValue"> = {};
         for (const detail of error.details) {
-          if (
-            detail.field === "title" ||
-            detail.field === "quorumValue" ||
-            detail.field === "eligibleCount"
-          ) {
+          if (detail.field === "title" || detail.field === "quorumValue") {
             nextFieldErrors[detail.field] = roomErrorMessage(error.errorCode, detail.field);
           }
         }
@@ -298,11 +308,10 @@ export function AdminRooms() {
   }
 
   function handleShowRoomQr(room: RoomSummary) {
-    const path = room.invitePath ?? (room.inviteToken ? `/join/${room.inviteToken}` : null);
-    if (!path) {
+    if (!room.shortCode) {
       return;
     }
-    const link = inviteUrl(window.location.origin, path);
+    const link = shortRoomUrl(publicOrigin, room.shortCode);
     setInviteLink(link);
   }
 
@@ -312,6 +321,20 @@ export function AdminRooms() {
         <h1>Nova sala</h1>
         <p className="lede">Título, ofício, regras e quórum. O convite aparece depois de criar.</p>
       </header>
+
+      {originMismatch ? (
+        <div
+          className="tiebreak-admin-box no-print"
+          role="status"
+          data-testid="public-url-mismatch-warning"
+        >
+          <p>
+            Você está acessando o painel por <strong>{window.location.origin}</strong>, mas a URL
+            pública configurada é <strong>{publicOrigin}</strong>. Os links e QR Codes estão usando
+            a URL pública configurada.
+          </p>
+        </div>
+      ) : null}
 
       <section className="panel" aria-labelledby="admin-rooms-heading">
         <h2 id="admin-rooms-heading" className="sr-only">
@@ -430,24 +453,10 @@ export function AdminRooms() {
             </label>
           </div>
 
-          <div className="field">
-            <label>
-              Aptos
-              <input
-                inputMode="numeric"
-                value={eligibleCount}
-                placeholder="Opcional"
-                aria-invalid={Boolean(fieldErrors.eligibleCount)}
-                onChange={(event) => {
-                  setEligibleCount(event.target.value);
-                  setFieldErrors((current) => ({ ...current, eligibleCount: undefined }));
-                }}
-              />
-            </label>
-            {fieldErrors.eligibleCount ? (
-              <span className="field-error">{fieldErrors.eligibleCount}</span>
-            ) : null}
-          </div>
+          <p className="field-hint">
+            Eleitores aptos: calculados automaticamente a partir do rol de membros (editável no rol
+            da sala após a criação).
+          </p>
 
           <p className="field-hint">
             Candidatos: todos os membros comungantes cadastrados na plataforma serão incluídos
@@ -511,7 +520,14 @@ export function AdminRooms() {
             </button>
           </div>
           <a href={inviteLink}>{inviteLink}</a>
-          {qrDataUrl ? <img data-testid="invite-qr" alt="QR do convite" src={qrDataUrl} /> : null}
+          {qrSvg ? (
+            <div
+              data-testid="invite-qr"
+              role="img"
+              aria-label="QR do convite"
+              dangerouslySetInnerHTML={{ __html: qrSvg }}
+            />
+          ) : null}
         </section>
       ) : null}
 
@@ -530,11 +546,11 @@ export function AdminRooms() {
           <p className="empty">Nenhuma sala ainda.</p>
         ) : (
           <ul className="room-cards-grid" aria-label="Salas">
-            {rooms.map((room, index) => (
+            {rooms.map((room) => (
               <RoomRow
                 key={room.id}
                 room={room}
-                index={index + 1}
+                publicOrigin={publicOrigin}
                 presence={presence[room.id]}
                 isBusy={busyRoomId === room.id}
                 error={roundError?.roomId === room.id ? roundError.message : null}
@@ -642,7 +658,7 @@ export function AdminRooms() {
 
 function RoomRow({
   room,
-  index,
+  publicOrigin,
   presence,
   isBusy,
   error,
@@ -655,7 +671,7 @@ function RoomRow({
   onDelete,
 }: {
   room: RoomSummary;
-  index: number;
+  publicOrigin: string;
   presence: QuorumPresence | undefined;
   isBusy: boolean;
   error: string | null;
@@ -670,9 +686,9 @@ function RoomRow({
   const [isCopied, setIsCopied] = useState(false);
   const openRoundId = room.round?.status === "open" ? room.round.id : null;
   const isActive = showsPresence(room.status);
-  const roomCode = `SALA-${String(index).padStart(3, "0")}`;
+  const roomCode = room.shortCode;
   const roomTypeLabel = room.roomType ? ROOM_TYPE_LABELS[room.roomType] : "Sessão";
-  const invitePath = room.invitePath ?? (room.inviteToken ? `/join/${room.inviteToken}` : null);
+  const hasShortCode = Boolean(room.shortCode);
 
   const progressPercent =
     presence && presence.requiredCount > 0
@@ -682,10 +698,10 @@ function RoomRow({
         : 4;
 
   async function handleCopyLink() {
-    if (!invitePath) {
+    if (!hasShortCode) {
       return;
     }
-    const fullUrl = inviteUrl(window.location.origin, invitePath);
+    const fullUrl = shortRoomUrl(publicOrigin, room.shortCode);
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(fullUrl).catch(() => undefined);
     }
@@ -807,7 +823,7 @@ function RoomRow({
 
       <div className="room-meta card-room-footer">
         <div className="room-utility-actions">
-          {invitePath ? (
+          {hasShortCode ? (
             <>
               <button type="button" className="ghost round-action" onClick={onShowQr}>
                 QR Code
@@ -886,7 +902,6 @@ const createRoomFormSchema = z
     title: z.string().trim().min(1, roomErrorMessage("invalid_room", "title")),
     quorumValue: z.string().trim(),
     quorumUnit: z.enum(["absolute", "percent"]),
-    eligibleCount: z.string().trim(),
   })
   .superRefine((data, ctx) => {
     if (
@@ -901,14 +916,6 @@ const createRoomFormSchema = z
         message: roomErrorMessage("invalid_room", "quorumValue"),
       });
     }
-
-    if ("error" in eligiblePayload(data.eligibleCount)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["eligibleCount"],
-        message: roomErrorMessage("invalid_room", "eligibleCount"),
-      });
-    }
   });
 
 function quorumPayload(quorumValue: string, quorumUnit: QuorumUnit) {
@@ -921,25 +928,6 @@ function quorumPayload(quorumValue: string, quorumUnit: QuorumUnit) {
     quorumValue: Number(trimmed),
     quorumUnit,
   };
-}
-
-function eligiblePayload(
-  value: string,
-): { eligibleCount: number } | { error: true } | Record<string, never> {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return {};
-  }
-  if (!/^\d+$/.test(trimmed)) {
-    return { error: true };
-  }
-
-  const count = Number(trimmed);
-  if (count > 100_000) {
-    return { error: true };
-  }
-
-  return { eligibleCount: count };
 }
 
 function messageFromError(error: unknown): string {

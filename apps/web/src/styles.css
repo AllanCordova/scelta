@@ -1629,12 +1629,27 @@ li {
   flex-shrink: 0;
 }
 
-.print-cards-grid {
+.print-cards-grid,
+.print-sheet {
   max-width: 210mm;
   margin: 0 auto;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+}
+
+.print-sheet {
+  margin-bottom: 1.25rem;
+}
+
+.print-card-qr,
+.print-card-qr svg {
+  width: 34mm;
+  height: 34mm;
+  min-width: 34mm;
+  min-height: 34mm;
+  display: block;
+  flex-shrink: 0;
 }
 
 .print-card-item {
@@ -1647,6 +1662,7 @@ li {
   background: #ffffff;
   color: #111827;
   break-inside: avoid;
+  page-break-inside: avoid;
 }
 
 .print-card-details {
@@ -1674,9 +1690,11 @@ li {
 
 .print-card-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 1.15rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
+  font-size: 20pt;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  line-height: 1.1;
+  color: #000000;
 }
 
 .access-codes-search-row {
@@ -1694,9 +1712,11 @@ li {
   padding: 0.35rem 0.6rem;
 }
 
-.print-card-url {
-  font-size: 0.65rem;
-  color: #4b5563;
+.print-card-url,
+.print-card-short-url {
+  font-size: 8.5pt;
+  font-weight: 500;
+  color: #1f2937;
   word-break: break-all;
   line-height: 1.25;
 }
@@ -1713,6 +1733,12 @@ li {
     padding: 0;
     background: #ffffff;
     color: #000000;
+  }
+
+  [data-sonner-toaster],
+  [data-sonner-toaster] * {
+    display: none !important;
+    visibility: hidden !important;
   }
 
   body:has(.print-cards-overlay) .topbar,
@@ -1765,13 +1791,22 @@ li {
     background: #ffffff !important;
     color: #18181b !important;
     margin: 0 auto !important;
+    padding: 12mm !important;
     max-width: none !important;
     width: 100% !important;
+  }
+
+  .share-paper-header,
+  .share-paper-footer {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .share-paper-member {
     background: #fafafa !important;
     border-color: #e4e4e7 !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .share-paper-title,
@@ -1791,12 +1826,50 @@ li {
     gap: 6mm !important;
   }
 
+  .print-sheet {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 6mm !important;
+    margin: 0 !important;
+    max-width: none !important;
+    break-after: page;
+    page-break-after: always;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-sheet:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
   .print-card-item {
     break-inside: avoid;
     page-break-inside: avoid;
     border: 1px solid #d4d4d8 !important;
     background: #ffffff !important;
     color: #000000 !important;
+  }
+
+  .print-card-qr,
+  .print-card-qr svg {
+    width: 34mm !important;
+    height: 34mm !important;
+    min-width: 34mm !important;
+    min-height: 34mm !important;
+    display: block !important;
+  }
+
+  .print-card-code {
+    font-size: 20pt !important;
+    letter-spacing: 0.14em !important;
+    font-weight: 800 !important;
+    color: #000000 !important;
+  }
+
+  .print-card-short-url {
+    font-size: 8.5pt !important;
+    color: #111827 !important;
   }
 }
 

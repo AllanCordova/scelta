@@ -144,17 +144,22 @@ async function createSimulatedCodes(page: Page, roomTitle: string, count: number
   if (!room) {
     throw new Error(`Room not found: ${roomTitle}`);
   }
-  const simRes = await page.request.post(
-    `http://127.0.0.1:3334/v1/admin/rooms/${room.id}/access-codes/generate`,
-  );
-  const { accessCodes } = (await simRes.json()) as {
-    accessCodes: Array<{ code: string; revokedAt: string | null }>;
-  };
-  const active = accessCodes.filter((item) => item.revokedAt === null);
-  if (active.length < count) {
-    throw new Error(`Expected ${count} access codes, got ${active.length}`);
+  const codes: string[] = [];
+  const suffix = Date.now().toString(36);
+  for (let index = 0; index < count; index += 1) {
+    const addRes = await page.request.post(
+      `http://127.0.0.1:3334/v1/admin/rooms/${room.id}/roster`,
+      {
+        data: {
+          fullName: `Votante UPA ${suffix}-${index + 1}`,
+        },
+      },
+    );
+    expect(addRes.status()).toBe(201);
+    const body = (await addRes.json()) as { accessCode: { code: string } };
+    codes.push(body.accessCode.code);
   }
-  return active.slice(0, count).map((item) => item.code);
+  return codes;
 }
 
 async function loginAsAdmin(page: Page) {

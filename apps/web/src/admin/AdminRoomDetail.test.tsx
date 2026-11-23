@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminRoomDetail } from "./AdminRoomDetail";
-import type { RoomDetail } from "./types";
+import type { RoomDetail, RoomRosterEntryItem } from "./types";
 
 const socketHandlers = new Map<string, Set<(payload: unknown) => void>>();
 
@@ -22,7 +22,7 @@ vi.mock("socket.io-client", () => ({
 
 vi.mock("qrcode", () => ({
   default: {
-    toDataURL: vi.fn(async () => "data:image/png;base64,invite-qr"),
+    toString: vi.fn(async () => "<svg data-testid='mock-qr'><path /></svg>"),
   },
 }));
 
@@ -47,6 +47,8 @@ const sampleRoom: RoomDetail = {
   },
   inviteToken: "token-elder-2026",
   invitePath: "/join/token-elder-2026",
+  shortCode: "ELD202",
+  shortPath: "/s/ELD202",
   majorityRule: "absolute_majority",
   roundBehavior: "most voted",
   createdAt: "2026-11-13T12:00:00.000Z",
@@ -135,7 +137,7 @@ describe("AdminRoomDetail", () => {
     expect(screen.getByText("Regimento da Eleição")).toBeInTheDocument();
     expect(screen.getByText("Secreto / Cédula única")).toBeInTheDocument();
     expect(screen.getByText("50% + 1 (Absoluta)")).toBeInTheDocument();
-    expect(screen.getByText("Paulo Apóstolo")).toBeInTheDocument();
+    expect(screen.getAllByText("Paulo Apóstolo").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("PA")).toBeInTheDocument();
     expect(screen.getAllByText("Cédula recebida e assinada digitalmente")).toHaveLength(2);
 
@@ -684,13 +686,15 @@ describe("AdminRoomDetail", () => {
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
 
     expect(await screen.findByText("Página 1 de 2")).toBeInTheDocument();
-    expect(screen.getByText("Candidato 01")).toBeInTheDocument();
-    expect(screen.queryByText("Candidato 11")).not.toBeInTheDocument();
+    const tallyCardsContainer = document.querySelector(".candidate-cards-list") as HTMLElement;
+    expect(within(tallyCardsContainer).getByText("Candidato 01")).toBeInTheDocument();
+    expect(within(tallyCardsContainer).queryByText("Candidato 11")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Próxima" }));
     expect(screen.getByText("Página 2 de 2")).toBeInTheDocument();
-    expect(screen.getByText("Candidato 11")).toBeInTheDocument();
-    expect(screen.queryByText("Candidato 01")).not.toBeInTheDocument();
+    const tallyCardsPage2 = document.querySelector(".candidate-cards-list") as HTMLElement;
+    expect(within(tallyCardsPage2).getByText("Candidato 11")).toBeInTheDocument();
+    expect(within(tallyCardsPage2).queryByText("Candidato 01")).not.toBeInTheDocument();
   });
 
   it("opens the edit modal to update room details and allows closing an open room to Completa", async () => {
@@ -829,7 +833,7 @@ describe("AdminRoomDetail", () => {
     render(<AdminRoomDetail roomId={sampleRoom.id} />);
 
     const inviteInput = (await screen.findByLabelText("Token Direto para Votantes")) as HTMLInputElement;
-    expect(inviteInput.value).toContain("/join/token-elder-2026");
+    expect(inviteInput.value).toContain("/s/ELD202");
     expect(screen.queryByRole("button", { name: "Rotacionar convite" })).not.toBeInTheDocument();
   });
 
@@ -1040,6 +1044,307 @@ describe("AdminRoomDetail", () => {
     const notVotedNotice = await screen.findByText(/Não votaram:/i);
     expect(notVotedNotice).toBeInTheDocument();
     expect(notVotedNotice).toHaveTextContent("Não votaram: 2");
+  });
+
+  it("integrates RoomRosterPanel, single-card print dialog, and RoomCandidatesPanel", async () => {
+    let rosterEntries: RoomRosterEntryItem[] = [
+      {
+        id: "ros-1",
+        roomId: sampleRoom.id,
+        memberId: "mem-1",
+        fullName: "Ana Silva",
+        birthDate: "1990-01-01",
+        isCommunicant: true,
+        isMale: false,
+        isEligibleVoter: true,
+        createdAt: "2026-11-13T12:00:00.000Z",
+        accessCode: { id: "code-1", code: "111222", revokedAt: null },
+        isPresent: false,
+      },
+    ];
+    let currentRoom: RoomDetail = {
+      ...sampleRoom,
+      hasRounds: false,
+      candidates: [
+        { id: "cand-1", memberId: "mem-1", displayName: "Ana Silva", isEligible: true },
+      ],
+    };
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: currentRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/roster`) && method === "GET") {
+          return json({ entries: rosterEntries, eligibleCount: rosterEntries.length });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/roster`) && method === "POST") {
+          const body = JSON.parse(String(init?.body ?? "{}")) as {
+            memberId?: string;
+            fullName?: string;
+          };
+          const newEntry = {
+            id: "ros-2",
+            roomId: sampleRoom.id,
+            memberId: body.memberId ?? null,
+            fullName: body.memberId ? "Bruno Costa" : (body.fullName ?? "Avulso"),
+            birthDate: null,
+            isCommunicant: true,
+            isMale: null,
+            isEligibleVoter: true,
+            createdAt: "2026-11-13T12:05:00.000Z",
+            accessCode: { id: "code-2", code: "333444", revokedAt: null },
+            isPresent: false,
+          };
+          rosterEntries = [...rosterEntries, newEntry];
+          return json({ entry: newEntry, accessCode: newEntry.accessCode, eligibleCount: 2 }, 201);
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/candidates`) && method === "POST") {
+          const added = {
+            id: "cand-2",
+            memberId: null,
+            displayName: "Carlos Eduardo",
+            isEligible: true,
+          };
+          currentRoom = { ...currentRoom, candidates: [...(currentRoom.candidates ?? []), added] };
+          return json({ candidate: added, candidates: currentRoom.candidates }, 201);
+        }
+        if (url.endsWith("/v1/admin/members") && method === "GET") {
+          return json({
+            members: [
+              {
+                id: "mem-1",
+                fullName: "Ana Silva",
+                isCommunicant: true,
+                isMale: false,
+                birthDate: "1990-01-01",
+                societyFlags: {},
+              },
+              {
+                id: "mem-2",
+                fullName: "Bruno Costa",
+                isCommunicant: true,
+                isMale: true,
+                birthDate: "1988-05-05",
+                societyFlags: {},
+              },
+            ],
+          });
+        }
+        return json({ accessCodes: [] });
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    expect(await screen.findByText("111222")).toBeInTheDocument();
+
+    // Add ad-hoc voter
+    fireEvent.change(screen.getByLabelText("Nome completo (avulso)"), {
+      target: { value: "Visitante João" },
+    });
+    fireEvent.click(screen.getByTestId("add-roster-adhoc-btn"));
+    expect(await screen.findByText("Visitante João")).toBeInTheDocument();
+    expect(screen.getByText("333444")).toBeInTheDocument();
+
+    // Print single card
+    const printButtons = screen.getAllByTestId("print-single-card-btn");
+    fireEvent.click(printButtons[0]!);
+    const printDialog = await screen.findByTestId("single-card-print-dialog");
+    expect(printDialog.querySelectorAll(".print-card-item")).toHaveLength(1);
+    expect(within(printDialog).getByText("111222")).toBeInTheDocument();
+    fireEvent.click(within(printDialog).getByRole("button", { name: "Fechar" }));
+    expect(screen.queryByTestId("single-card-print-dialog")).not.toBeInTheDocument();
+
+    // Add candidate
+    fireEvent.change(screen.getByTestId("add-candidate-name-input"), {
+      target: { value: "Carlos Eduardo" },
+    });
+    fireEvent.click(screen.getByTestId("add-candidate-btn"));
+    const addedCandidates = await screen.findAllByText("Carlos Eduardo");
+    expect(addedCandidates.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders paper voting controls, excludes paper voters from online pending, handles 409 paper_tally_required, and shows origin breakdown", async () => {
+    let currentRoom: RoomDetail = {
+      ...sampleRoom,
+      eligibleCount: 2,
+      presence: {
+        presentCount: 2,
+        onlinePresentCount: 1,
+        paperVotersCount: 1,
+        eligibleCount: 2,
+        requiredCount: 1,
+        quorumMet: true,
+      },
+      votedCount: 1,
+      receiptTimestamps: ["2026-11-13T12:05:00.000Z"],
+      auditEvents: [
+        {
+          id: "audit-1",
+          actorRole: "admin",
+          action: "roster_paper_mode_enabled",
+          payload: {},
+          createdAt: "2026-11-13T12:01:00.000Z",
+        },
+        {
+          id: "audit-2",
+          actorRole: "admin",
+          action: "paper_tally_recorded",
+          payload: {},
+          createdAt: "2026-11-13T12:04:00.000Z",
+        },
+      ],
+    };
+
+    const rosterEntries: RoomRosterEntryItem[] = [
+      {
+        id: "entry-online",
+        roomId: sampleRoom.id,
+        memberId: "mem-1",
+        fullName: "Ana Online",
+        birthDate: "1990-01-01",
+        isCommunicant: true,
+        isMale: false,
+        isEligibleVoter: true,
+        createdAt: "2026-11-13T12:00:00.000Z",
+        accessCode: { id: "code-1", code: "111222", revokedAt: null },
+        isPresent: true,
+        votesOnPaper: false,
+      },
+      {
+        id: "entry-paper",
+        roomId: sampleRoom.id,
+        memberId: "mem-2",
+        fullName: "Bruno Papel",
+        birthDate: "1988-05-05",
+        isCommunicant: true,
+        isMale: true,
+        isEligibleVoter: true,
+        createdAt: "2026-11-13T12:00:00.000Z",
+        accessCode: null,
+        isPresent: false,
+        votesOnPaper: true,
+      },
+    ];
+
+    let closeAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}`) && method === "GET") {
+          return json({ room: currentRoom });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/roster`) && method === "GET") {
+          return json({ entries: rosterEntries, eligibleCount: 2 });
+        }
+        if (url.endsWith("/v1/admin/members") && method === "GET") {
+          return json({ members: [] });
+        }
+        if (
+          url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/rounds/round-1/paper-tally`) &&
+          method === "PUT"
+        ) {
+          const paperTally = {
+            id: "pt-1",
+            roundId: "round-1",
+            ballotCount: 1,
+            blankVotes: 0,
+            nullVotes: 0,
+            candidateVotes: { "cand-1": 1, "cand-2": 0 },
+            recordedByAdminId: "admin-1",
+            recordedByName: "Admin Mesa",
+            recordedAt: "2026-11-13T12:04:00.000Z",
+            updatedAt: "2026-11-13T12:04:00.000Z",
+          };
+          currentRoom = {
+            ...currentRoom,
+            round: currentRoom.round ? { ...currentRoom.round, paperTally } : null,
+          };
+          return json({ paperTally });
+        }
+        if (url.endsWith(`/v1/admin/rooms/${sampleRoom.id}/rounds/round-1/close`) && method === "POST") {
+          closeAttempts += 1;
+          const body = init?.body ? (JSON.parse(String(init.body)) as { confirmNoPaperBallots?: boolean }) : {};
+          if (!body.confirmNoPaperBallots && !currentRoom.round?.paperTally) {
+            return json({ error: "paper_tally_required" }, 409);
+          }
+          const closedRound = {
+            id: "round-1",
+            number: 1,
+            status: "closed" as const,
+            outcome: "elected" as const,
+            paperTally: currentRoom.round?.paperTally ?? null,
+            tally: {
+              totalVotes: 2,
+              threshold: 2,
+              outcome: "elected" as const,
+              winnerId: "cand-1",
+              winnerName: "Paulo Apóstolo",
+              standings: [
+                {
+                  candidateId: "cand-1",
+                  displayName: "Paulo Apóstolo",
+                  votes: 2,
+                  onlineVotes: 1,
+                  paperVotes: 1,
+                },
+                {
+                  candidateId: "cand-2",
+                  displayName: "Silas",
+                  votes: 0,
+                  onlineVotes: 0,
+                  paperVotes: 0,
+                },
+              ],
+              voteOrigin: {
+                online: { ballots: 1, candidateVotes: 1, blankVotes: 0 },
+                paper: { ballots: 1, candidateVotes: 1, blankVotes: 0, nullVotes: 0 },
+              },
+            },
+          };
+          currentRoom = { ...currentRoom, round: closedRound };
+          return json({ round: closedRound });
+        }
+        return json({ accessCodes: [] });
+      }),
+    );
+
+    render(<AdminRoomDetail roomId={sampleRoom.id} />);
+
+    expect(await screen.findByTestId("room-paper-count")).toHaveTextContent("Papel: 1");
+    expect(screen.getByText("0 Membros Aguardando")).toBeInTheDocument();
+    expect(screen.getByText("Marcado para voto em papel")).toBeInTheDocument();
+    expect(screen.getByText("Totais da urna de papel lançados")).toBeInTheDocument();
+    expect(screen.getByTestId("paper-tally-panel")).toBeInTheDocument();
+
+    // Try closing without paper tally -> opens confirmation dialog
+    fireEvent.click(screen.getByRole("button", { name: "Encerrar escrutínio" }));
+    const noPaperDialog = await screen.findByRole("dialog", { name: "Urna de papel sem lançamento" });
+    expect(noPaperDialog).toBeInTheDocument();
+    fireEvent.click(within(noPaperDialog).getByRole("button", { name: "Cancelar" }));
+    expect(closeAttempts).toBe(1);
+
+    // Fill paper tally and save
+    fireEvent.change(screen.getByTestId("paper-ballot-count-input"), { target: { value: "1" } });
+    const candidateInputs = screen.getAllByTestId("paper-candidate-votes-input");
+    fireEvent.change(candidateInputs[0]!, { target: { value: "1" } });
+    fireEvent.click(screen.getByTestId("save-paper-tally-btn"));
+    await screen.findByTestId("paper-tally-provenance");
+
+    // Close scrutiny -> shows combined origin breakdown
+    fireEvent.click(screen.getByRole("button", { name: "Encerrar escrutínio" }));
+    const originSummary = await screen.findByTestId("tally-origin-summary");
+    expect(originSummary).toHaveTextContent("Total: 2");
+    expect(originSummary).toHaveTextContent("Online: 1");
+    expect(originSummary).toHaveTextContent("Papel: 1");
+    expect(screen.getByTestId("tally-paper-recorded-by")).toHaveTextContent("Admin Mesa");
+    expect(screen.getByText(/Online: 1 · Papel: 1/)).toBeInTheDocument();
   });
 });
 

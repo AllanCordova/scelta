@@ -23,7 +23,7 @@ test("admin sees presence against quorum and cannot open round until quorum is m
   await expect(item.getByText("Abaixo do quórum", { exact: true })).toBeVisible();
   await expect(item.getByRole("button", { name: "Abrir escrutínio" })).toBeDisabled();
 
-  const href = await page.getByRole("link", { name: /\/join\// }).getAttribute("href");
+  const href = await page.getByRole("link", { name: /\/s\// }).getAttribute("href");
   if (!href) {
     throw new Error("Missing invite link");
   }
@@ -61,7 +61,7 @@ test("admin sees quorum met when required presence joins and closes without fail
   await page.getByRole("group", { name: "Situação" }).getByRole("button", { name: "Aberta" }).click();
   await page.getByRole("button", { name: "Criar sala" }).click();
 
-  const invite = page.getByRole("link", { name: /\/join\// });
+  const invite = page.getByRole("link", { name: /\/s\// });
   await expect(invite).toBeVisible();
   const href = await invite.getAttribute("href");
   if (!href) {
